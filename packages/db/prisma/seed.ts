@@ -37,6 +37,11 @@ const SETTINGS: Array<{ key: string; label: string; value: number; unit: string 
   { key: 'international_shipping_markup', label: 'International Shipping Markup', value: 1.5, unit: 'x' },
   { key: 'time_estimate_multiplier', label: 'Time Estimate Multiplier', value: 1.3, unit: 'x' },
   { key: 'material_estimate_multiplier', label: 'Material Estimate Multiplier', value: 1.0, unit: 'x' },
+  // Add-on + governance settings (Phase 1 deterministic platform).
+  { key: 'spares_pct', label: 'Spares %', value: 0.1, unit: 'fraction' },
+  { key: 'packaging_pct', label: 'Packaging %', value: 0, unit: 'fraction' },
+  { key: 'receiver_card_cost', label: 'Receiver Card Cost (per cabinet)', value: 0, unit: '$' },
+  { key: 'margin_floor', label: 'Margin Floor', value: 0.2, unit: 'fraction' },
 ];
 
 const SEAFREIGHT: Array<{ label: string; value: number; currency?: string }> = [

@@ -1,5 +1,6 @@
 import { prisma } from '@quotezen/db';
 import { aggregateQuote, type QuoteLineContribution } from '@quotezen/calc';
+import { marginOf, round, sum } from '@quotezen/shared';
 import type { CreateQuoteInput, UpdateQuoteInput } from '@quotezen/shared';
 import type { QuoteStatus } from '@quotezen/shared';
 import { AppError, conflict, notFound } from '../../errors.js';
@@ -134,8 +135,37 @@ export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuote
   });
 };
 
+/** Statuses that "finalise" a quote — the margin guardrail is enforced on entry to these. */
+const FINALISED_STATUSES: QuoteStatus[] = ['approved', 'issued'];
+
+/** Realised margin from the stored cost/sell breakdown (equipment + services; recurring excluded). */
+export const computeMargin = (quote: QuoteWithChildren) => {
+  const costs: Array<string> = [];
+  const sells: Array<string> = [];
+  for (const s of quote.ledScreens) {
+    for (const l of s.costBreakdown) {
+      if (l.cost) costs.push(l.cost.toString());
+      if (l.sell) sells.push(l.sell.toString());
+    }
+  }
+  for (const s of quote.lcdScreens) {
+    for (const i of s.items) {
+      if (i.unitCost) costs.push(round(Number(i.unitCost) * Number(i.qty)).toString());
+      if (i.unitSell) sells.push(round(Number(i.unitSell) * Number(i.qty)).toString());
+    }
+  }
+  const totalCost = sum(costs);
+  const totalSell = sum(sells);
+  return { totalCost, totalSell, margin: round(marginOf(totalCost, totalSell), 4) };
+};
+
+export const getMarginFloor = async (): Promise<number> => {
+  const setting = await prisma.setting.findUnique({ where: { key: 'margin_floor' } });
+  return setting ? Number(setting.value) : 0;
+};
+
 export const changeStatus = async (
-  userId: bigint,
+  actor: Actor,
   id: bigint,
   status: QuoteStatus,
   reason?: string,
@@ -143,21 +173,40 @@ export const changeStatus = async (
   const existing = await getQuote(id);
   if (existing.status === status) return existing;
 
+  // Margin guardrail (P1-19g.2): block finalisation below the floor unless the actor is an admin
+  // (elevated approval). Admin overrides are allowed but audited.
+  let guardrailNote: string | null = null;
+  if (FINALISED_STATUSES.includes(status)) {
+    const floor = await getMarginFloor();
+    const { margin } = computeMargin(existing);
+    if (floor > 0 && margin.lessThan(floor)) {
+      if (!isAdmin(actor)) {
+        throw new AppError(
+          'forbidden',
+          `Quote margin ${margin.times(100).toFixed(1)}% is below the floor of ${(floor * 100).toFixed(1)}%. Admin approval required.`,
+          { margin: margin.toString(), floor },
+        );
+      }
+      guardrailNote = `below-floor override: margin ${margin.times(100).toFixed(1)}% < floor ${(floor * 100).toFixed(1)}%`;
+    }
+  }
+
   return prisma.$transaction(async (tx) => {
     const quote = await tx.quote.update({
       where: { id },
-      data: { status, updatedById: userId },
+      data: { status, updatedById: actor.id },
       include: quoteInclude,
     });
     await recordAudit(tx, {
       quoteId: id,
-      userId,
+      userId: actor.id,
       action: 'status_change',
       entityTable: 'quotes',
       entityId: id,
       changes: [
         { field: 'status', oldValue: existing.status, newValue: status },
         ...(reason ? [{ field: 'reason', oldValue: null, newValue: reason }] : []),
+        ...(guardrailNote ? [{ field: 'margin_guardrail', oldValue: null, newValue: guardrailNote }] : []),
       ],
     });
     return quote;
@@ -233,6 +282,9 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
       services: dec(quote.totalServices),
       recurring: dec(quote.totalRecurring),
       grandTotal: dec(quote.grandTotal),
+      // Margin derives from cost → admin-only (BR-081).
+      margin: showCost ? computeMargin(quote).margin.toString() : null,
+      marginFloor: showCost ? await getMarginFloor() : null,
     },
   };
 };

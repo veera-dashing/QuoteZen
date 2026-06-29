@@ -6,7 +6,9 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts'],
     setupFiles: ['src/test/setup.ts'],
-    // API tests hit the database; run them serially to avoid cross-test interference.
+    // API tests hit a remote database; run serially and allow generous time per test.
     fileParallelism: false,
+    testTimeout: 30000,
+    hookTimeout: 30000,
   },
 });

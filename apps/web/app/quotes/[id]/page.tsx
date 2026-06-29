@@ -403,19 +403,47 @@ interface BomScreen {
   costLines: Array<{ label: string; sell: string | null }>;
 }
 
+interface Version {
+  revisionNo: number;
+  label: string | null;
+  grandTotal: string | null;
+  restoredFrom: number | null;
+  createdAt: string;
+  createdBy?: { name: string };
+}
+
 function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [audit, setAudit] = useState<Audit[]>([]);
   const [bom, setBom] = useState<BomScreen[] | null>(null);
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
+  const [versions, setVersions] = useState<Version[]>([]);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   const loadAudit = useCallback(() => {
     api<Audit[]>(`/quotes/${quote.id}/audit`).then(setAudit);
   }, [quote.id]);
+  const loadVersions = useCallback(() => {
+    api<Version[]>(`/quotes/${quote.id}/versions`).then(setVersions);
+  }, [quote.id]);
 
   useEffect(() => {
     loadAudit();
-  }, [loadAudit]);
+    loadVersions();
+  }, [loadAudit, loadVersions]);
+
+  const saveVersion = async () => {
+    await api(`/quotes/${quote.id}/versions`, { method: 'POST', body: JSON.stringify({ label: `Saved ${new Date().toLocaleString()}` }) });
+    loadVersions();
+    loadAudit();
+  };
+  const rollback = async (rev: number) => {
+    if (!window.confirm(`Roll back to version ${rev}? This creates a new version; history is preserved.`)) return;
+    await api(`/quotes/${quote.id}/versions/${rev}/rollback`, { method: 'POST' });
+    await onChange();
+    loadVersions();
+    loadAudit();
+  };
 
   const recompute = async () => {
     setBusy(true);
@@ -429,9 +457,15 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   };
 
   const setStatus = async (status: string) => {
-    await api(`/quotes/${quote.id}/status`, { method: 'POST', body: JSON.stringify({ status }) });
-    await onChange();
-    loadAudit();
+    setStatusError(null);
+    try {
+      await api(`/quotes/${quote.id}/status`, { method: 'POST', body: JSON.stringify({ status }) });
+      await onChange();
+      loadAudit();
+    } catch (e) {
+      // Surfaces the margin-guardrail block, etc.
+      setStatusError(e instanceof Error ? e.message : 'Status change failed');
+    }
   };
 
   const cur = quote.currency?.code ?? '';
@@ -499,6 +533,35 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
           <button onClick={() => setStatus('approved')}>Approve</button>
           <button onClick={() => setStatus('issued')}>Issue</button>
         </div>
+        {statusError && <div className="error" style={{ marginTop: 10 }}>{statusError}</div>}
+      </div>
+
+      <div className="card">
+        <div className="topbar">
+          <h3 style={{ margin: 0 }}>Versions</h3>
+          <button className="primary" onClick={saveVersion}>＋ Save version</button>
+        </div>
+        {versions.length === 0 && <p className="muted">No saved versions yet.</p>}
+        {versions.length > 0 && (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>#</th><th>Label</th><th className="cell-num">Grand total</th><th>By</th><th></th></tr>
+              </thead>
+              <tbody>
+                {versions.map((v) => (
+                  <tr key={v.revisionNo}>
+                    <td>v{v.revisionNo}{v.restoredFrom ? ` (↺ from v${v.restoredFrom})` : ''}</td>
+                    <td>{v.label ?? '—'}</td>
+                    <td className="cell-num">{cur} {Number(v.grandTotal ?? 0).toLocaleString()}</td>
+                    <td className="muted">{v.createdBy?.name ?? '—'}</td>
+                    <td className="actions"><button className="ghost" onClick={() => rollback(v.revisionNo)}>Roll back</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="card">

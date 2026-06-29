@@ -115,6 +115,14 @@ model QuoteRevision {
   quoteId    BigInt   @map("quote_id")
   revisionNo Int      @map("revision_no")
   label      String?
+  // Immutable point-in-time snapshot of the full quote (header + screens + applied rule values +
+  // computed outputs). A version snapshot is an audit artifact, not the live queryable model — so a
+  // structured JSON document is the right shape here (P1-04.1), distinct from the relational tables.
+  snapshot   Json?
+  /** Grand total at snapshot time, for quick version-list display without parsing the snapshot. */
+  grandTotal Decimal? @map("grand_total") @db.Decimal(12, 2)
+  /** When this version restored an earlier one, the revision_no it was restored from. */
+  restoredFrom Int?   @map("restored_from")
   createdById BigInt  @map("created_by")
   createdAt  DateTime @default(now()) @map("created_at")
 

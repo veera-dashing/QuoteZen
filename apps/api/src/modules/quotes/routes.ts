@@ -25,6 +25,16 @@ import {
 import { addLcdScreen, addLedScreen, addLicence, configureForQuote, deleteLedScreen } from './screens.js';
 import { buildQuotePdf } from './pdf.js';
 import { buildBom, buildDescriptions, buildPmHandoff, buildSolutionSummary } from './outputs.js';
+import {
+  createVersion,
+  diffVersions,
+  getVersionSnapshot,
+  listVersions,
+  rollbackToVersion,
+} from './versioning.js';
+
+const revParam = z.object({ id: z.coerce.bigint(), rev: z.coerce.number().int().positive() });
+const diffQuery = z.object({ a: z.coerce.number().int().positive(), b: z.coerce.number().int().positive() });
 
 const configureSchema = z.object({
   desiredWidthMm: z.coerce.number().int().positive(),
@@ -67,7 +77,7 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const { status, reason } = parse(changeStatusSchema, request.body);
-    return changeStatus(userId(request), id, status, reason);
+    return changeStatus(actor(request), id, status, reason);
   });
 
   app.post('/quotes/:id/recompute', auth, async (request) => {
@@ -123,6 +133,41 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     return buildPmHandoff(await getQuote(id));
+  });
+
+  // ── Versioning & snapshots (P1-04) ──
+  app.post('/quotes/:id/versions', auth, async (request, reply) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { label } = parse(z.object({ label: z.string().max(120).optional() }), request.body ?? {});
+    const version = await createVersion(actor(request), id, label);
+    return reply.code(201).send(version);
+  });
+
+  app.get('/quotes/:id/versions', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return listVersions(id);
+  });
+
+  app.get('/quotes/:id/versions/diff', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { a, b } = parse(diffQuery, request.query);
+    return diffVersions(id, a, b);
+  });
+
+  app.get('/quotes/:id/versions/:rev', auth, async (request) => {
+    const { id, rev } = parse(revParam, request.params);
+    await assertOwnership(id, actor(request));
+    return getVersionSnapshot(id, rev);
+  });
+
+  app.post('/quotes/:id/versions/:rev/rollback', auth, async (request, reply) => {
+    const { id, rev } = parse(revParam, request.params);
+    await assertOwnership(id, actor(request));
+    const version = await rollbackToVersion(actor(request), id, rev);
+    return reply.code(201).send(version);
   });
 
   // ── Technical configuration engine (P1-13): ranked valid configs for an opening ──

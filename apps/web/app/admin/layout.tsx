@@ -50,6 +50,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         <Link href="/quotes" className="nav-item" style={{ fontWeight: 600 }}>
           <span>📐 Quotes</span>
         </Link>
+        <Link href="/admin/users" className="nav-item" style={{ fontWeight: 600 }}>
+          <span>👥 Users &amp; roles</span>
+        </Link>
         <div className="nav-group">Reference data</div>
         {groups.map(([group, items]) => (
           <div key={group}>

@@ -180,8 +180,26 @@ versioning/governance. Google OAuth + Zoho + all AI (Phase 2) deferred by decisi
   **Documents** panel. Tested + verified live.
   - *Refinement:* descriptions use the raw geometric ratio (gcd, e.g. 7:12); switching to the named
     `screen_ratios` label (9:16) is a small follow-up.
-- **Next block:** versioning/snapshots + diff + rollback (P1-04), margin guardrail (P1-19g.2),
-  RBAC role-management UI.
+### Block 3 — versioning & governance (branch `feat/versioning-governance`, off estimation-platform)
+- ✅ **Versioning & snapshots (P1-04)** — `quote_revisions.snapshot` (JSON, immutable historical
+  artifact) via migration `add_quote_version_snapshot`. `versioning.ts`: `createVersion` (full quote
+  snapshot), `listVersions`, `getVersionSnapshot`, generic flatten-based `diffVersions`, and
+  history-preserving `rollbackToVersion` (recreates the screen tree from the snapshot + recompute +
+  records a new version with `restoredFrom`). Endpoints `POST/GET /quotes/:id/versions[/:rev][/rollback]`
+  + `/versions/diff`. Wizard Review has a **Versions** panel (save / list / roll back).
+- ✅ **Margin guardrail (P1-19g.2)** — `margin_floor` setting; `computeMargin` from the stored
+  cost/sell breakdown; `changeStatus` blocks finalisation (`approved`/`issued`) below the floor for
+  non-admins (403, names the floor), allows admin override (audited via `margin_guardrail`). Margin +
+  floor surfaced in `/price` (admin-only). Status errors shown in the Review workflow card.
+- ✅ **RBAC user management (P1-19g.1)** — admin-only `GET /admin/users` (no password exposure),
+  `PATCH /admin/users/:id` (role / isActive), `GET /admin/roles`; web **Users & roles** admin page.
+- **Settings added:** `spares_pct`, `packaging_pct`, `receiver_card_cost`, `margin_floor` (seeded).
+- **Migrations note:** the RDS user can't create a shadow DB, so `migrate dev` fails — author the
+  migration with `prisma migrate diff` and apply via `prisma migrate deploy`.
+
+**Still backlogged (later passes):** file upload + re-run (P1-19e), KB capture (P1-19f),
+optimistic-locking concurrency (P1-05.2), audit-viewer UI (P1-03.3), structured client overrides
+(P1-10), bulk-import wizard UI (P1-06.4), Google OAuth + Zoho, and all Phase 2 AI.
 
 **Local Postgres for dev/tests:**
 ```bash

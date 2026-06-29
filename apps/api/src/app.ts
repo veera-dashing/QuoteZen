@@ -7,6 +7,7 @@ import type { AppConfig } from './config.js';
 import { AppError } from './errors.js';
 import { authPlugin } from './plugins/auth.js';
 import { adminRoutes } from './modules/admin/routes.js';
+import { userRoutes } from './modules/admin/users.js';
 import { authRoutes } from './modules/auth/routes.js';
 import { catalogRoutes } from './modules/catalog/routes.js';
 import { quoteRoutes } from './modules/quotes/routes.js';
@@ -68,6 +69,7 @@ export const buildApp = async (config: AppConfig): Promise<FastifyInstance> => {
   await app.register(catalogRoutes);
   await app.register(quoteRoutes);
   await app.register(adminRoutes);
+  await app.register(userRoutes);
 
   return app;
 };
