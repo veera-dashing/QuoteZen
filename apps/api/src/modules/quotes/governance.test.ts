@@ -98,6 +98,83 @@ describe('margin guardrail', () => {
   });
 });
 
+describe('optimistic concurrency (P1-05.2)', () => {
+  it('rejects a stale write with 409 instead of last-write-wins', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: admin(),
+      payload: { jobReference: `${JOB_PREFIX}lock-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const id = created.json().id as string;
+    expect(created.json().lockVersion).toBe(0);
+
+    // first edit with the known version succeeds and bumps the token
+    const ok = await app.inject({
+      method: 'PATCH',
+      url: `/quotes/${id}`,
+      headers: admin(),
+      payload: { resellerMarkup: 0.05, expectedVersion: 0 },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().lockVersion).toBe(1);
+
+    // a second edit still using version 0 is a conflict
+    const stale = await app.inject({
+      method: 'PATCH',
+      url: `/quotes/${id}`,
+      headers: admin(),
+      payload: { resellerMarkup: 0.09, expectedVersion: 0 },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error.code).toBe('conflict');
+  });
+});
+
+describe('client rule resolution (P1-10)', () => {
+  it('merges global + client margin with guardrail winning below the floor', async () => {
+    const client = await prisma.client.findFirstOrThrow();
+    await prisma.client.update({ where: { id: client.id }, data: { defaultMargin: 0.1, preferredProductFamily: 'BM-PRO' } });
+
+    const res = await app.inject({ method: 'GET', url: `/rules/client/${client.id}/effective`, headers: admin() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      margin: { value: number; source: string; floor: number; belowFloor: boolean; effective: number };
+      preferredProductFamily: { value: string | null; overridesGlobal: boolean };
+    };
+    expect(body.margin.source).toBe('client');
+    expect(body.margin.belowFloor).toBe(true);
+    expect(body.margin.effective).toBe(0.2); // guardrail (floor) wins over the 0.1 client margin
+    expect(body.preferredProductFamily.value).toBe('BM-PRO');
+    expect(body.preferredProductFamily.overridesGlobal).toBe(true);
+
+    await prisma.client.update({ where: { id: client.id }, data: { defaultMargin: null, preferredProductFamily: null } });
+  });
+});
+
+describe('named-ratio description (refinement)', () => {
+  it('uses the named screen ratio (9:16) not the raw gcd', async () => {
+    const product = await prisma.ledProduct.findFirst({
+      where: { minCabinetWMm: { not: null }, pixelPitchH: { not: null } },
+    });
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: admin(),
+      payload: { jobReference: `${JOB_PREFIX}ratio-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const id = created.json().id as string;
+    await app.inject({
+      method: 'POST',
+      url: `/quotes/${id}/led-screens`,
+      headers: admin(),
+      payload: { ledProductId: Number(product!.id), desiredWidthMm: 1120, desiredHeightMm: 1920, rotateCabinets: true },
+    });
+    const desc = await app.inject({ method: 'GET', url: `/quotes/${id}/descriptions`, headers: admin() });
+    expect((desc.json() as Array<{ description: string }>)[0]!.description).toContain('9:16 ratio');
+  });
+});
+
 describe('RBAC user management', () => {
   it('admin can list users; sales is forbidden', async () => {
     const adminList = await app.inject({ method: 'GET', url: '/admin/users', headers: admin() });

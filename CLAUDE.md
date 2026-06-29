@@ -197,9 +197,21 @@ versioning/governance. Google OAuth + Zoho + all AI (Phase 2) deferred by decisi
 - **Migrations note:** the RDS user can't create a shadow DB, so `migrate dev` fails — author the
   migration with `prisma migrate diff` and apply via `prisma migrate deploy`.
 
-**Still backlogged (later passes):** file upload + re-run (P1-19e), KB capture (P1-19f),
-optimistic-locking concurrency (P1-05.2), audit-viewer UI (P1-03.3), structured client overrides
-(P1-10), bulk-import wizard UI (P1-06.4), Google OAuth + Zoho, and all Phase 2 AI.
+### Block 4 — concurrency, client overrides, ratio fix (branch `feat/versioning-governance`)
+- ✅ **Optimistic concurrency (P1-05.2)** — `quotes.lock_version` token (migration); `updateQuote`
+  rejects a stale `expectedVersion` with **409 conflict** (never last-write-wins) and bumps the token;
+  `changeStatus` also bumps. Tested.
+- ✅ **Client overrides + rule resolution (P1-10)** — `clients` gains `preferredProductFamily`,
+  `preferredPitchMm`, `excludedComponents` (+ existing `defaultMargin`), editable via the admin CRUD.
+  `GET /rules/client/:id/effective` merges global + client with `overridesGlobal` indicators; the
+  **margin floor guardrail wins** over a below-floor client margin (P1-10.4). Tested.
+- ✅ **Named-ratio descriptions** — auto descriptions now use the named `screen_ratios` label (9:16)
+  via `loadRatios()`, threaded through descriptions/BOM/PDF. Tested.
+
+**Still backlogged (later passes):** file upload + re-run (P1-19e, needs object storage + AV scan),
+KB capture (P1-19f), audit-viewer filters + cross-quote admin view (P1-03.3), bulk-import wizard UI
+(P1-06.4), Google OAuth + Zoho, and all Phase 2 AI. (Concurrency-token UI wiring and a client
+rule-resolution view are thin follow-ups — the APIs are done and tested.)
 
 **Local Postgres for dev/tests:**
 ```bash

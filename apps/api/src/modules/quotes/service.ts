@@ -97,7 +97,16 @@ export const getAuditLog = async (id: bigint) => {
 export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuoteInput) => {
   const existing = await getQuote(id);
 
-  const data: Record<string, unknown> = {};
+  // Optimistic locking (P1-05.2): reject stale writes instead of last-write-wins.
+  if (input.expectedVersion !== undefined && input.expectedVersion !== existing.lockVersion) {
+    throw new AppError(
+      'conflict',
+      'This quote was changed by someone else. Reload and re-apply your edits.',
+      { expectedVersion: input.expectedVersion, currentVersion: existing.lockVersion },
+    );
+  }
+
+  const data: Record<string, unknown> = { lockVersion: { increment: 1 } };
   if (input.jobReference !== undefined) data.jobReference = input.jobReference;
   if (input.clientId !== undefined) data.clientId = input.clientId;
   if (input.locationId !== undefined) data.locationId = input.locationId;
@@ -194,7 +203,7 @@ export const changeStatus = async (
   return prisma.$transaction(async (tx) => {
     const quote = await tx.quote.update({
       where: { id },
-      data: { status, updatedById: actor.id },
+      data: { status, updatedById: actor.id, lockVersion: { increment: 1 } },
       include: quoteInclude,
     });
     await recordAudit(tx, {

@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import type { ScreenRatioRow } from '@quotezen/calc';
 import type { QuoteWithChildren } from './repository.js';
 import { DEFAULT_ASSUMPTIONS, DEFAULT_EXCLUSIONS, DEFAULT_TERMS, buildDescriptions } from './outputs.js';
 
@@ -9,7 +10,10 @@ const money = (v: { toString(): string } | null | undefined, code: string): stri
  * Render a client-facing quote PDF (offline, via pdfkit — no headless browser). Returns the full
  * document as a Buffer so it can be sent in one response.
  */
-export const buildQuotePdf = (quote: QuoteWithChildren): Promise<Buffer> =>
+export const buildQuotePdf = (
+  quote: QuoteWithChildren,
+  ratios?: readonly ScreenRatioRow[],
+): Promise<Buffer> =>
   new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
     const chunks: Buffer[] = [];
@@ -35,7 +39,7 @@ export const buildQuotePdf = (quote: QuoteWithChildren): Promise<Buffer> =>
     if (quote.validUntil) doc.text(`Valid until: ${new Date(quote.validUntil).toLocaleDateString()}`);
 
     // LED screens — deterministic descriptions (P1-18.1)
-    const descriptions = new Map(buildDescriptions(quote).map((d) => [d.screenId, d.description]));
+    const descriptions = new Map(buildDescriptions(quote, ratios).map((d) => [d.screenId, d.description]));
     if (quote.ledScreens.length > 0) {
       heading('LED screens');
       for (const s of quote.ledScreens) {

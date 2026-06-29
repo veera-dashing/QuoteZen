@@ -11,6 +11,7 @@ import { userRoutes } from './modules/admin/users.js';
 import { authRoutes } from './modules/auth/routes.js';
 import { catalogRoutes } from './modules/catalog/routes.js';
 import { quoteRoutes } from './modules/quotes/routes.js';
+import { ruleRoutes } from './modules/rules/routes.js';
 
 export const buildApp = async (config: AppConfig): Promise<FastifyInstance> => {
   const app = Fastify({
@@ -70,6 +71,7 @@ export const buildApp = async (config: AppConfig): Promise<FastifyInstance> => {
   await app.register(quoteRoutes);
   await app.register(adminRoutes);
   await app.register(userRoutes);
+  await app.register(ruleRoutes);
 
   return app;
 };

@@ -1,5 +1,14 @@
-import { describeLcdScreen, describeLedScreen } from '@quotezen/calc';
+import { describeLcdScreen, describeLedScreen, resolveScreenRatio, type ScreenRatioRow } from '@quotezen/calc';
+import { prisma } from '@quotezen/db';
 import type { QuoteWithChildren } from './repository.js';
+
+/** Load the screen-ratio lookup so descriptions can use the named ratio (e.g. 9:16) not raw gcd. */
+export const loadRatios = async (): Promise<ScreenRatioRow[]> =>
+  (await prisma.screenRatio.findMany()).map((r) => ({
+    minValue: Number(r.minValue),
+    maxValue: Number(r.maxValue),
+    ratioLabel: r.ratioLabel,
+  }));
 
 /**
  * Quote outputs (P1-18): auto descriptions, procurement BOM/PI, solution summary, PM handoff.
@@ -44,7 +53,12 @@ export interface ScreenDescription {
   description: string;
 }
 
-export const buildDescriptions = (quote: QuoteWithChildren): ScreenDescription[] => {
+export const buildDescriptions = (
+  quote: QuoteWithChildren,
+  ratios?: readonly ScreenRatioRow[],
+): ScreenDescription[] => {
+  const ratioFor = (w?: number | null, h?: number | null): string | null =>
+    (ratios && w && h ? resolveScreenRatio(w, h, ratios) : null) ?? aspectRatioLabel(w, h);
   const out: ScreenDescription[] = [];
   for (const s of quote.ledScreens) {
     out.push({
@@ -54,7 +68,7 @@ export const buildDescriptions = (quote: QuoteWithChildren): ScreenDescription[]
         productModel: s.ledProduct?.model ?? s.screenName,
         widthMm: s.desiredWidthMm,
         heightMm: s.desiredHeightMm,
-        ratioLabel: aspectRatioLabel(s.resolutionWpx, s.resolutionHpx),
+        ratioLabel: ratioFor(s.desiredWidthMm, s.desiredHeightMm),
         pixelPitchMm: s.ledProduct?.pixelPitchH ? Number(s.ledProduct.pixelPitchH) : null,
         resolutionWpx: s.resolutionWpx,
         resolutionHpx: s.resolutionHpx,
@@ -101,8 +115,12 @@ const componentName = (c: QuoteWithChildren['ledScreens'][number]['components'][
   c.componentType;
 
 /** Procurement-ready BOM/PI (P1-18.3): every auto-included item per screen. */
-export const buildBom = (quote: QuoteWithChildren, showCost: boolean): BomScreen[] => {
-  const descriptions = new Map(buildDescriptions(quote).map((d) => [d.screenId, d.description]));
+export const buildBom = (
+  quote: QuoteWithChildren,
+  showCost: boolean,
+  ratios?: readonly ScreenRatioRow[],
+): BomScreen[] => {
+  const descriptions = new Map(buildDescriptions(quote, ratios).map((d) => [d.screenId, d.description]));
   return quote.ledScreens.map((s) => ({
     screenId: s.id.toString(),
     description: descriptions.get(s.id.toString()) ?? (s.screenName ?? 'LED screen'),

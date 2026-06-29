@@ -30,7 +30,10 @@ export const createQuoteSchema = z.object({
 });
 export type CreateQuoteInput = z.infer<typeof createQuoteSchema>;
 
-export const updateQuoteSchema = createQuoteSchema.partial();
+export const updateQuoteSchema = createQuoteSchema.partial().extend({
+  /** Optimistic-locking token from the last read; a mismatch is a 409 conflict (P1-05.2). */
+  expectedVersion: z.coerce.number().int().nonnegative().optional(),
+});
 export type UpdateQuoteInput = z.infer<typeof updateQuoteSchema>;
 
 export const changeStatusSchema = z.object({

@@ -620,6 +620,11 @@ model Client {
   mediaplayerNote String?  @map("mediaplayer_note")
   ratioNote       String?  @map("ratio_note")
   defaultMargin   Decimal? @map("default_margin") @db.Decimal(8, 4)
+  // Structured overrides (P1-10) — replace today's free-text notes.
+  preferredProductFamily String? @map("preferred_product_family")
+  preferredPitchMm       Decimal? @map("preferred_pitch_mm") @db.Decimal(6, 3)
+  /** Comma-separated component/family names to exclude for this client. */
+  excludedComponents     String? @map("excluded_components")
 
   quotes Quote[]
 
@@ -637,6 +642,8 @@ model Quote {
   currencyId            BigInt      @map("currency_id")
   status                QuoteStatus @default(draft)
   resellerMarkup        Decimal     @default(0) @map("reseller_markup") @db.Decimal(8, 4)
+  /** Optimistic-locking token; bumped on every mutation (P1-05.2). */
+  lockVersion           Int         @default(0) @map("lock_version")
   validUntil            DateTime?   @map("valid_until")
   requestedShippingDate DateTime?   @map("requested_shipping_date")
   estimatedCost         Decimal?    @map("estimated_cost") @db.Decimal(12, 2)

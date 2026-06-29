@@ -24,7 +24,7 @@ import {
 } from './service.js';
 import { addLcdScreen, addLedScreen, addLicence, configureForQuote, deleteLedScreen } from './screens.js';
 import { buildQuotePdf } from './pdf.js';
-import { buildBom, buildDescriptions, buildPmHandoff, buildSolutionSummary } from './outputs.js';
+import { buildBom, buildDescriptions, buildPmHandoff, buildSolutionSummary, loadRatios } from './outputs.js';
 import {
   createVersion,
   diffVersions,
@@ -102,8 +102,8 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
   app.get('/quotes/:id/export.pdf', auth, async (request, reply) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
-    const quote = await getQuote(id);
-    const pdf = await buildQuotePdf(quote);
+    const [quote, ratios] = await Promise.all([getQuote(id), loadRatios()]);
+    const pdf = await buildQuotePdf(quote, ratios);
     return reply
       .header('content-type', 'application/pdf')
       .header('content-disposition', `attachment; filename="quote-${quote.jobReference}.pdf"`)
@@ -114,13 +114,15 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
   app.get('/quotes/:id/descriptions', auth, async (request) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
-    return buildDescriptions(await getQuote(id));
+    const [quote, ratios] = await Promise.all([getQuote(id), loadRatios()]);
+    return buildDescriptions(quote, ratios);
   });
 
   app.get('/quotes/:id/bom', auth, async (request) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
-    return buildBom(await getQuote(id), actor(request).role === 'admin');
+    const [quote, ratios] = await Promise.all([getQuote(id), loadRatios()]);
+    return buildBom(quote, actor(request).role === 'admin', ratios);
   });
 
   app.get('/quotes/:id/solution-summary', auth, async (request) => {

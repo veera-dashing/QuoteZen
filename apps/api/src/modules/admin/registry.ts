@@ -293,12 +293,13 @@ export const TABLES: TableDef[] = [
   // ── Clients ──
   {
     resource: 'clients', model: 'client', label: 'Clients', group: 'Clients',
-    titleField: 'name', searchFields: ['name', 'marginNote'],
+    titleField: 'name', searchFields: ['name', 'marginNote', 'preferredProductFamily'],
     fields: [
-      f('name', 'string', true), f('marginNote', 'text'), f('ledScreenNote', 'text'), f('gobNote', 'text'),
-      f('mediaplayerNote', 'text'), f('ratioNote', 'text'), f('defaultMargin', 'decimal'),
+      f('name', 'string', true), f('defaultMargin', 'decimal'), f('preferredProductFamily'),
+      f('preferredPitchMm', 'decimal'), f('excludedComponents'), f('marginNote', 'text'),
+      f('ledScreenNote', 'text'), f('gobNote', 'text'), f('mediaplayerNote', 'text'), f('ratioNote', 'text'),
     ],
-    listFields: ['name', 'marginNote'],
+    listFields: ['name', 'defaultMargin', 'preferredProductFamily'],
   },
 ];
 
