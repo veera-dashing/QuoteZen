@@ -85,6 +85,7 @@ model User {
   role          Role            @relation(fields: [roleId], references: [id])
   auditLogs     QuoteAuditLog[]
   revisions     QuoteRevision[]
+  kbEntries     KbEntry[]
   createdQuotes Quote[]         @relation("QuoteCreatedBy")
   updatedQuotes Quote[]         @relation("QuoteUpdatedBy")
 
@@ -663,6 +664,7 @@ model Quote {
   createdBy User      @relation("QuoteCreatedBy", fields: [createdById], references: [id])
   updatedBy User?     @relation("QuoteUpdatedBy", fields: [updatedById], references: [id])
 
+  kbEntry            KbEntry?
   ledScreens         QuoteLedScreen[]
   lcdScreens         QuoteLcdScreen[]
   mediaplayers       QuoteMediaplayer[]
@@ -954,4 +956,28 @@ model QuoteTerm {
   quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
 
   @@map("quote_terms")
+}
+
+// Knowledge-base capture (P1-19f): structured snapshot of a completed quote + its outcome. Storage
+// only (no query/AI in Phase 1) — the corpus for future KB-similarity / learning. One row per quote.
+model KbEntry {
+  id            BigInt   @id @default(autoincrement())
+  quoteId       BigInt   @unique @map("quote_id")
+  jobReference  String   @map("job_reference")
+  clientName    String?  @map("client_name")
+  locationName  String?  @map("location_name")
+  screenCount   Int      @map("screen_count")
+  productModels String?  @map("product_models")
+  grandTotal    Decimal  @map("grand_total") @db.Decimal(12, 2)
+  margin        Decimal? @db.Decimal(8, 4)
+  outcome       String
+  capturedById  BigInt   @map("captured_by")
+  capturedAt    DateTime @default(now()) @map("captured_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  quote      Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  capturedBy User  @relation(fields: [capturedById], references: [id])
+
+  @@index([outcome])
+  @@map("kb_entries")
 }

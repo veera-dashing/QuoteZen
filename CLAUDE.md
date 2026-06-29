@@ -208,10 +208,18 @@ versioning/governance. Google OAuth + Zoho + all AI (Phase 2) deferred by decisi
 - ✅ **Named-ratio descriptions** — auto descriptions now use the named `screen_ratios` label (9:16)
   via `loadRatios()`, threaded through descriptions/BOM/PDF. Tested.
 
+### Block 5 — KB capture + audit viewer (branch `feat/versioning-governance`)
+- ✅ **KB capture (P1-19f)** — `kb_entries` table (migration); `captureKbEntry` auto-snapshots a quote
+  (client/location/products/screen count/grand total/margin/outcome) into the KB when it reaches an
+  outcome state (`issued`/`won`/`lost`), inside the status transaction. `GET /kb` (admin/sales,
+  filterable by outcome/client). Web **Knowledge base** admin page. Storage only — no AI. Tested.
+- ✅ **Audit viewer (P1-03.3)** — `GET /quotes/:id/audit` now takes filters (field/user/action/
+  from/to); admin-only `GET /admin/audit` is the cross-quote feed (joins quote ref + user). Web
+  **Audit log** admin page with an action filter. Verified live.
+
 **Still backlogged (later passes):** file upload + re-run (P1-19e, needs object storage + AV scan),
-KB capture (P1-19f), audit-viewer filters + cross-quote admin view (P1-03.3), bulk-import wizard UI
-(P1-06.4), Google OAuth + Zoho, and all Phase 2 AI. (Concurrency-token UI wiring and a client
-rule-resolution view are thin follow-ups — the APIs are done and tested.)
+bulk-import wizard UI (P1-06.4), Google OAuth + Zoho, and all Phase 2 AI. (Concurrency-token UI wiring
+and a client rule-resolution view are thin follow-ups — the APIs are done and tested.)
 
 **Local Postgres for dev/tests:**
 ```bash

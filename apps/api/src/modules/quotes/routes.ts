@@ -14,6 +14,7 @@ import {
   assertOwnership,
   changeStatus,
   createQuote,
+  getAllAuditLog,
   getAuditLog,
   getQuote,
   getQuotes,
@@ -22,6 +23,15 @@ import {
   updateQuote,
   type Actor,
 } from './service.js';
+import { listKbEntries } from './kb.js';
+
+const auditFilterQuery = z.object({
+  field: z.string().optional(),
+  userId: z.coerce.bigint().optional(),
+  action: z.enum(['create', 'update', 'delete', 'status_change']).optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+});
 import { addLcdScreen, addLedScreen, addLicence, configureForQuote, deleteLedScreen } from './screens.js';
 import { buildQuotePdf } from './pdf.js';
 import { buildBom, buildDescriptions, buildPmHandoff, buildSolutionSummary, loadRatios } from './outputs.js';
@@ -96,8 +106,17 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
   app.get('/quotes/:id/audit', auth, async (request) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
-    return getAuditLog(id);
+    return getAuditLog(id, parse(auditFilterQuery, request.query));
   });
+
+  // Cross-quote audit feed + knowledge base (admin / sales — sensitive commercial history).
+  app.get('/admin/audit', { preHandler: [app.requireRole('admin')] }, (request) =>
+    getAllAuditLog(parse(auditFilterQuery, request.query)),
+  );
+
+  app.get('/kb', { preHandler: [app.requireRole('admin', 'sales')] }, (request) =>
+    listKbEntries(parse(z.object({ outcome: z.string().optional(), client: z.string().optional() }), request.query)),
+  );
 
   app.get('/quotes/:id/export.pdf', auth, async (request, reply) => {
     const { id } = parse(idParam, request.params);

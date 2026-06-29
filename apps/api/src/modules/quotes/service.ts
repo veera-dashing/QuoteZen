@@ -6,13 +6,16 @@ import type { QuoteStatus } from '@quotezen/shared';
 import { AppError, conflict, notFound } from '../../errors.js';
 import type { UserRole } from '@quotezen/shared';
 import { diffFields, recordAudit } from '../../services/audit.js';
+import { CAPTURE_STATUSES, captureKbEntry } from './kb.js';
 import {
   findCurrencyByCode,
   findQuoteById,
   findQuoteByJobRef,
+  listAllAuditLog,
   listAuditLog,
   listQuotes,
   quoteInclude,
+  type AuditFilters,
   type QuoteWithChildren,
 } from './repository.js';
 
@@ -77,6 +80,9 @@ const isAdmin = (actor: Actor): boolean => actor.role === 'admin';
 export const getQuotes = (actor: Actor) =>
   listQuotes(isAdmin(actor) ? undefined : { createdById: actor.id });
 
+/** Cross-quote audit feed (admin only — enforced at the route via requireRole). */
+export const getAllAuditLog = (filters?: AuditFilters) => listAllAuditLog(filters);
+
 /** Throw 404 if the quote is missing, 403 if it isn't the actor's (and they aren't admin). */
 export const assertOwnership = async (quoteId: bigint, actor: Actor): Promise<void> => {
   const q = await prisma.quote.findUnique({
@@ -89,9 +95,9 @@ export const assertOwnership = async (quoteId: bigint, actor: Actor): Promise<vo
   }
 };
 
-export const getAuditLog = async (id: bigint) => {
+export const getAuditLog = async (id: bigint, filters?: AuditFilters) => {
   await getQuote(id);
-  return listAuditLog(id);
+  return listAuditLog(id, filters);
 };
 
 export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuoteInput) => {
@@ -218,6 +224,10 @@ export const changeStatus = async (
         ...(guardrailNote ? [{ field: 'margin_guardrail', oldValue: null, newValue: guardrailNote }] : []),
       ],
     });
+    // Knowledge-base capture on outcome states (P1-19f).
+    if (CAPTURE_STATUSES.includes(status)) {
+      await captureKbEntry(tx, quote, actor.id, status, computeMargin(quote).margin.toString());
+    }
     return quote;
   });
 };

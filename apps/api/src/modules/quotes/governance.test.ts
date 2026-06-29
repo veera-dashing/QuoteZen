@@ -175,6 +175,39 @@ describe('named-ratio description (refinement)', () => {
   });
 });
 
+describe('KB capture (P1-19f)', () => {
+  it('captures a completed quote into the knowledge base on issue', async () => {
+    const id = await newQuoteWithScreen(admin());
+    const issued = await app.inject({ method: 'POST', url: `/quotes/${id}/status`, headers: admin(), payload: { status: 'issued' } });
+    expect(issued.statusCode).toBe(200);
+
+    const kb = await app.inject({ method: 'GET', url: '/kb', headers: admin() });
+    expect(kb.statusCode).toBe(200);
+    const entries = kb.json() as Array<{ jobReference: string; outcome: string; screenCount: number }>;
+    const mine = entries.find((e) => e.jobReference.startsWith(JOB_PREFIX));
+    expect(mine).toBeTruthy();
+    expect(mine!.outcome).toBe('issued');
+    expect(mine!.screenCount).toBeGreaterThanOrEqual(1);
+
+    // KB holds sensitive history → sales allowed, viewers/anon are not (sales is allowed here).
+    const salesKb = await app.inject({ method: 'GET', url: '/kb', headers: sales() });
+    expect(salesKb.statusCode).toBe(200);
+  });
+});
+
+describe('audit viewer (P1-03.3)', () => {
+  it('admin can read the cross-quote feed and filter; sales is forbidden', async () => {
+    const all = await app.inject({ method: 'GET', url: '/admin/audit?action=status_change', headers: admin() });
+    expect(all.statusCode).toBe(200);
+    const rows = all.json() as Array<{ action: string; quote: { jobReference: string } }>;
+    expect(rows.every((r) => r.action === 'status_change')).toBe(true);
+    expect(rows[0]).toHaveProperty('quote');
+
+    const forbidden = await app.inject({ method: 'GET', url: '/admin/audit', headers: sales() });
+    expect(forbidden.statusCode).toBe(403);
+  });
+});
+
 describe('RBAC user management', () => {
   it('admin can list users; sales is forbidden', async () => {
     const adminList = await app.inject({ method: 'GET', url: '/admin/users', headers: admin() });

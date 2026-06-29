@@ -51,9 +51,37 @@ export const listQuotes = (where?: Prisma.QuoteWhereInput) =>
 
 export const findCurrencyByCode = (code: string) => prisma.currency.findUnique({ where: { code } });
 
-export const listAuditLog = (quoteId: bigint) =>
+export interface AuditFilters {
+  field?: string;
+  userId?: bigint;
+  action?: string;
+  from?: Date;
+  to?: Date;
+}
+
+const auditWhere = (filters?: AuditFilters): Prisma.QuoteAuditLogWhereInput => ({
+  fieldName: filters?.field,
+  userId: filters?.userId,
+  action: filters?.action as Prisma.QuoteAuditLogWhereInput['action'],
+  changedAt:
+    filters?.from || filters?.to ? { gte: filters?.from, lte: filters?.to } : undefined,
+});
+
+export const listAuditLog = (quoteId: bigint, filters?: AuditFilters) =>
   prisma.quoteAuditLog.findMany({
-    where: { quoteId },
+    where: { quoteId, ...auditWhere(filters) },
     orderBy: { changedAt: 'desc' },
     include: { user: { select: { id: true, name: true, email: true } } },
+  });
+
+/** Cross-quote audit feed (admin only). */
+export const listAllAuditLog = (filters?: AuditFilters) =>
+  prisma.quoteAuditLog.findMany({
+    where: auditWhere(filters),
+    orderBy: { changedAt: 'desc' },
+    take: 500,
+    include: {
+      user: { select: { id: true, name: true, email: true } },
+      quote: { select: { id: true, jobReference: true } },
+    },
   });
