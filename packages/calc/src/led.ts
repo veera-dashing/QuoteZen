@@ -70,16 +70,32 @@ export const ledSpec = (input: LedSpecInput): LedSpec => {
 };
 
 /**
- * Spares allowance (P1-16.2): a percentage of the supply cost (default 10%), kept as both cost and
- * the marked-up sell at the LED markup.
+ * Spares allowance (P1-16.2): a percentage of the supply cost (default from config, 10%), kept as
+ * both cost and the marked-up sell at the LED markup.
  */
 export const sparesCost = (
   supplyCostAud: Decimal | number | string,
   config: PricingConfig,
-  sparesPct = 0.1,
+  sparesPct = config.addOns.sparesPct,
 ): CostSell => {
   if (sparesPct < 0) throw new RangeError('led: sparesPct must be >= 0');
   const costAud = mul(supplyCostAud, sparesPct);
+  return { costAud: round(costAud), sellAud: round(mul(costAud, config.markups.led)) };
+};
+
+/** Packaging allowance (P1-16.2): a configurable percentage of supply cost (0 → no line). */
+export const packagingCost = (
+  supplyCostAud: Decimal | number | string,
+  config: PricingConfig,
+): CostSell => {
+  const costAud = mul(supplyCostAud, config.addOns.packagingPct);
+  return { costAud: round(costAud), sellAud: round(mul(costAud, config.markups.led)) };
+};
+
+/** Receiver-card cost (P1-16.2): per-cabinet cost from config (0 → no line), marked up at LED markup. */
+export const receiverCardCost = (cabinetCount: number, config: PricingConfig): CostSell => {
+  if (cabinetCount < 0) throw new RangeError('led: cabinetCount must be >= 0');
+  const costAud = mul(cabinetCount, config.addOns.receiverCardCostAud);
   return { costAud: round(costAud), sellAud: round(mul(costAud, config.markups.led)) };
 };
 

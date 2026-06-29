@@ -8,8 +8,21 @@ export const quoteInclude = {
   client: true,
   location: true,
   currency: true,
-  ledScreens: { include: { components: true, costBreakdown: true } },
-  lcdScreens: { include: { items: true } },
+  ledScreens: {
+    include: {
+      components: {
+        include: { controller: true, ledPeripheral: true, mediaplayer: true, peripheral: true },
+      },
+      costBreakdown: true,
+      ledProduct: true,
+      warranty: true,
+      serviceHours: true,
+      installMethod: true,
+      frame: true,
+      gob: true,
+    },
+  },
+  lcdScreens: { include: { items: { include: { display: true } }, display: true, warranty: true } },
   mediaplayers: { include: { mediaplayer: true } },
   peripherals: { include: { peripheral: true } },
   manufacturedItems: { include: { product: true } },

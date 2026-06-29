@@ -3,6 +3,7 @@ export * from './currency.js';
 export * from './geometry.js';
 export * from './config.js';
 export * from './validation.js';
+export * from './descriptions.js';
 export * from './lines.js';
 export * from './led.js';
 export * from './install.js';

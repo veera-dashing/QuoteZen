@@ -168,11 +168,20 @@ versioning/governance. Google OAuth + Zoho + all AI (Phase 2) deferred by decisi
   (<2.5mm), outdoor deps (sensor + multifunction card + high-temp player), controller↔pixels,
   frame↔dims, portrait, video-wall; severities error/warning/cannot_evaluate (partial data never a
   false error).
-- ✅ **Pricing add-ons (P1-16 partial)** — spares (10% configurable) and freight weight = MAX(volumetric,
-  actual) added to `calc/led.ts` and wired into the screen pricing. **Remaining:** dedicated itemised
-  `POST /quotes/:id/price`, receiver-cards add-on, cost-vs-sell role masking (see task board).
-- **Next blocks:** quote outputs (BOM/PI, proposal, solution summary, PM handoff — P1-18), then
-  versioning/snapshots + margin guardrail + RBAC UI (P1-04 / P1-19g).
+- ✅ **Pricing add-ons (P1-16)** — spares (10%, configurable), packaging %, receiver-cards/cabinet
+  (config-driven, 0 until set) in `calc/led.ts`; freight weight = MAX(volumetric, actual); all wired
+  into screen pricing. `PricingConfig.addOns` + settings (`spares_pct`/`packaging_pct`/
+  `receiver_card_cost`). **Itemised price** `POST /quotes/:id/price` returns every stored line with
+  raw **cost masked for non-admin** (sell-only); admin sees cost (BR-081). Tested.
+- ✅ **Quote outputs (P1-18)** — `calc/descriptions.ts` deterministic per-screen descriptions;
+  `outputs.ts` builds procurement **BOM/PI** (components + cost lines, cost role-gated), **solution
+  summary**, **PM handoff**; proposal **PDF** now includes descriptions + assumptions/exclusions/T&Cs.
+  Endpoints `GET /quotes/:id/{descriptions,bom,solution-summary,pm-handoff}`; wizard Review has a
+  **Documents** panel. Tested + verified live.
+  - *Refinement:* descriptions use the raw geometric ratio (gcd, e.g. 7:12); switching to the named
+    `screen_ratios` label (9:16) is a small follow-up.
+- **Next block:** versioning/snapshots + diff + rollback (P1-04), margin guardrail (P1-19g.2),
+  RBAC role-management UI.
 
 **Local Postgres for dev/tests:**
 ```bash

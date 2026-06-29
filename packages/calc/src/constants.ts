@@ -42,9 +42,19 @@ export interface FreightConfig {
   seaMultiple: number;
 }
 
+export interface AddOnConfig {
+  /** Spares allowance as a fraction of supply cost (default 0.10). */
+  sparesPct: number;
+  /** Packaging as a fraction of supply cost (0 = no line until configured). */
+  packagingPct: number;
+  /** Receiver-card cost per cabinet, AUD (0 = no line until configured). */
+  receiverCardCostAud: number;
+}
+
 export interface PricingConfig {
   markups: Markups;
   freight: FreightConfig;
+  addOns: AddOnConfig;
   /** AUD/X budget rates: 1 AUD = rate units of X. Convert a foreign cost to AUD by dividing. */
   rates: Record<CurrencyCode, number>;
 }
@@ -68,6 +78,9 @@ export const WORKBOOK_DEFAULTS: PricingConfig = {
     seaDestinationAud: 1200,
     seaMultiple: 1.3,
   },
+  // Spares 10% per the workbook; packaging % and receiver-card cost are admin-configured (0 until set,
+  // pending the rule-extraction session — never fabricate a number).
+  addOns: { sparesPct: 0.1, packagingPct: 0, receiverCardCostAud: 0 },
   // Reference Data F2:F9 (budget rates).
   rates: {
     AUD: 1,

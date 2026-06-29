@@ -164,6 +164,79 @@ export const changeStatus = async (
   });
 };
 
+export interface PriceLine {
+  label: string;
+  category: string | null;
+  qty: number;
+  /** Cost is null for non-admin actors (BR-081: sell visible, cost gated). */
+  cost: string | null;
+  sell: string | null;
+}
+export interface PriceSection {
+  type: 'led' | 'lcd' | 'licence';
+  name: string;
+  lines: PriceLine[];
+  total: string;
+}
+
+/**
+ * Fully itemised price view (P1-16.8): recompute totals, then return every stored line grouped by
+ * screen, with raw cost masked for non-admin actors. Deterministic for a given persisted state.
+ */
+export const priceQuote = async (actor: Actor, id: bigint) => {
+  await recomputeQuote(actor.id, id);
+  const quote = await getQuote(id);
+  const showCost = isAdmin(actor);
+
+  const sections: PriceSection[] = [];
+  for (const s of quote.ledScreens) {
+    sections.push({
+      type: 'led',
+      name: s.screenName ?? 'LED screen',
+      total: dec(s.priceTotal),
+      lines: s.costBreakdown.map((l) => ({
+        label: l.lineLabel,
+        category: l.category,
+        qty: 1,
+        cost: showCost ? dec(l.cost) : null,
+        sell: dec(l.sell),
+      })),
+    });
+  }
+  for (const s of quote.lcdScreens) {
+    sections.push({
+      type: 'lcd',
+      name: s.screenName ?? 'LCD display',
+      total: dec(s.priceTotal),
+      lines: s.items.map((i) => ({
+        label: i.description ?? i.itemType,
+        category: i.itemType,
+        qty: Number(i.qty),
+        cost: showCost ? dec(i.unitCost) : null,
+        sell: dec(i.unitSell),
+      })),
+    });
+  }
+
+  return {
+    costVisible: showCost,
+    sections,
+    licences: quote.licences.map((l) => ({
+      screenType: l.screenType,
+      tier: l.tier,
+      qty: l.qty,
+      isInteractive: l.isInteractive,
+      annual: dec(l.licenceComponent?.value),
+    })),
+    totals: {
+      equipment: dec(quote.totalEquipment),
+      services: dec(quote.totalServices),
+      recurring: dec(quote.totalRecurring),
+      grandTotal: dec(quote.grandTotal),
+    },
+  };
+};
+
 /** Map a quote's children to calc contributions, then recompute and persist the totals. */
 export const recomputeQuote = async (userId: bigint, id: bigint) => {
   const quote = await getQuote(id);

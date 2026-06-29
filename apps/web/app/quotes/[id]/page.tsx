@@ -396,9 +396,18 @@ function LicenceStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
   );
 }
 
+interface BomScreen {
+  screenId: string;
+  description: string;
+  components: Array<{ type: string; name: string; qty: number; unitSell: string | null }>;
+  costLines: Array<{ label: string; sell: string | null }>;
+}
+
 function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [audit, setAudit] = useState<Audit[]>([]);
+  const [bom, setBom] = useState<BomScreen[] | null>(null);
+  const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
 
   const loadAudit = useCallback(() => {
     api<Audit[]>(`/quotes/${quote.id}/audit`).then(setAudit);
@@ -431,18 +440,9 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
       <div className="card">
         <div className="topbar">
           <h3 style={{ margin: 0 }}>Totals</h3>
-          <div className="row-actions">
-            <button
-              onClick={() =>
-                downloadFile(`/quotes/${quote.id}/export.pdf`, `quote-${quote.jobReference}.pdf`)
-              }
-            >
-              ⬇ Export PDF
-            </button>
-            <button className="primary" onClick={recompute} disabled={busy}>
-              {busy ? 'Recomputing…' : '↻ Recompute'}
-            </button>
-          </div>
+          <button className="primary" onClick={recompute} disabled={busy}>
+            {busy ? 'Recomputing…' : '↻ Recompute'}
+          </button>
         </div>
         <div className="totals">
           <div className="stat"><div className="label">Equipment</div><div className="value">{cur} {Number(quote.totalEquipment).toLocaleString()}</div></div>
@@ -450,6 +450,46 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
           <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(quote.totalRecurring).toLocaleString()}</div></div>
           <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(quote.grandTotal).toLocaleString()}</div></div>
         </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Documents</h3>
+        <div className="row-actions">
+          <button onClick={() => downloadFile(`/quotes/${quote.id}/export.pdf`, `quote-${quote.jobReference}.pdf`)}>
+            ⬇ Proposal PDF
+          </button>
+          <button onClick={() => api<BomScreen[]>(`/quotes/${quote.id}/bom`).then(setBom)}>📦 BOM / PI</button>
+          <button onClick={() => api<Record<string, unknown>>(`/quotes/${quote.id}/solution-summary`).then(setSummary)}>
+            📋 Solution summary
+          </button>
+          <button onClick={() => downloadFile(`/quotes/${quote.id}/pm-handoff`, `pm-handoff-${quote.jobReference}.json`)}>
+            ⬇ PM handoff
+          </button>
+        </div>
+        {bom && (
+          <div style={{ marginTop: 14 }}>
+            {bom.map((s) => (
+              <div key={s.screenId} style={{ marginBottom: 12 }}>
+                <b>{s.description}</b>
+                <div className="table-wrap" style={{ marginTop: 6 }}>
+                  <table>
+                    <thead><tr><th>Component</th><th>Type</th><th className="cell-num">Qty</th></tr></thead>
+                    <tbody>
+                      {s.components.map((c, i) => (
+                        <tr key={i}><td>{c.name}</td><td className="muted">{c.type}</td><td className="cell-num">{c.qty}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {summary && (
+          <pre style={{ marginTop: 14, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, overflowX: 'auto', fontSize: 12 }}>
+            {JSON.stringify(summary, null, 2)}
+          </pre>
+        )}
       </div>
 
       <div className="card">

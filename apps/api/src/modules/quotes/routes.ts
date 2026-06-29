@@ -17,12 +17,14 @@ import {
   getAuditLog,
   getQuote,
   getQuotes,
+  priceQuote,
   recomputeQuote,
   updateQuote,
   type Actor,
 } from './service.js';
 import { addLcdScreen, addLedScreen, addLicence, configureForQuote, deleteLedScreen } from './screens.js';
 import { buildQuotePdf } from './pdf.js';
+import { buildBom, buildDescriptions, buildPmHandoff, buildSolutionSummary } from './outputs.js';
 
 const configureSchema = z.object({
   desiredWidthMm: z.coerce.number().int().positive(),
@@ -74,6 +76,13 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     return recomputeQuote(userId(request), id);
   });
 
+  // Fully itemised price (every line), cost masked for non-admin (P1-16.8 / BR-081).
+  app.post('/quotes/:id/price', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return priceQuote(actor(request), id);
+  });
+
   app.get('/quotes/:id/audit', auth, async (request) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
@@ -89,6 +98,31 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
       .header('content-type', 'application/pdf')
       .header('content-disposition', `attachment; filename="quote-${quote.jobReference}.pdf"`)
       .send(pdf);
+  });
+
+  // ── Quote outputs (P1-18) ──
+  app.get('/quotes/:id/descriptions', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return buildDescriptions(await getQuote(id));
+  });
+
+  app.get('/quotes/:id/bom', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return buildBom(await getQuote(id), actor(request).role === 'admin');
+  });
+
+  app.get('/quotes/:id/solution-summary', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return buildSolutionSummary(await getQuote(id), actor(request).role === 'admin');
+  });
+
+  app.get('/quotes/:id/pm-handoff', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return buildPmHandoff(await getQuote(id));
   });
 
   // ── Technical configuration engine (P1-13): ranked valid configs for an opening ──

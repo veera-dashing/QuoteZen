@@ -9,6 +9,8 @@ import {
   ledSpec,
   ledSupply,
   markupLine,
+  packagingCost,
+  receiverCardCost,
   sparesCost,
   type ConfigProduct,
   type PricedLine,
@@ -115,12 +117,21 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
       // Spares allowance (10% of supply by default).
       const spares = sparesCost(supply.costAud, config);
       lines.push({
-        label: 'Spares (10%)',
+        label: 'Spares',
         bucket: 'screen_mediaplayer',
         qty: 1,
         costAud: spares.costAud,
         sellAud: spares.sellAud,
       });
+      // Packaging + receiver cards (config-driven; only added when configured > 0).
+      const packaging = packagingCost(supply.costAud, config);
+      if (packaging.costAud.greaterThan(0)) {
+        lines.push({ label: 'Packaging', bucket: 'screen_mediaplayer', qty: 1, costAud: packaging.costAud, sellAud: packaging.sellAud });
+      }
+      const receivers = receiverCardCost(spec.cabinetCount, config);
+      if (receivers.costAud.greaterThan(0)) {
+        lines.push({ label: 'Receiver cards', bucket: 'screen_mediaplayer', qty: 1, costAud: receivers.costAud, sellAud: receivers.sellAud });
+      }
     }
   }
 

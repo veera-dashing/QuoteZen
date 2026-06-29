@@ -26,6 +26,89 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+describe('itemised price + cost masking (P1-16.8 / BR-081)', () => {
+  it('admin sees itemised cost + sell; sales sees sell only on their own quote', async () => {
+    const product = await prisma.ledProduct.findFirst({
+      where: { minCabinetWMm: { not: null }, pixelPitchH: { not: null }, costPerSqmUsd: { not: null } },
+    });
+    // sales logs in and builds their own quote (scoping lets them price it)
+    const salesLogin = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'sales@quotezen.local', password: 'demo' },
+    });
+    const salesAuth = { authorization: `Bearer ${salesLogin.json().token as string}` };
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: salesAuth,
+      payload: { jobReference: `${JOB_PREFIX}price-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const id = created.json().id as string;
+    await app.inject({
+      method: 'POST',
+      url: `/quotes/${id}/led-screens`,
+      headers: salesAuth,
+      payload: { ledProductId: Number(product!.id), desiredWidthMm: 1120, desiredHeightMm: 1920, rotateCabinets: true },
+    });
+
+    // sales price → cost masked
+    const salesPrice = await app.inject({ method: 'POST', url: `/quotes/${id}/price`, headers: salesAuth });
+    expect(salesPrice.statusCode).toBe(200);
+    const sBody = salesPrice.json() as { costVisible: boolean; sections: Array<{ lines: Array<{ cost: string | null; sell: string | null }> }> };
+    expect(sBody.costVisible).toBe(false);
+    expect(sBody.sections[0]!.lines.every((l) => l.cost === null)).toBe(true);
+    expect(sBody.sections[0]!.lines.some((l) => l.sell !== null)).toBe(true);
+
+    // admin price (admin sees all) → cost visible
+    const adminPrice = await app.inject({ method: 'POST', url: `/quotes/${id}/price`, headers: auth() });
+    const aBody = adminPrice.json() as { costVisible: boolean; sections: Array<{ lines: Array<{ cost: string | null }> }> };
+    expect(aBody.costVisible).toBe(true);
+    expect(aBody.sections[0]!.lines.some((l) => l.cost !== null)).toBe(true);
+  });
+});
+
+describe('quote outputs (P1-18)', () => {
+  it('produces descriptions, BOM and solution summary from a configured screen', async () => {
+    const product = await prisma.ledProduct.findFirst({
+      where: { minCabinetWMm: { not: null }, pixelPitchH: { not: null }, costPerSqmUsd: { not: null } },
+    });
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: auth(),
+      payload: { jobReference: `${JOB_PREFIX}out-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const id = created.json().id as string;
+    await app.inject({
+      method: 'POST',
+      url: `/quotes/${id}/led-screens`,
+      headers: auth(),
+      payload: { screenName: 'Window', ledProductId: Number(product!.id), desiredWidthMm: 1120, desiredHeightMm: 1920, rotateCabinets: true },
+    });
+
+    const desc = await app.inject({ method: 'GET', url: `/quotes/${id}/descriptions`, headers: auth() });
+    expect(desc.statusCode).toBe(200);
+    expect((desc.json() as Array<{ description: string }>)[0]!.description).toMatch(/LED Screen/);
+
+    const bom = await app.inject({ method: 'GET', url: `/quotes/${id}/bom`, headers: auth() });
+    expect(bom.statusCode).toBe(200);
+    const bomBody = bom.json() as Array<{ components: unknown[]; costLines: unknown[] }>;
+    expect(bomBody[0]!.components.length).toBeGreaterThan(0);
+    expect(bomBody[0]!.costLines.length).toBeGreaterThan(0);
+
+    const summary = await app.inject({ method: 'GET', url: `/quotes/${id}/solution-summary`, headers: auth() });
+    expect(summary.statusCode).toBe(200);
+    const sBody = summary.json() as { assumptions: string[]; screens: unknown[] };
+    expect(sBody.assumptions.length).toBeGreaterThan(0);
+    expect(sBody.screens.length).toBe(1);
+
+    const pm = await app.inject({ method: 'GET', url: `/quotes/${id}/pm-handoff`, headers: auth() });
+    expect(pm.statusCode).toBe(200);
+  });
+});
+
 describe('configuration engine', () => {
   it('returns ranked valid configs for an opening from the live catalogue', async () => {
     const created = await app.inject({

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { WORKBOOK_DEFAULTS } from './constants.js';
-import { freightWeightKg, ledSpec, ledSupply, seaFreightAud, sparesCost } from './led.js';
+import {
+  freightWeightKg,
+  ledSpec,
+  ledSupply,
+  packagingCost,
+  receiverCardCost,
+  seaFreightAud,
+  sparesCost,
+} from './led.js';
 
 describe('ledSupply', () => {
   it('prices supply as area × cost/sqm(USD)→AUD × LED markup', () => {
@@ -46,6 +54,22 @@ describe('sparesCost', () => {
   });
   it('honours a configurable percentage', () => {
     expect(sparesCost(5000, WORKBOOK_DEFAULTS, 0.05).costAud.toString()).toBe('250');
+  });
+});
+
+describe('packaging & receiver-card add-ons (config-driven)', () => {
+  it('packaging is zero with the default config (admin-configured)', () => {
+    expect(packagingCost(5000, WORKBOOK_DEFAULTS).costAud.toString()).toBe('0');
+  });
+  it('packaging applies a configured percentage', () => {
+    const cfg = { ...WORKBOOK_DEFAULTS, addOns: { ...WORKBOOK_DEFAULTS.addOns, packagingPct: 0.02 } };
+    expect(packagingCost(5000, cfg).costAud.toString()).toBe('100'); // 2%
+    expect(packagingCost(5000, cfg).sellAud.toString()).toBe('150'); // ×1.5
+  });
+  it('receiver cards cost per cabinet when configured', () => {
+    const cfg = { ...WORKBOOK_DEFAULTS, addOns: { ...WORKBOOK_DEFAULTS.addOns, receiverCardCostAud: 30 } };
+    expect(receiverCardCost(42, cfg).costAud.toString()).toBe('1260'); // 42 × 30
+    expect(receiverCardCost(0, WORKBOOK_DEFAULTS).costAud.toString()).toBe('0');
   });
 });
 

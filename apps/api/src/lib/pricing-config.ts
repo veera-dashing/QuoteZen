@@ -28,6 +28,7 @@ export const loadPricingConfig = async (): Promise<PricingConfig> => {
 
   const m = WORKBOOK_DEFAULTS.markups;
   const f = WORKBOOK_DEFAULTS.freight;
+  const a = WORKBOOK_DEFAULTS.addOns;
   return {
     markups: {
       philips: num('philips_markup', m.philips),
@@ -46,6 +47,11 @@ export const loadPricingConfig = async (): Promise<PricingConfig> => {
       seaTransitPerCbmUsd: f.seaTransitPerCbmUsd,
       seaDestinationAud: f.seaDestinationAud,
       seaMultiple: f.seaMultiple,
+    },
+    addOns: {
+      sparesPct: num('spares_pct', a.sparesPct),
+      packagingPct: num('packaging_pct', a.packagingPct),
+      receiverCardCostAud: num('receiver_card_cost', a.receiverCardCostAud),
     },
     rates: rateMap,
   };
