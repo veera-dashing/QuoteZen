@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.next/
+out/
+*.tsbuildinfo
+.turbo/
+
+# Test / coverage
+coverage/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Prisma
+packages/db/prisma/*.db
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log
