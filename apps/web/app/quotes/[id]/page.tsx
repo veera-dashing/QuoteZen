@@ -92,6 +92,20 @@ function DetailsStep({ quote }: { quote: Quote }) {
   );
 }
 
+interface ConfigOption {
+  productId: string;
+  model: string;
+  rotated: boolean;
+  widthMm: number;
+  heightMm: number;
+  cabinetCount: number;
+  resolutionWpx: number;
+  resolutionHpx: number;
+  ratioLabel: string | null;
+  fillPercent: string;
+  cutCabinetSuggested: boolean;
+}
+
 function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
   const [products, setProducts] = useState<Opt[]>([]);
   const [productId, setProductId] = useState('');
@@ -101,12 +115,31 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
   const [rotate, setRotate] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [options, setOptions] = useState<ConfigOption[] | null>(null);
+  const [reasons, setReasons] = useState<string[]>([]);
 
   useEffect(() => {
     api<{ rows: Opt[] }>('/admin/led-products?take=300').then((r) => setProducts(r.rows));
   }, []);
 
-  const add = async () => {
+  const configure = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await api<{ options: ConfigOption[]; reasons: string[] }>(
+        `/quotes/${quote.id}/screens/configure`,
+        { method: 'POST', body: JSON.stringify({ desiredWidthMm: Number(w), desiredHeightMm: Number(h), allowRotation: rotate }) },
+      );
+      setOptions(res.options);
+      setReasons(res.reasons);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addScreen = async (chosenProductId?: string, rotated?: boolean) => {
     setBusy(true);
     setErr(null);
     try {
@@ -114,13 +147,14 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
         method: 'POST',
         body: JSON.stringify({
           screenName: name || undefined,
-          ledProductId: productId ? Number(productId) : undefined,
+          ledProductId: Number(chosenProductId ?? productId),
           desiredWidthMm: Number(w),
           desiredHeightMm: Number(h),
-          rotateCabinets: rotate,
+          rotateCabinets: rotated ?? rotate,
         }),
       });
       setName('');
+      setOptions(null);
       await onChange();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed');
@@ -137,7 +171,64 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
   return (
     <div>
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Add LED screen</h3>
+        <h3 style={{ marginTop: 0 }}>Configure from opening</h3>
+        <p className="muted">Enter the opening size; the engine ranks every LED product that fits.</p>
+        <div className="grid3">
+          <div><label>Screen name</label><input value={name} onChange={(e) => setName(e.target.value)} /></div>
+          <div><label>Width (mm)</label><input type="number" value={w} onChange={(e) => setW(e.target.value)} /></div>
+          <div><label>Height (mm)</label><input type="number" value={h} onChange={(e) => setH(e.target.value)} /></div>
+          <div>
+            <label>Allow rotation</label>
+            <input type="checkbox" checked={rotate} onChange={(e) => setRotate(e.target.checked)} style={{ width: 'auto' }} />
+          </div>
+        </div>
+        {err && <div className="error">{err}</div>}
+        <div className="step-actions">
+          <button className="primary" onClick={configure} disabled={busy}>
+            {busy ? 'Configuring…' : '🔍 Find best-fit products'}
+          </button>
+        </div>
+      </div>
+
+      {options && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Ranked configurations ({options.length})</h3>
+          {options.length === 0 && <p className="muted">No fit: {reasons.join(' ')}</p>}
+          {options.length > 0 && (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Product</th><th>Size (mm)</th><th>Resolution</th><th>Ratio</th>
+                    <th className="cell-num">Fill %</th><th className="cell-num">Cabinets</th><th>Cut?</th><th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {options.slice(0, 25).map((o, i) => (
+                    <tr key={`${o.productId}-${o.rotated}-${i}`}>
+                      <td>{o.model}{o.rotated ? ' (rot)' : ''}</td>
+                      <td>{o.widthMm}×{o.heightMm}</td>
+                      <td>{o.resolutionWpx}×{o.resolutionHpx}</td>
+                      <td>{o.ratioLabel ?? '—'}</td>
+                      <td className="cell-num">{o.fillPercent}</td>
+                      <td className="cell-num">{o.cabinetCount}</td>
+                      <td>{o.cutCabinetSuggested ? '⚠️' : '—'}</td>
+                      <td className="actions">
+                        <button className="primary" onClick={() => addScreen(o.productId, o.rotated)} disabled={busy}>
+                          Use
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>…or add a specific product</h3>
         <div className="grid3">
           <div>
             <label>Product</label>
@@ -150,17 +241,9 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
               ))}
             </select>
           </div>
-          <div><label>Screen name</label><input value={name} onChange={(e) => setName(e.target.value)} /></div>
-          <div>
-            <label>Rotate cabinets</label>
-            <input type="checkbox" checked={rotate} onChange={(e) => setRotate(e.target.checked)} style={{ width: 'auto' }} />
-          </div>
-          <div><label>Width (mm)</label><input type="number" value={w} onChange={(e) => setW(e.target.value)} /></div>
-          <div><label>Height (mm)</label><input type="number" value={h} onChange={(e) => setH(e.target.value)} /></div>
         </div>
-        {err && <div className="error">{err}</div>}
         <div className="step-actions">
-          <button className="primary" onClick={add} disabled={busy || !productId}>
+          <button className="primary" onClick={() => addScreen()} disabled={busy || !productId}>
             {busy ? 'Pricing…' : '+ Add & price'}
           </button>
         </div>

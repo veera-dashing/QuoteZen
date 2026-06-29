@@ -26,6 +26,29 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+describe('configuration engine', () => {
+  it('returns ranked valid configs for an opening from the live catalogue', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: auth(),
+      payload: { jobReference: `${JOB_PREFIX}cfg-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const id = created.json().id as string;
+    const res = await app.inject({
+      method: 'POST',
+      url: `/quotes/${id}/screens/configure`,
+      headers: auth(),
+      payload: { desiredWidthMm: 1120, desiredHeightMm: 1920 },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { options: Array<{ model: string; fillPercent: string; resolutionWpx: number }>; reasons: string[] };
+    expect(body.options.length).toBeGreaterThan(0);
+    expect(body.options[0]).toHaveProperty('fillPercent');
+    expect(body.options[0]).toHaveProperty('resolutionWpx');
+  });
+});
+
 describe('quote wizard backend', () => {
   it('prices an LED screen from a real product and rolls it into the quote total', async () => {
     // a product with the specs needed to price (cabinet dims, pitch, cost/sqm)

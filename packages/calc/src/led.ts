@@ -70,6 +70,29 @@ export const ledSpec = (input: LedSpecInput): LedSpec => {
 };
 
 /**
+ * Spares allowance (P1-16.2): a percentage of the supply cost (default 10%), kept as both cost and
+ * the marked-up sell at the LED markup.
+ */
+export const sparesCost = (
+  supplyCostAud: Decimal | number | string,
+  config: PricingConfig,
+  sparesPct = 0.1,
+): CostSell => {
+  if (sparesPct < 0) throw new RangeError('led: sparesPct must be >= 0');
+  const costAud = mul(supplyCostAud, sparesPct);
+  return { costAud: round(costAud), sellAud: round(mul(costAud, config.markups.led)) };
+};
+
+/**
+ * Shipping weight used for freight (P1-16.4): the greater of volumetric and actual weight.
+ * Volumetric here = actual × the product's volumetric modifier (a packaging-density factor ≥ 1).
+ */
+export const freightWeightKg = (actualKg: number, volumetricModifier = 1): number => {
+  const volumetricKg = actualKg * Math.max(1, volumetricModifier);
+  return Math.max(actualKg, volumetricKg);
+};
+
+/**
  * Sea-freight cost for a shipment (AUD), from `Reference Data` constants:
  * `(originUsd + transitPerCbmUsd × cbm) / usdRate + destinationAud`, times the sea multiple.
  */

@@ -21,8 +21,14 @@ import {
   updateQuote,
   type Actor,
 } from './service.js';
-import { addLcdScreen, addLedScreen, addLicence, deleteLedScreen } from './screens.js';
+import { addLcdScreen, addLedScreen, addLicence, configureForQuote, deleteLedScreen } from './screens.js';
 import { buildQuotePdf } from './pdf.js';
+
+const configureSchema = z.object({
+  desiredWidthMm: z.coerce.number().int().positive(),
+  desiredHeightMm: z.coerce.number().int().positive(),
+  allowRotation: z.boolean().optional(),
+});
 
 const idParam = z.object({ id: z.coerce.bigint() });
 
@@ -83,6 +89,14 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
       .header('content-type', 'application/pdf')
       .header('content-disposition', `attachment; filename="quote-${quote.jobReference}.pdf"`)
       .send(pdf);
+  });
+
+  // ── Technical configuration engine (P1-13): ranked valid configs for an opening ──
+  app.post('/quotes/:id/screens/configure', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const body = parse(configureSchema, request.body);
+    return configureForQuote(id, body);
   });
 
   // ── Child line items (wizard steps) ──

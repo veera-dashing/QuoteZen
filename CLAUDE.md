@@ -156,6 +156,24 @@ pnpm --filter @quotezen/web dev    # web on :3000  → /quotes
 - ✅ **Per-user scoping** — `assertOwnership` + scoped list: sales see only their own quotes (403 on
   others'); admins see all. Applied to every `/quotes/:id*` route. Tested.
 
+### Estimation platform — Phase 1 deterministic gaps (branch `feat/estimation-platform`)
+Implemented against `SEEN_Estimation_Consolidated.csv`. Order: config+validation+pricing → outputs →
+versioning/governance. Google OAuth + Zoho + all AI (Phase 2) deferred by decision.
+- ✅ **Config engine (P1-13)** — `calc/config.ts` `configureScreen`: iterates the LED catalogue, snaps
+  each product to whole cabinets (with rotation + dedupe), computes fill %, resolution, ratio,
+  cut-cabinet flag, quantities; ranks by closest-area fit with stable tiebreaks; empty-with-reasons on
+  no fit. `POST /quotes/:id/screens/configure` runs it over the live catalogue; wizard LED step shows
+  the ranked table → pick one to add. Verified live (280 ranked configs for 1120×1920).
+- ✅ **Validation engine (P1-15)** — `calc/validation.ts` `validateScreen`/`canFinalise`: GOB-required
+  (<2.5mm), outdoor deps (sensor + multifunction card + high-temp player), controller↔pixels,
+  frame↔dims, portrait, video-wall; severities error/warning/cannot_evaluate (partial data never a
+  false error).
+- ✅ **Pricing add-ons (P1-16 partial)** — spares (10% configurable) and freight weight = MAX(volumetric,
+  actual) added to `calc/led.ts` and wired into the screen pricing. **Remaining:** dedicated itemised
+  `POST /quotes/:id/price`, receiver-cards add-on, cost-vs-sell role masking (see task board).
+- **Next blocks:** quote outputs (BOM/PI, proposal, solution summary, PM handoff — P1-18), then
+  versioning/snapshots + margin guardrail + RBAC UI (P1-04 / P1-19g).
+
 **Local Postgres for dev/tests:**
 ```bash
 docker run -d --name quotezen-pg -e POSTGRES_USER=quotezen -e POSTGRES_PASSWORD=quotezen \

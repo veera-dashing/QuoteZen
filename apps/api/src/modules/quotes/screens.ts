@@ -1,12 +1,16 @@
 import { prisma } from '@quotezen/db';
 import {
   composeScreenTotals,
+  configureScreen,
   estimateInstallHours,
   fixedLine,
+  freightWeightKg,
   ledInstall,
   ledSpec,
   ledSupply,
   markupLine,
+  sparesCost,
+  type ConfigProduct,
   type PricedLine,
 } from '@quotezen/calc';
 import { applyMargin, applyMarkup, round } from '@quotezen/shared';
@@ -24,6 +28,48 @@ const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toS
  * (install/labour) are left at 0 for now — see CLAUDE.md (LED install breakdown is the next calc
  * increment); the value is explicit, not hidden.
  */
+/**
+ * Run the catalogue-iteration config engine (P1-13) over the live LED catalogue for a desired
+ * opening, returning ranked valid configurations the estimator can pick from.
+ */
+export const configureForQuote = async (
+  quoteId: bigint,
+  input: { desiredWidthMm: number; desiredHeightMm: number; allowRotation?: boolean },
+) => {
+  await getQuote(quoteId);
+  const [products, ratios] = await Promise.all([
+    prisma.ledProduct.findMany({
+      where: { minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchH: { not: null } },
+    }),
+    prisma.screenRatio.findMany(),
+  ]);
+  const cfgProducts: ConfigProduct[] = products.map((p) => ({
+    id: p.id.toString(),
+    model: p.model,
+    vendor: p.vendor,
+    minCabinetWMm: p.minCabinetWMm ?? 0,
+    minCabinetHMm: p.minCabinetHMm ?? 0,
+    pixelPitchHmm: Number(p.pixelPitchH ?? 0),
+    pixelPitchVmm: Number(p.pixelPitchV ?? p.pixelPitchH ?? 0),
+    category: p.serviceCategory,
+    serviceAccess: p.serviceAccess,
+    brightnessNits: p.brightnessNits,
+    costPerSqmUsd: p.costPerSqmUsd ? Number(p.costPerSqmUsd) : null,
+    kgPerSqm: p.kgPerSqm ? Number(p.kgPerSqm) : null,
+  }));
+  const ratioRows = ratios.map((r) => ({
+    minValue: Number(r.minValue),
+    maxValue: Number(r.maxValue),
+    ratioLabel: r.ratioLabel,
+  }));
+  return configureScreen(cfgProducts, {
+    desiredWidthMm: input.desiredWidthMm,
+    desiredHeightMm: input.desiredHeightMm,
+    allowRotation: input.allowRotation ?? true,
+    ratios: ratioRows,
+  });
+};
+
 export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedScreenInput) => {
   const quote = await getQuote(quoteId); // 404s if the quote is missing
   const config = await loadPricingConfig();
@@ -65,6 +111,15 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
         qty: 1,
         costAud: supply.costAud,
         sellAud: supply.sellAud,
+      });
+      // Spares allowance (10% of supply by default).
+      const spares = sparesCost(supply.costAud, config);
+      lines.push({
+        label: 'Spares (10%)',
+        bucket: 'screen_mediaplayer',
+        qty: 1,
+        costAud: spares.costAud,
+        sellAud: spares.sellAud,
       });
     }
   }
@@ -149,7 +204,8 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
     ]);
     if (product?.kgPerSqm) {
       const vol = Number(product.volumetricModifier ?? 1);
-      freightKg = round(area * Number(product.kgPerSqm) * vol).toNumber();
+      const actualKg = area * Number(product.kgPerSqm);
+      freightKg = round(freightWeightKg(actualKg, vol)).toNumber(); // MAX(volumetric, actual)
     }
     const freightCostAud = freightOpt?.rate && freightKg ? freightKg * Number(freightOpt.rate) : 0;
     labourHours = estimateInstallHours({
