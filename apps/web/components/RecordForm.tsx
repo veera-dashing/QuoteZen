@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { FieldDef, Row, TableDef } from '@/lib/types';
+import SearchSelect from '@/components/SearchSelect';
 
 interface Props {
   table: TableDef;
@@ -77,14 +78,12 @@ export default function RecordForm({ table, initial, onClose, onSave }: Props) {
                 style={{ width: 'auto' }}
               />
             ) : f.type === 'enum' ? (
-              <select value={String(values[f.name] ?? '')} onChange={(e) => set(f.name, e.target.value)}>
-                <option value="">—</option>
-                {f.options?.map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-              </select>
+              <SearchSelect
+                value={String(values[f.name] ?? '')}
+                onChange={(v) => set(f.name, v)}
+                allowEmpty={!f.required}
+                options={(f.options ?? []).map((o) => ({ value: o, label: o }))}
+              />
             ) : f.type === 'text' ? (
               <textarea
                 rows={3}

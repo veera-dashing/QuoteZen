@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import SearchSelect from '@/components/SearchSelect';
 
 interface Option {
   id: string;
@@ -83,36 +84,32 @@ export default function NewQuote() {
         <div className="grid2">
           <div className="field">
             <label>Client</label>
-            <select value={clientId} onChange={(e) => setClientId(e.target.value)}>
-              <option value="">—</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+            <SearchSelect
+              value={clientId}
+              onChange={setClientId}
+              allowEmpty
+              placeholder="Select client…"
+              options={clients.map((c) => ({ value: c.id, label: c.name ?? '' }))}
+            />
           </div>
           <div className="field">
             <label>Location</label>
-            <select value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-              <option value="">—</option>
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
+            <SearchSelect
+              value={locationId}
+              onChange={setLocationId}
+              allowEmpty
+              placeholder="Select location…"
+              options={locations.map((l) => ({ value: l.id, label: l.name ?? '' }))}
+            />
           </div>
         </div>
         <div className="field">
           <label>Currency</label>
-          <select value={currencyCode} onChange={(e) => setCurrencyCode(e.target.value)}>
-            {currencies.map((c) => (
-              <option key={c.id} value={c.code}>
-                {c.code}
-              </option>
-            ))}
-          </select>
+          <SearchSelect
+            value={currencyCode}
+            onChange={setCurrencyCode}
+            options={currencies.map((c) => ({ value: c.code ?? '', label: c.code ?? '' }))}
+          />
         </div>
         {viewers.length > 0 && (
           <div className="field">

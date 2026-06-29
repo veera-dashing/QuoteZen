@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api, downloadFile } from '@/lib/api';
+import SearchSelect from '@/components/SearchSelect';
 
 interface Opt { id: string; name?: string; model?: string; sell?: string | null; category?: string }
 interface LedScreen { id: string; screenName: string | null; resolutionWpx: number | null; resolutionHpx: number | null; priceTotal: string | null }
@@ -241,14 +242,13 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
         <div className="grid3">
           <div>
             <label>Product</label>
-            <select value={productId} onChange={(e) => setProductId(e.target.value)}>
-              <option value="">— select —</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.model}
-                </option>
-              ))}
-            </select>
+            <SearchSelect
+              value={productId}
+              onChange={setProductId}
+              allowEmpty
+              placeholder="Search products…"
+              options={products.map((p) => ({ value: p.id, label: p.model ?? '' }))}
+            />
           </div>
         </div>
         <div className="step-actions">
@@ -315,14 +315,13 @@ function LcdStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
         <div className="grid3">
           <div>
             <label>Display (Philips)</label>
-            <select value={displayId} onChange={(e) => setDisplayId(e.target.value)}>
-              <option value="">— select —</option>
-              {displays.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.model} {d.sell ? `($${d.sell})` : ''}
-                </option>
-              ))}
-            </select>
+            <SearchSelect
+              value={displayId}
+              onChange={setDisplayId}
+              allowEmpty
+              placeholder="Search displays…"
+              options={displays.map((d) => ({ value: d.id, label: `${d.model}${d.sell ? ` ($${d.sell})` : ''}` }))}
+            />
           </div>
           <div><label>Qty</label><input type="number" value={qty} onChange={(e) => setQty(e.target.value)} /></div>
         </div>

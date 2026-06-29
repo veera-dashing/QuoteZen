@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import SearchSelect from '@/components/SearchSelect';
 
 interface Role {
   id: string;
@@ -60,18 +61,12 @@ export default function UsersPage() {
               <tr key={u.id}>
                 <td>{u.name}</td>
                 <td className="muted">{u.email}</td>
-                <td>
-                  <select
+                <td style={{ minWidth: 160 }}>
+                  <SearchSelect
                     value={u.role.id}
-                    onChange={(e) => update(u.id, { roleId: Number(e.target.value) })}
-                    style={{ width: 160 }}
-                  >
-                    {roles.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(v) => update(u.id, { roleId: Number(v) })}
+                    options={roles.map((r) => ({ value: r.id, label: r.name }))}
+                  />
                 </td>
                 <td>
                   <input

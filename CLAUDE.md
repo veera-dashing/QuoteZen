@@ -128,6 +128,10 @@ Each module ships with its tests before the next begins.
   data table (search/paginate), and add/edit/delete forms driven by `/admin/_meta`. Builds clean;
   verified live in-browser against RDS (177 LED products listed, CRUD working).
 
+**UI note:** dropdowns use a reusable searchable combobox `apps/web/components/SearchSelect.tsx`
+(type-to-filter popover; click-away/Esc to close) instead of native `<select>` — used for client/
+location/currency, LED product (~177) & display pickers, admin form enums, and the user role picker.
+
 **Demo logins (password `demo`):** `admin@quotezen.local` (admin = full), `sales@quotezen.local`
 (sales = write, own quotes only), `viewer@quotezen.local` (viewer = read-only). The login page has
 one-click **Quick login** buttons for each. **RBAC:** quote mutations require `admin|sales` (viewer is
