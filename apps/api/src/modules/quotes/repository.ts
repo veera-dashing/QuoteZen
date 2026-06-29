@@ -23,6 +23,7 @@ export const quoteInclude = {
     },
   },
   lcdScreens: { include: { items: { include: { display: true } }, display: true, warranty: true } },
+  viewers: { include: { user: { select: { id: true, name: true, email: true } } } },
   mediaplayers: { include: { mediaplayer: true } },
   peripherals: { include: { peripheral: true } },
   manufacturedItems: { include: { product: true } },

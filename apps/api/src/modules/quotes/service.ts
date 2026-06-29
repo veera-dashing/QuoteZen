@@ -49,6 +49,9 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput) => {
         validUntil: input.validUntil ?? null,
         requestedShippingDate: input.requestedShippingDate ?? null,
         createdById: userId,
+        viewers: input.viewerUserIds?.length
+          ? { create: input.viewerUserIds.map((uid) => ({ userId: BigInt(uid) })) }
+          : undefined,
       },
       include: quoteInclude,
     });
@@ -58,6 +61,9 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput) => {
       action: 'create',
       entityTable: 'quotes',
       entityId: quote.id,
+      changes: input.viewerUserIds?.length
+        ? [{ field: 'viewers', oldValue: null, newValue: input.viewerUserIds.join(',') }]
+        : undefined,
     });
     return quote;
   });
@@ -78,19 +84,27 @@ export interface Actor {
 const isAdmin = (actor: Actor): boolean => actor.role === 'admin';
 
 export const getQuotes = (actor: Actor) =>
-  listQuotes(isAdmin(actor) ? undefined : { createdById: actor.id });
+  listQuotes(
+    isAdmin(actor)
+      ? undefined
+      : { OR: [{ createdById: actor.id }, { viewers: { some: { userId: actor.id } } }] },
+  );
 
 /** Cross-quote audit feed (admin only — enforced at the route via requireRole). */
 export const getAllAuditLog = (filters?: AuditFilters) => listAllAuditLog(filters);
 
-/** Throw 404 if the quote is missing, 403 if it isn't the actor's (and they aren't admin). */
+/**
+ * Throw 404 if the quote is missing, 403 if the actor can't access it. Access = admin, the creator,
+ * or a viewer the quote has been shared with.
+ */
 export const assertOwnership = async (quoteId: bigint, actor: Actor): Promise<void> => {
   const q = await prisma.quote.findUnique({
     where: { id: quoteId },
-    select: { id: true, createdById: true },
+    select: { id: true, createdById: true, viewers: { where: { userId: actor.id }, select: { id: true } } },
   });
   if (!q) throw notFound('Quote', quoteId.toString());
-  if (!isAdmin(actor) && q.createdById !== actor.id) {
+  const assigned = q.viewers.length > 0;
+  if (!isAdmin(actor) && q.createdById !== actor.id && !assigned) {
     throw new AppError('forbidden', 'You do not have access to this quote');
   }
 };
@@ -131,11 +145,17 @@ export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuote
       data,
       QUOTE_HEADER_FIELDS,
     );
-    const quote = await tx.quote.update({
-      where: { id },
-      data: { ...data, updatedById: userId },
-      include: quoteInclude,
-    });
+    await tx.quote.update({ where: { id }, data: { ...data, updatedById: userId } });
+    // Replace viewer assignments when provided.
+    if (input.viewerUserIds !== undefined) {
+      await tx.quoteViewer.deleteMany({ where: { quoteId: id } });
+      if (input.viewerUserIds.length) {
+        await tx.quoteViewer.createMany({
+          data: input.viewerUserIds.map((uid) => ({ quoteId: id, userId: BigInt(uid) })),
+        });
+      }
+      changes.push({ field: 'viewers', oldValue: null, newValue: input.viewerUserIds.join(',') });
+    }
     if (changes.length > 0) {
       await recordAudit(tx, {
         quoteId: id,
@@ -146,7 +166,7 @@ export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuote
         changes,
       });
     }
-    return quote;
+    return tx.quote.findUniqueOrThrow({ where: { id }, include: quoteInclude });
   });
 };
 

@@ -86,6 +86,7 @@ model User {
   auditLogs     QuoteAuditLog[]
   revisions     QuoteRevision[]
   kbEntries     KbEntry[]
+  viewerQuotes  QuoteViewer[]
   createdQuotes Quote[]         @relation("QuoteCreatedBy")
   updatedQuotes Quote[]         @relation("QuoteUpdatedBy")
 
@@ -665,6 +666,7 @@ model Quote {
   updatedBy User?     @relation("QuoteUpdatedBy", fields: [updatedById], references: [id])
 
   kbEntry            KbEntry?
+  viewers            QuoteViewer[]
   ledScreens         QuoteLedScreen[]
   lcdScreens         QuoteLcdScreen[]
   mediaplayers       QuoteMediaplayer[]
@@ -956,6 +958,21 @@ model QuoteTerm {
   quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
 
   @@map("quote_terms")
+}
+
+// Quote sharing — assign specific viewer users to a quote; they can read only quotes assigned to them.
+model QuoteViewer {
+  id        BigInt   @id @default(autoincrement())
+  quoteId   BigInt   @map("quote_id")
+  userId    BigInt   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([quoteId, userId])
+  @@index([userId])
+  @@map("quote_viewers")
 }
 
 // Knowledge-base capture (P1-19f): structured snapshot of a completed quote + its outcome. Storage

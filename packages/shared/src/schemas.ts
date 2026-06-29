@@ -27,6 +27,8 @@ export const createQuoteSchema = z.object({
   resellerMarkup: z.coerce.number().min(0).max(10).default(0),
   validUntil: z.coerce.date().optional(),
   requestedShippingDate: z.coerce.date().optional(),
+  /** Viewer users this quote is shared with (they can read only quotes assigned to them). */
+  viewerUserIds: z.array(idSchema).optional(),
 });
 export type CreateQuoteInput = z.infer<typeof createQuoteSchema>;
 

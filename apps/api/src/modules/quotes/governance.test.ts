@@ -226,6 +226,47 @@ describe('viewer is read-only (P1-19g.1)', () => {
   });
 });
 
+describe('quote viewer assignment (sharing)', () => {
+  it('a viewer sees only quotes assigned to them', async () => {
+    const viewer = await prisma.user.findFirstOrThrow({ where: { email: 'viewer@quotezen.local' } });
+    const viewerToken = await login('viewer@quotezen.local');
+    const vh = { authorization: `Bearer ${viewerToken}` };
+
+    // admin creates one quote shared with the viewer, and one not shared
+    const shared = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: admin(),
+      payload: {
+        jobReference: `${JOB_PREFIX}shared-${Math.floor(Math.random() * 1e9)}`,
+        currencyCode: 'AUD',
+        viewerUserIds: [Number(viewer.id)],
+      },
+    });
+    expect(shared.statusCode).toBe(201);
+    const sharedId = shared.json().id as string;
+    expect((shared.json().viewers as unknown[]).length).toBe(1);
+
+    const unshared = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: admin(),
+      payload: { jobReference: `${JOB_PREFIX}unshared-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const unsharedId = unshared.json().id as string;
+
+    // viewer can read the shared quote, not the unshared one
+    expect((await app.inject({ method: 'GET', url: `/quotes/${sharedId}`, headers: vh })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: `/quotes/${unsharedId}`, headers: vh })).statusCode).toBe(403);
+
+    // viewer's list contains the shared quote only (of these two)
+    const list = (await app.inject({ method: 'GET', url: '/quotes', headers: vh })).json() as Array<{ id: string }>;
+    const ids = list.map((q) => q.id);
+    expect(ids).toContain(sharedId);
+    expect(ids).not.toContain(unsharedId);
+  });
+});
+
 describe('RBAC user management', () => {
   it('admin can list users; sales is forbidden', async () => {
     const adminList = await app.inject({ method: 'GET', url: '/admin/users', headers: admin() });

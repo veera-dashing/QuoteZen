@@ -30,6 +30,15 @@ export const userRoutes = async (app: FastifyInstance): Promise<void> => {
 
   app.get('/admin/roles', adminOnly, () => prisma.role.findMany({ orderBy: { name: 'asc' } }));
 
+  // Active viewer users a quote can be shared with (writers need this for the assignment picker).
+  app.get('/users/viewers', { preHandler: [app.requireRole('admin', 'sales')] }, () =>
+    prisma.user.findMany({
+      where: { isActive: true, role: { name: 'viewer' } },
+      select: { id: true, name: true, email: true },
+      orderBy: { name: 'asc' },
+    }),
+  );
+
   app.patch<{ Params: { id: string } }>('/admin/users/:id', adminOnly, async (request) => {
     const { id } = parse(idParam, request.params);
     const data = parse(updateUserSchema, request.body);

@@ -132,7 +132,9 @@ Each module ships with its tests before the next begins.
 (sales = write, own quotes only), `viewer@quotezen.local` (viewer = read-only). The login page has
 one-click **Quick login** buttons for each. **RBAC:** quote mutations require `admin|sales` (viewer is
 read-only); admin-only = Users/roles + cross-quote Audit; admin sees cost + can override the margin
-floor; quotes are owner-scoped (sales see own, admin all).
+floor. **Quote access:** admin sees all; others see quotes they created **or are assigned to as a
+viewer** (`quote_viewers` join). Assign viewers at quote create/edit (`viewerUserIds`); `GET
+/users/viewers` lists assignable viewers; the new-quote form has a "Share with viewers" picker.
 
 - ✅ **Quote wizard** — backend: `POST /quotes/:id/{led-screens,lcd-screens,licences}` (LED priced
   via packages/calc: geometry + supply + components + frame/GOB, audited), recompute aggregates.

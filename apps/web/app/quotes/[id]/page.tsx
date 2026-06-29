@@ -13,6 +13,7 @@ interface Quote {
   totalEquipment: string; totalServices: string; totalRecurring: string; grandTotal: string;
   currency?: { code: string } | null;
   ledScreens: LedScreen[]; lcdScreens: LcdScreen[]; licences: Licence[];
+  viewers?: Array<{ user: { name: string; email: string } }>;
 }
 interface Audit { id: string; action: string; fieldName: string | null; oldValue: string | null; newValue: string | null; changedAt: string; user?: { name: string } }
 
@@ -87,6 +88,14 @@ function DetailsStep({ quote }: { quote: Quote }) {
         <div><label>Job reference</label><input value={quote.jobReference} readOnly /></div>
         <div><label>Status</label><input value={quote.status} readOnly /></div>
         <div><label>Currency</label><input value={quote.currency?.code ?? ''} readOnly /></div>
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <label>Shared with viewers</label>
+        <div>
+          {quote.viewers && quote.viewers.length > 0
+            ? quote.viewers.map((v) => <span key={v.user.email} className="pill" style={{ marginRight: 6 }}>{v.user.name}</span>)
+            : <span className="muted">Not shared with any viewers.</span>}
+        </div>
       </div>
     </div>
   );

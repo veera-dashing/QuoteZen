@@ -19,6 +19,8 @@ export default function NewQuote() {
   const [clients, setClients] = useState<Option[]>([]);
   const [locations, setLocations] = useState<Option[]>([]);
   const [currencies, setCurrencies] = useState<Option[]>([]);
+  const [viewers, setViewers] = useState<Array<{ id: string; name: string; email: string }>>([]);
+  const [selectedViewers, setSelectedViewers] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -27,14 +29,24 @@ export default function NewQuote() {
       api<{ rows: Option[] }>('/admin/clients?take=200'),
       api<{ rows: Option[] }>('/admin/locations?take=200'),
       api<Option[]>('/catalog/currencies'),
+      api<Array<{ id: string; name: string; email: string }>>('/users/viewers'),
     ])
-      .then(([c, l, cur]) => {
+      .then(([c, l, cur, v]) => {
         setClients(c.rows);
         setLocations(l.rows);
         setCurrencies(cur);
+        setViewers(v);
       })
       .catch((e) => setError(e.message));
   }, []);
+
+  const toggleViewer = (id: string) =>
+    setSelectedViewers((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,6 +60,7 @@ export default function NewQuote() {
           currencyCode,
           clientId: clientId ? Number(clientId) : undefined,
           locationId: locationId ? Number(locationId) : undefined,
+          viewerUserIds: selectedViewers.size ? [...selectedViewers].map(Number) : undefined,
         }),
       });
       router.replace(`/quotes/${quote.id}`);
@@ -101,6 +114,27 @@ export default function NewQuote() {
             ))}
           </select>
         </div>
+        {viewers.length > 0 && (
+          <div className="field">
+            <label>Share with viewers (read-only access)</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              {viewers.map((v) => (
+                <label
+                  key={v.id}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedViewers.has(v.id)}
+                    onChange={() => toggleViewer(v.id)}
+                    style={{ width: 'auto' }}
+                  />
+                  {v.name}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
         {error && <div className="error">{error}</div>}
         <div className="step-actions">
           <button className="primary" type="submit" disabled={busy || !jobReference}>
