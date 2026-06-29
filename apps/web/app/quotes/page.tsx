@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { api } from '@/lib/api';
+import { api, getRole } from '@/lib/api';
 
 interface QuoteRow {
   id: string;
@@ -17,6 +17,7 @@ interface QuoteRow {
 export default function QuotesList() {
   const [rows, setRows] = useState<QuoteRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const canWrite = getRole() !== 'viewer';
 
   useEffect(() => {
     api<QuoteRow[]>('/quotes')
@@ -28,9 +29,11 @@ export default function QuotesList() {
     <div>
       <div className="topbar">
         <h1>Quotes</h1>
-        <Link href="/quotes/new">
-          <button className="primary">+ New quote</button>
-        </Link>
+        {canWrite && (
+          <Link href="/quotes/new">
+            <button className="primary">+ New quote</button>
+          </Link>
+        )}
       </div>
       {error && <div className="error">{error}</div>}
       {!rows && <div className="muted">Loading…</div>}

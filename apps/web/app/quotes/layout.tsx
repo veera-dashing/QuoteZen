@@ -4,18 +4,24 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { clearToken, getToken } from '@/lib/api';
+import { clearToken, getRole, getToken, type Role } from '@/lib/api';
 
 export default function QuotesLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [ready, setReady] = useState(false);
+  const [role, setRole] = useState<Role | null>(null);
 
   useEffect(() => {
     if (!getToken()) router.replace('/login');
-    else setReady(true);
+    else {
+      setRole(getRole());
+      setReady(true);
+    }
   }, [router]);
 
   if (!ready) return <div className="center">Loading…</div>;
+
+  const canSeeReference = role === 'admin' || role === 'sales';
 
   return (
     <div>
@@ -25,7 +31,7 @@ export default function QuotesLayout({ children }: { children: ReactNode }) {
         </div>
         <nav className="qnav">
           <Link href="/quotes">Quotes</Link>
-          <Link href="/admin">Reference data</Link>
+          {canSeeReference && <Link href="/admin">Reference data</Link>}
           <button
             className="ghost"
             onClick={() => {

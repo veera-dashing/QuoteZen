@@ -3,12 +3,46 @@
 /** Minimal typed API client. Token lives in localStorage; 401s bounce to /login. */
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 const TOKEN_KEY = 'quotezen_token';
+const USER_KEY = 'quotezen_user';
+
+export type Role = 'admin' | 'sales' | 'viewer';
+export interface SessionUser {
+  id: string;
+  email: string;
+  role: Role;
+}
 
 export const getToken = (): string | null =>
   typeof window === 'undefined' ? null : window.localStorage.getItem(TOKEN_KEY);
 
 export const setToken = (token: string): void => window.localStorage.setItem(TOKEN_KEY, token);
-export const clearToken = (): void => window.localStorage.removeItem(TOKEN_KEY);
+export const clearToken = (): void => {
+  window.localStorage.removeItem(TOKEN_KEY);
+  window.localStorage.removeItem(USER_KEY);
+};
+
+export const getUser = (): SessionUser | null => {
+  if (typeof window === 'undefined') return null;
+  const raw = window.localStorage.getItem(USER_KEY);
+  if (raw) {
+    try {
+      return JSON.parse(raw) as SessionUser;
+    } catch {
+      /* fall through to token decode */
+    }
+  }
+  // Fall back to decoding the JWT payload (resilient across reloads / older sessions).
+  const token = getToken();
+  if (!token) return null;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1] ?? '')) as SessionUser;
+    return payload.role ? payload : null;
+  } catch {
+    return null;
+  }
+};
+
+export const getRole = (): Role | null => getUser()?.role ?? null;
 
 export class ApiError extends Error {
   constructor(
@@ -71,9 +105,10 @@ export const downloadFile = async (path: string, filename: string): Promise<void
 };
 
 export const login = async (email: string, password: string): Promise<void> => {
-  const res = await api<{ token: string }>('/auth/login', {
+  const res = await api<{ token: string; user: SessionUser }>('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
   setToken(res.token);
+  if (res.user) window.localStorage.setItem(USER_KEY, JSON.stringify(res.user));
 };

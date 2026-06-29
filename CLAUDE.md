@@ -128,6 +128,12 @@ Each module ships with its tests before the next begins.
   data table (search/paginate), and add/edit/delete forms driven by `/admin/_meta`. Builds clean;
   verified live in-browser against RDS (177 LED products listed, CRUD working).
 
+**Role-aware UI:** the web stores the session user (`getRole()` from the login response, falling back
+to decoding the JWT) and filters navigation by role. Admin sees everything; **sales** sees Quotes +
+Knowledge base + Reference data (no Users/Audit); **viewer** is redirected to `/quotes`, sees only
+their assigned quotes read-only (no Reference-data link, no "+ New quote"). This is UX layering on top
+of the server-side RBAC, which remains the enforcement boundary.
+
 **UI note:** dropdowns use a reusable searchable combobox `apps/web/components/SearchSelect.tsx`
 (type-to-filter popover; click-away/Esc to close) instead of native `<select>` — used for client/
 location/currency, LED product (~177) & display pickers, admin form enums, and the user role picker.
