@@ -208,6 +208,24 @@ describe('audit viewer (P1-03.3)', () => {
   });
 });
 
+describe('viewer is read-only (P1-19g.1)', () => {
+  it('viewer can read quotes but cannot create or mutate them', async () => {
+    const viewerToken = await login('viewer@quotezen.local');
+    const viewer = { authorization: `Bearer ${viewerToken}` };
+
+    const list = await app.inject({ method: 'GET', url: '/quotes', headers: viewer });
+    expect(list.statusCode).toBe(200); // read allowed
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: viewer,
+      payload: { jobReference: `${JOB_PREFIX}viewer-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    expect(create.statusCode).toBe(403); // write blocked
+  });
+});
+
 describe('RBAC user management', () => {
   it('admin can list users; sales is forbidden', async () => {
     const adminList = await app.inject({ method: 'GET', url: '/admin/users', headers: admin() });

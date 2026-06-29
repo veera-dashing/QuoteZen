@@ -11,12 +11,11 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const doLogin = async (em: string, pw: string) => {
     setBusy(true);
     setError(null);
     try {
-      await login(email, password);
+      await login(em, pw);
       router.replace('/admin');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Login failed');
@@ -25,11 +24,42 @@ export default function LoginPage() {
     }
   };
 
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void doLogin(email, password);
+  };
+
+  // Demo accounts (seeded, password "demo") — one click to sign in during dev/testing.
+  const QUICK = [
+    { role: 'Admin', email: 'admin@quotezen.local' },
+    { role: 'Sales', email: 'sales@quotezen.local' },
+    { role: 'Viewer', email: 'viewer@quotezen.local' },
+  ];
+
   return (
     <div className="login">
       <form className="login-card" onSubmit={onSubmit}>
         <h1>QuoteZen</h1>
-        <p>Reference data admin</p>
+        <p>Sign in</p>
+
+        <label>Quick login (demo)</label>
+        <div className="row-actions" style={{ marginBottom: 16 }}>
+          {QUICK.map((q) => (
+            <button
+              key={q.email}
+              type="button"
+              onClick={() => {
+                setEmail(q.email);
+                setPassword('demo');
+                void doLogin(q.email, 'demo');
+              }}
+              disabled={busy}
+            >
+              {q.role}
+            </button>
+          ))}
+        </div>
+
         <div className="field">
           <label>Email</label>
           <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" autoComplete="username" />
@@ -44,7 +74,7 @@ export default function LoginPage() {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
         </div>
-        <div className="hint">Demo: admin@quotezen.local · sales@quotezen.local — password “demo”.</div>
+        <div className="hint">Demo accounts — password “demo”. Admin = full, Sales = write (own quotes), Viewer = read-only.</div>
       </form>
     </div>
   );

@@ -128,7 +128,11 @@ Each module ships with its tests before the next begins.
   data table (search/paginate), and add/edit/delete forms driven by `/admin/_meta`. Builds clean;
   verified live in-browser against RDS (177 LED products listed, CRUD working).
 
-**Demo logins:** `admin@quotezen.local` / `sales@quotezen.local`, password `demo`.
+**Demo logins (password `demo`):** `admin@quotezen.local` (admin = full), `sales@quotezen.local`
+(sales = write, own quotes only), `viewer@quotezen.local` (viewer = read-only). The login page has
+one-click **Quick login** buttons for each. **RBAC:** quote mutations require `admin|sales` (viewer is
+read-only); admin-only = Users/roles + cross-quote Audit; admin sees cost + can override the margin
+floor; quotes are owner-scoped (sales see own, admin all).
 
 - ✅ **Quote wizard** — backend: `POST /quotes/:id/{led-screens,lcd-screens,licences}` (LED priced
   via packages/calc: geometry + supply + components + frame/GOB, audited), recompute aggregates.

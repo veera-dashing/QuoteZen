@@ -56,6 +56,8 @@ const idParam = z.object({ id: z.coerce.bigint() });
 
 export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
   const auth = { preHandler: [app.authenticate] };
+  // Mutations require a writer role; `viewer` is read-only (P1-19g.1 RBAC).
+  const write = { preHandler: [app.requireRole('admin', 'sales')] };
   const userId = (request: { user: { id: string } }): bigint => BigInt(request.user.id);
   const actor = (request: { user: { id: string; role: UserRole } }): Actor => ({
     id: BigInt(request.user.id),
@@ -64,7 +66,7 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
 
   app.get('/quotes', auth, (request) => getQuotes(actor(request)));
 
-  app.post('/quotes', auth, async (request, reply) => {
+  app.post('/quotes', write, async (request, reply) => {
     const input = parse(createQuoteSchema, request.body);
     const quote = await createQuote(userId(request), input);
     return reply.code(201).send(quote);
@@ -76,28 +78,28 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     return getQuote(id);
   });
 
-  app.patch('/quotes/:id', auth, async (request) => {
+  app.patch('/quotes/:id', write, async (request) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const input = parse(updateQuoteSchema, request.body);
     return updateQuote(userId(request), id, input);
   });
 
-  app.post('/quotes/:id/status', auth, async (request) => {
+  app.post('/quotes/:id/status', write, async (request) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const { status, reason } = parse(changeStatusSchema, request.body);
     return changeStatus(actor(request), id, status, reason);
   });
 
-  app.post('/quotes/:id/recompute', auth, async (request) => {
+  app.post('/quotes/:id/recompute', write, async (request) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     return recomputeQuote(userId(request), id);
   });
 
   // Fully itemised price (every line), cost masked for non-admin (P1-16.8 / BR-081).
-  app.post('/quotes/:id/price', auth, async (request) => {
+  app.post('/quotes/:id/price', write, async (request) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     return priceQuote(actor(request), id);
@@ -157,7 +159,7 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
   });
 
   // ── Versioning & snapshots (P1-04) ──
-  app.post('/quotes/:id/versions', auth, async (request, reply) => {
+  app.post('/quotes/:id/versions', write, async (request, reply) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const { label } = parse(z.object({ label: z.string().max(120).optional() }), request.body ?? {});
@@ -184,7 +186,7 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     return getVersionSnapshot(id, rev);
   });
 
-  app.post('/quotes/:id/versions/:rev/rollback', auth, async (request, reply) => {
+  app.post('/quotes/:id/versions/:rev/rollback', write, async (request, reply) => {
     const { id, rev } = parse(revParam, request.params);
     await assertOwnership(id, actor(request));
     const version = await rollbackToVersion(actor(request), id, rev);
@@ -192,7 +194,7 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
   });
 
   // ── Technical configuration engine (P1-13): ranked valid configs for an opening ──
-  app.post('/quotes/:id/screens/configure', auth, async (request) => {
+  app.post('/quotes/:id/screens/configure', write, async (request) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const body = parse(configureSchema, request.body);
@@ -200,7 +202,7 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
   });
 
   // ── Child line items (wizard steps) ──
-  app.post('/quotes/:id/led-screens', auth, async (request, reply) => {
+  app.post('/quotes/:id/led-screens', write, async (request, reply) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const input = parse(ledScreenSchema, request.body);
@@ -208,7 +210,7 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     return reply.code(201).send(screen);
   });
 
-  app.delete('/quotes/:id/led-screens/:screenId', auth, async (request, reply) => {
+  app.delete('/quotes/:id/led-screens/:screenId', write, async (request, reply) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const { screenId } = parse(z.object({ screenId: z.coerce.bigint() }), request.params);
@@ -216,7 +218,7 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     return reply.code(204).send();
   });
 
-  app.post('/quotes/:id/lcd-screens', auth, async (request, reply) => {
+  app.post('/quotes/:id/lcd-screens', write, async (request, reply) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const input = parse(lcdScreenSchema, request.body);
@@ -224,7 +226,7 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     return reply.code(201).send(screen);
   });
 
-  app.post('/quotes/:id/licences', auth, async (request, reply) => {
+  app.post('/quotes/:id/licences', write, async (request, reply) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const input = parse(quoteLicenceSchema, request.body);

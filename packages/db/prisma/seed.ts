@@ -207,17 +207,20 @@ async function main(): Promise<void> {
   }
   const adminRole = await prisma.role.findUniqueOrThrow({ where: { name: 'admin' } });
   const salesRole = await prisma.role.findUniqueOrThrow({ where: { name: 'sales' } });
+  const viewerRole = await prisma.role.findUniqueOrThrow({ where: { name: 'viewer' } });
   const passwordHash = await bcrypt.hash('demo', 10);
-  await prisma.user.upsert({
-    where: { email: 'admin@quotezen.local' },
-    update: {},
-    create: { email: 'admin@quotezen.local', name: 'Demo Admin', passwordHash, roleId: adminRole.id },
-  });
-  await prisma.user.upsert({
-    where: { email: 'sales@quotezen.local' },
-    update: {},
-    create: { email: 'sales@quotezen.local', name: 'Demo Sales', passwordHash, roleId: salesRole.id },
-  });
+  const demoUsers: Array<[string, string, bigint]> = [
+    ['admin@quotezen.local', 'Demo Admin', adminRole.id],
+    ['sales@quotezen.local', 'Demo Sales', salesRole.id],
+    ['viewer@quotezen.local', 'Demo Viewer', viewerRole.id],
+  ];
+  for (const [email, name, roleId] of demoUsers) {
+    await prisma.user.upsert({
+      where: { email },
+      update: { roleId },
+      create: { email, name, passwordHash, roleId },
+    });
+  }
 
   // Currencies + exchange rates
   for (const c of CURRENCIES) {
