@@ -13,6 +13,7 @@ const NAV: Array<{ href: string; label: string; roles: Role[] }> = [
   { href: '/admin/users', label: '👥 Users & roles', roles: ['admin'] },
   { href: '/admin/audit', label: '📜 Audit log', roles: ['admin'] },
   { href: '/admin/kb', label: '📚 Knowledge base', roles: ['admin', 'sales'] },
+  { href: '/admin/rules', label: '⚖️ Effective rules', roles: ['admin', 'sales'] },
 ];
 
 export default function AdminLayout({ children }: { children: ReactNode }) {

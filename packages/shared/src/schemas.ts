@@ -33,6 +33,9 @@ export const createQuoteSchema = z.object({
 export type CreateQuoteInput = z.infer<typeof createQuoteSchema>;
 
 export const updateQuoteSchema = createQuoteSchema.partial().extend({
+  // Nullable on update so the editor can *clear* a client/location (the service sets the FK to null).
+  clientId: idSchema.nullish(),
+  locationId: idSchema.nullish(),
   /** Optimistic-locking token from the last read; a mismatch is a 409 conflict (P1-05.2). */
   expectedVersion: z.coerce.number().int().nonnegative().optional(),
 });

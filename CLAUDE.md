@@ -233,9 +233,23 @@ versioning/governance. Google OAuth + Zoho + all AI (Phase 2) deferred by decisi
   from/to); admin-only `GET /admin/audit` is the cross-quote feed (joins quote ref + user). Web
   **Audit log** admin page with an action filter. Verified live.
 
+### Block 6 — concurrency UI, rule-resolution view, dropdown polish (branch `feat/versioning-governance`)
+- ✅ **Editable Details step + optimistic-concurrency UI** — the quote wizard's Details step is now
+  editable (job ref, client, location, currency, viewer sharing) instead of read-only. Save sends
+  `expectedVersion: quote.lockVersion`; a stale token surfaces a **409 conflict banner** ("changed
+  elsewhere…") with a **Reload latest** button, and the lock token (`v{n}`) is shown in the card header.
+  Viewers still get the read-only variant. To support *clearing* a client/location, `updateQuoteSchema`
+  makes `clientId`/`locationId` `nullish()` (the service already maps `null` → FK cleared). Verified
+  live: 409 on stale save, happy path bumps v1→v2 and persists.
+- ✅ **Client rule-resolution view (P1-10.3)** — web **Effective rules** admin page (admin/sales): pick
+  a client → `GET /rules/client/:id/effective`, rendered as a resolved-values table with
+  global-default / **client-override** source badges and the margin-floor clamp shown inline
+  (effective = floor when the client margin is below it). Verified live (override + clamp).
+- ✅ **Licence-step dropdowns → SearchSelect** — the screen-type / volume-tier native `<select>`s now
+  use the searchable combobox, matching the rest of the wizard.
+
 **Still backlogged (later passes):** file upload + re-run (P1-19e, needs object storage + AV scan),
-bulk-import wizard UI (P1-06.4), Google OAuth + Zoho, and all Phase 2 AI. (Concurrency-token UI wiring
-and a client rule-resolution view are thin follow-ups — the APIs are done and tested.)
+bulk-import wizard UI (P1-06.4), Google OAuth + Zoho, and all Phase 2 AI.
 
 **Local Postgres for dev/tests:**
 ```bash

@@ -2,19 +2,20 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { api, downloadFile } from '@/lib/api';
+import { api, ApiError, downloadFile, getRole } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
 
-interface Opt { id: string; name?: string; model?: string; sell?: string | null; category?: string }
+interface Opt { id: string; name?: string; model?: string; sell?: string | null; category?: string; code?: string }
 interface LedScreen { id: string; screenName: string | null; resolutionWpx: number | null; resolutionHpx: number | null; priceTotal: string | null }
 interface LcdScreen { id: string; screenName: string | null; priceTotal: string | null }
 interface Licence { id: string; screenType: string; tier: string; qty: number; isInteractive: boolean }
 interface Quote {
-  id: string; jobReference: string; status: string;
+  id: string; jobReference: string; status: string; lockVersion: number;
+  clientId: string | null; locationId: string | null;
   totalEquipment: string; totalServices: string; totalRecurring: string; grandTotal: string;
   currency?: { code: string } | null;
   ledScreens: LedScreen[]; lcdScreens: LcdScreen[]; licences: Licence[];
-  viewers?: Array<{ user: { name: string; email: string } }>;
+  viewers?: Array<{ user: { id: string; name: string; email: string } }>;
 }
 interface Audit { id: string; action: string; fieldName: string | null; oldValue: string | null; newValue: string | null; changedAt: string; user?: { name: string } }
 
@@ -56,7 +57,7 @@ export default function QuoteWizard() {
         ))}
       </div>
 
-      {step === 0 && <DetailsStep quote={quote} />}
+      {step === 0 && <DetailsStep quote={quote} onChange={refetch} />}
       {step === 1 && <LedStep quote={quote} onChange={refetch} />}
       {step === 2 && <LcdStep quote={quote} onChange={refetch} />}
       {step === 3 && <LicenceStep quote={quote} onChange={refetch} />}
@@ -81,22 +82,162 @@ export default function QuoteWizard() {
   );
 }
 
-function DetailsStep({ quote }: { quote: Quote }) {
+function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
+  const canWrite = getRole() !== 'viewer';
+  const [jobReference, setJobReference] = useState(quote.jobReference);
+  const [clientId, setClientId] = useState(quote.clientId ?? '');
+  const [locationId, setLocationId] = useState(quote.locationId ?? '');
+  const [currencyCode, setCurrencyCode] = useState(quote.currency?.code ?? 'AUD');
+  const [selectedViewers, setSelectedViewers] = useState<Set<string>>(
+    () => new Set((quote.viewers ?? []).map((v) => v.user.id)),
+  );
+  const [clients, setClients] = useState<Opt[]>([]);
+  const [locations, setLocations] = useState<Opt[]>([]);
+  const [currencies, setCurrencies] = useState<Opt[]>([]);
+  const [viewers, setViewers] = useState<Array<{ id: string; name: string; email: string }>>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (!canWrite) return;
+    Promise.all([
+      api<{ rows: Opt[] }>('/admin/clients?take=200'),
+      api<{ rows: Opt[] }>('/admin/locations?take=200'),
+      api<Opt[]>('/catalog/currencies'),
+      api<Array<{ id: string; name: string; email: string }>>('/users/viewers'),
+    ]).then(([c, l, cur, v]) => {
+      setClients(c.rows);
+      setLocations(l.rows);
+      setCurrencies(cur);
+      setViewers(v);
+    });
+  }, [canWrite]);
+
+  const toggleViewer = (id: string) =>
+    setSelectedViewers((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    setConflict(false);
+    setSaved(false);
+    try {
+      await api(`/quotes/${quote.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          jobReference,
+          currencyCode,
+          clientId: clientId ? Number(clientId) : null,
+          locationId: locationId ? Number(locationId) : null,
+          viewerUserIds: [...selectedViewers].map(Number),
+          // Optimistic concurrency: server rejects (409) if the quote moved since we loaded it.
+          expectedVersion: quote.lockVersion,
+        }),
+      });
+      await onChange();
+      setSaved(true);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'conflict') setConflict(true);
+      else setErr(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!canWrite) {
+    return (
+      <div className="card">
+        <p className="muted">Quote header (read-only).</p>
+        <div className="grid3">
+          <div><label>Job reference</label><input value={quote.jobReference} readOnly /></div>
+          <div><label>Status</label><input value={quote.status} readOnly /></div>
+          <div><label>Currency</label><input value={quote.currency?.code ?? ''} readOnly /></div>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <label>Shared with viewers</label>
+          <div>
+            {quote.viewers && quote.viewers.length > 0
+              ? quote.viewers.map((v) => <span key={v.user.id} className="pill" style={{ marginRight: 6 }}>{v.user.name}</span>)
+              : <span className="muted">Not shared with any viewers.</span>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="card">
-      <p className="muted">Quote header. Currency: {quote.currency?.code}. Edit client/location in the reference admin.</p>
-      <div className="grid3">
-        <div><label>Job reference</label><input value={quote.jobReference} readOnly /></div>
-        <div><label>Status</label><input value={quote.status} readOnly /></div>
-        <div><label>Currency</label><input value={quote.currency?.code ?? ''} readOnly /></div>
+      <div className="topbar">
+        <h3 style={{ margin: 0 }}>Quote details</h3>
+        <span className="muted" title="Optimistic-locking token; bumped on every change">v{quote.lockVersion}</span>
       </div>
-      <div style={{ marginTop: 12 }}>
-        <label>Shared with viewers</label>
+      <div className="grid3">
+        <div><label>Job reference</label><input value={jobReference} onChange={(e) => setJobReference(e.target.value)} /></div>
         <div>
-          {quote.viewers && quote.viewers.length > 0
-            ? quote.viewers.map((v) => <span key={v.user.email} className="pill" style={{ marginRight: 6 }}>{v.user.name}</span>)
-            : <span className="muted">Not shared with any viewers.</span>}
+          <label>Client</label>
+          <SearchSelect
+            value={clientId}
+            onChange={setClientId}
+            allowEmpty
+            placeholder="Select client…"
+            options={clients.map((c) => ({ value: c.id, label: c.name ?? '' }))}
+          />
         </div>
+        <div>
+          <label>Location</label>
+          <SearchSelect
+            value={locationId}
+            onChange={setLocationId}
+            allowEmpty
+            placeholder="Select location…"
+            options={locations.map((l) => ({ value: l.id, label: l.name ?? '' }))}
+          />
+        </div>
+        <div>
+          <label>Currency</label>
+          <SearchSelect
+            value={currencyCode}
+            onChange={setCurrencyCode}
+            options={currencies.map((c) => ({ value: c.code ?? '', label: c.code ?? '' }))}
+          />
+        </div>
+        <div><label>Status</label><input value={quote.status} readOnly /></div>
+      </div>
+
+      {viewers.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <label>Share with viewers (read-only access)</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {viewers.map((v) => (
+              <label key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={selectedViewers.has(v.id)} onChange={() => toggleViewer(v.id)} style={{ width: 'auto' }} />
+                {v.name}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {conflict && (
+        <div className="error" style={{ marginTop: 12 }}>
+          This quote was changed elsewhere since you opened it. Your edits were not saved.{' '}
+          <button className="ghost" onClick={() => onChange()}>Reload latest</button>
+        </div>
+      )}
+      {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
+      {saved && <div className="muted" style={{ marginTop: 12 }}>✓ Saved.</div>}
+
+      <div className="step-actions">
+        <button className="primary" onClick={save} disabled={busy || !jobReference}>
+          {busy ? 'Saving…' : 'Save details'}
+        </button>
       </div>
     </div>
   );
@@ -370,17 +511,19 @@ function LicenceStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
         <div className="grid3">
           <div>
             <label>Screen type</label>
-            <select value={screenType} onChange={(e) => setScreenType(e.target.value)}>
-              <option>LED</option>
-              <option>LCD</option>
-            </select>
+            <SearchSelect
+              value={screenType}
+              onChange={setScreenType}
+              options={[{ value: 'LED', label: 'LED' }, { value: 'LCD', label: 'LCD' }]}
+            />
           </div>
           <div>
             <label>Volume tier</label>
-            <select value={tier} onChange={(e) => setTier(e.target.value)}>
-              <option value="low">Low</option>
-              <option value="high">High</option>
-            </select>
+            <SearchSelect
+              value={tier}
+              onChange={setTier}
+              options={[{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }]}
+            />
           </div>
           <div><label>Qty (screens)</label><input type="number" value={qty} onChange={(e) => setQty(e.target.value)} /></div>
           <div>
