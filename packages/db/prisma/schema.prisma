@@ -219,10 +219,13 @@ model ExchangeRate {
 }
 
 model Setting {
-  id    BigInt  @id @default(autoincrement())
-  key   String  @unique
+  id    BigInt   @id @default(autoincrement())
+  key   String   @unique
   label String
-  value Decimal @db.Decimal(12, 6)
+  /** Numeric value (markups, margins, rates). Null for text-only settings (see `valueText`). */
+  value Decimal? @db.Decimal(12, 6)
+  /** Text value for non-numeric settings (U0: comma-separated `size_tolerance_bands`). */
+  valueText String? @map("value_text")
   unit  String?
 
   @@map("settings")
@@ -264,9 +267,29 @@ model Location {
   @@map("locations")
 }
 
+/**
+ * Hardware manufacturer (U0). Normalises the free-text `LedProduct.vendor` into a first-class
+ * table so products can carry a real FK, and lead-time / sourcing priority live in one place.
+ * `priority` orders manufacturers for future sourcing/ordering logic (lower = preferred); not
+ * yet applied to pricing or selection — U0 is the schema + catalog foundation only.
+ */
+model Manufacturer {
+  id           BigInt  @id @default(autoincrement())
+  name         String  @unique
+  priority     Int     @default(100)
+  leadTimeDays Int?    @map("lead_time_days")
+  deprecated   Boolean @default(false)
+
+  ledProducts LedProduct[]
+
+  @@map("manufacturers")
+}
+
 model LedProduct {
   id               BigInt   @id @default(autoincrement())
   vendor           String?
+  /** Normalised manufacturer FK (U0). `vendor` is kept for compat; backfilled by name on seed. */
+  manufacturerId   BigInt?  @map("manufacturer_id")
   model            String
   serviceCategory  String?  @map("service_category")
   moduleWMm        Int?     @map("module_w_mm")
@@ -296,6 +319,7 @@ model LedProduct {
 
   commentary LedCommentary[]
   ledScreens QuoteLedScreen[]
+  manufacturer Manufacturer? @relation(fields: [manufacturerId], references: [id], onDelete: Restrict)
 
   @@map("led_products")
 }
@@ -705,6 +729,12 @@ model Client {
   preferredPitchMm       Decimal? @map("preferred_pitch_mm") @db.Decimal(6, 3)
   /** Comma-separated component/family names to exclude for this client. */
   excludedComponents     String? @map("excluded_components")
+  /**
+   * Client-level commercial discount (U0), a fraction 0..1 (e.g. 0.05 = 5%). Resolution order is
+   * system default (`default_client_discount_pct` setting) → client → quote override. NOT applied to
+   * pricing yet — U0 only stores it + defaults it from the setting at client create.
+   */
+  discountPct            Decimal? @map("discount_pct") @db.Decimal(5, 4)
 
   quotes Quote[]
 
@@ -726,6 +756,11 @@ model Quote {
   lockVersion           Int         @default(0) @map("lock_version")
   validUntil            DateTime?   @map("valid_until")
   requestedShippingDate DateTime?   @map("requested_shipping_date")
+  /** Quote-level discount OVERRIDE (U0), a fraction 0..1; wins over the client/system default. Not yet applied to pricing. */
+  discountPct           Decimal?    @map("discount_pct") @db.Decimal(5, 4)
+  /** Quote-wide PI capture (U0): the install site address and free-text project notes. */
+  siteAddress           String?     @map("site_address")
+  projectNotes          String?     @map("project_notes")
   /** Soft-delete / archive timestamp (P1-05.1); null = active. The row is never hard-deleted. */
   archivedAt            DateTime?   @map("archived_at")
   estimatedCost         Decimal?    @map("estimated_cost") @db.Decimal(12, 2)

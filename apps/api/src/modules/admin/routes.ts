@@ -104,7 +104,13 @@ export const adminRoutes = async (app: FastifyInstance): Promise<void> => {
     const def = resolve(request.params.resource);
     if (def.readonly) throw new AppError('forbidden', `${def.label} is read-only`);
     const { createSchema } = buildSchemas(def);
-    const data = parse(createSchema, request.body);
+    const data = parse(createSchema, request.body) as Record<string, unknown>;
+    // U0: a new client without an explicit discount inherits the system default
+    // (`default_client_discount_pct`). Resolution order at use-time is system → client → quote.
+    if (def.resource === 'clients' && (data.discountPct === undefined || data.discountPct === null)) {
+      const setting = await prisma.setting.findUnique({ where: { key: 'default_client_discount_pct' } });
+      if (setting?.value != null) data.discountPct = Number(setting.value);
+    }
     const fieldNames = def.fields.map((fld) => fld.name);
     // Create + audit in one transaction — a sensitive table is never mutated without a trail.
     const row = await prisma.$transaction(async (tx) => {

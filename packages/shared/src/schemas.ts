@@ -32,6 +32,11 @@ export const createQuoteSchema = z.object({
   resellerMarkup: z.coerce.number().min(0).max(10).default(0),
   validUntil: z.coerce.date().optional(),
   requestedShippingDate: z.coerce.date().optional(),
+  /** Quote-level discount override (U0), fraction 0..1; wins over the client/system default. Not yet applied to pricing. */
+  discountPct: z.coerce.number().min(0).max(1).optional(),
+  /** Quote-wide PI capture (U0). */
+  siteAddress: z.string().max(500).optional(),
+  projectNotes: z.string().max(2000).optional(),
   /** Viewer users this quote is shared with (they can read only quotes assigned to them). */
   viewerUserIds: z.array(idSchema).optional(),
 });
@@ -41,6 +46,10 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   // Nullable on update so the editor can *clear* a client/location (the service sets the FK to null).
   clientId: idSchema.nullish(),
   locationId: idSchema.nullish(),
+  // Nullable on update so the editor can clear the discount/PI fields (U0).
+  discountPct: z.coerce.number().min(0).max(1).nullish(),
+  siteAddress: z.string().max(500).nullish(),
+  projectNotes: z.string().max(2000).nullish(),
   /** Optimistic-locking token from the last read; a mismatch is a 409 conflict (P1-05.2). */
   expectedVersion: z.coerce.number().int().nonnegative().optional(),
 });
@@ -125,6 +134,30 @@ export const ledScreenSchema = z.object({
   components: z.array(ledComponentSchema).default([]),
 });
 export type LedScreenInput = z.infer<typeof ledScreenSchema>;
+
+/**
+ * Patch an EXISTING LED screen's secondary options / services (U0). The product + geometry
+ * (ledProductId, desiredWidth/HeightMm, rotateCabinets, components, orientation, aspectRatio) are
+ * finalised when the screen is added and are NOT editable here — this is the "edit trim/frame/etc."
+ * second form. Every field is optional; `null` clears the FK / note. Re-prices the screen.
+ */
+export const updateLedScreenSchema = z.object({
+  gobId: idSchema.nullish(),
+  frameId: idSchema.nullish(),
+  trimId: idSchema.nullish(),
+  hangingBarId: idSchema.nullish(),
+  engineeringId: idSchema.nullish(),
+  installMethodId: idSchema.nullish(),
+  freightOptionId: idSchema.nullish(),
+  warrantyId: idSchema.nullish(),
+  serviceHoursId: idSchema.nullish(),
+  accessEquipmentId: idSchema.nullish(),
+  backCover: z.boolean().optional(),
+  frameNote: z.string().max(500).nullish(),
+  serviceDescriptionSuffix: z.string().max(500).nullish(),
+  marginOverride: z.coerce.number().min(0).max(0.99).nullish(),
+});
+export type UpdateLedScreenInput = z.infer<typeof updateLedScreenSchema>;
 
 // ─── LCD screen config (the LCD-1 questionnaire) ──────────────────────────────
 export const lcdItemSchema = z.object({

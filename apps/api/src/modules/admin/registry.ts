@@ -60,7 +60,7 @@ export const TABLES: TableDef[] = [
   {
     resource: 'settings', model: 'setting', label: 'Settings (markups/margins)', group: 'Pricing & Currency',
     titleField: 'label', searchFields: ['key', 'label'],
-    fields: [f('key', 'string', true), f('label', 'string', true), f('value', 'decimal', true), f('unit')],
+    fields: [f('key', 'string', true), f('label', 'string', true), f('value', 'decimal'), f('valueText', 'string'), f('unit')],
     listFields: ['key', 'label', 'value', 'unit'],
   },
   {
@@ -95,10 +95,18 @@ export const TABLES: TableDef[] = [
 
   // ── LED ──
   {
+    resource: 'manufacturers', model: 'manufacturer', label: 'Manufacturers', group: 'LED',
+    titleField: 'name', searchFields: ['name'],
+    fields: [f('name', 'string', true), f('priority', 'int'), f('leadTimeDays', 'int'), DEPRECATED],
+    listFields: ['name', 'priority', 'leadTimeDays', 'deprecated'],
+  },
+  {
     resource: 'led-products', model: 'ledProduct', label: 'LED Products', group: 'LED',
     titleField: 'model', searchFields: ['model', 'vendor', 'cabinetType'],
     fields: [
-      f('vendor'), f('model', 'string', true), f('serviceCategory'), f('moduleWMm', 'int'),
+      // manufacturerId is the normalised manufacturer FK (U0). The generic CRUD has no dedicated
+      // `ref` field type, so it is exposed as an int FK (manufacturers.id).
+      f('vendor'), f('manufacturerId', 'int'), f('model', 'string', true), f('serviceCategory'), f('moduleWMm', 'int'),
       f('moduleHMm', 'int'), f('minCabinetWMm', 'int'), f('minCabinetHMm', 'int'), f('cabinetDepthMm', 'int'),
       f('cabinetType'), f('pixelPitchH', 'decimal'), f('pixelPitchV', 'decimal'), f('brightnessNits', 'int'),
       f('powerMaxW', 'int'), f('powerAvgW', 'int'), f('kgPerSqm', 'decimal'), f('costPerSqmUsd', 'decimal'),
@@ -302,7 +310,8 @@ export const TABLES: TableDef[] = [
     resource: 'clients', model: 'client', label: 'Clients', group: 'Clients',
     titleField: 'name', searchFields: ['name', 'marginNote', 'preferredProductFamily'],
     fields: [
-      f('name', 'string', true), f('defaultMargin', 'decimal'), f('preferredProductFamily'),
+      f('name', 'string', true), f('defaultMargin', 'decimal'), f('discountPct', 'decimal'),
+      f('preferredProductFamily'),
       f('preferredPitchMm', 'decimal'), f('excludedComponents'), f('marginNote', 'text'),
       f('ledScreenNote', 'text'), f('gobNote', 'text'), f('mediaplayerNote', 'text'), f('ratioNote', 'text'),
     ],

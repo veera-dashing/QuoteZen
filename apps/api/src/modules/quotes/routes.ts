@@ -17,6 +17,7 @@ import {
   reorderScreensSchema,
   screenQtySchema,
   setOverrideSchema,
+  updateLedScreenSchema,
   updateQuoteSchema,
 } from '@quotezen/shared';
 import { parse } from '../../lib/validate.js';
@@ -61,6 +62,7 @@ import {
   duplicateLedScreen,
   reorderLedScreens,
   setLedScreenQty,
+  updateLedScreen,
 } from './screens.js';
 import { buildQuotePdf } from './pdf.js';
 import { buildBom, buildDescriptions, buildPmHandoff, buildSolutionSummary, loadRatios } from './outputs.js';
@@ -394,6 +396,16 @@ export const quoteRoutes = async (
     const { screenId } = parse(z.object({ screenId: z.coerce.bigint() }), request.params);
     const { qty } = parse(screenQtySchema, request.body);
     await setLedScreenQty(userId(request), id, screenId, qty);
+    return recomputeQuote(userId(request), id);
+  });
+
+  // Edit a finalised LED screen's secondary options/services (U0): re-prices + recomputes.
+  app.patch('/quotes/:id/led-screens/:screenId', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { screenId } = parse(z.object({ screenId: z.coerce.bigint() }), request.params);
+    const input = parse(updateLedScreenSchema, request.body);
+    await updateLedScreen(userId(request), id, screenId, input);
     return recomputeQuote(userId(request), id);
   });
 

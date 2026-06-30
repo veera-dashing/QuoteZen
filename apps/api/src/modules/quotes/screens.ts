@@ -18,11 +18,11 @@ import {
   type PricedLine,
 } from '@quotezen/calc';
 import { applyMargin, applyMarkup, round } from '@quotezen/shared';
-import type { LcdScreenInput, LedScreenInput } from '@quotezen/shared';
+import type { LcdScreenInput, LedScreenInput, UpdateLedScreenInput } from '@quotezen/shared';
 import { AppError, notFound } from '../../errors.js';
 import { recordAudit } from '../../services/audit.js';
 import { loadPricingConfig, loadPricingContext } from '../../lib/pricing-config.js';
-import { getQuote } from './service.js';
+import { getQuote, recomputeQuote } from './service.js';
 
 const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toString() : '0');
 
@@ -207,10 +207,37 @@ export const optionsForQuote = async (
   return { options, reasons: ranked.reasons, distinctProducts: selection.distinctProducts };
 };
 
-export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedScreenInput) => {
-  const quote = await getQuote(quoteId); // 404s if the quote is missing
+interface LedScreenPricing {
+  spec: ReturnType<typeof ledSpec> | null;
+  lines: PricedLine[];
+  compRows: Array<{
+    componentType: string;
+    controllerId?: bigint;
+    ledPeripheralId?: bigint;
+    mediaplayerId?: bigint;
+    peripheralId?: bigint;
+    qty: number;
+    unitCostSnapshot: string;
+    unitSellSnapshot: string;
+  }>;
+  labourHours: number;
+  freightKg: number | null;
+  totals: ReturnType<typeof composeScreenTotals>;
+  /** Per-unit screen sell (the quote rollup multiplies by screen qty). */
+  unitSell: ReturnType<typeof round>;
+  product: Awaited<ReturnType<typeof prisma.ledProduct.findUnique>>;
+}
+
+/**
+ * Price an LED screen from its inputs (U0). Pure of persistence — returns the priced lines, spec,
+ * component rows, labour/freight + totals. Shared by {@link addLedScreen} (initial add) and
+ * {@link updateLedScreen} (secondary-options edit) so the two can never price differently.
+ */
+const computeLedScreenPricing = async (
+  quote: Awaited<ReturnType<typeof getQuote>>,
+  input: LedScreenInput,
+): Promise<LedScreenPricing> => {
   const { config, dbRateCodes } = await loadPricingContext();
-  const qty = input.qty ?? 1;
 
   const product = input.ledProductId
     ? await prisma.ledProduct.findUnique({ where: { id: BigInt(input.ledProductId) } })
@@ -387,6 +414,16 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
   const totals = composeScreenTotals(lines);
   // priceTotal is the per-unit screen price; the quote rollup multiplies by qty (P1-14.2).
   const unitSell = round(totals.totalSell);
+
+  return { spec, lines, compRows, labourHours, freightKg, totals, unitSell, product };
+};
+
+export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedScreenInput) => {
+  const quote = await getQuote(quoteId); // 404s if the quote is missing
+  const qty = input.qty ?? 1;
+
+  const { spec, lines, compRows, labourHours, freightKg, totals, unitSell, product } =
+    await computeLedScreenPricing(quote, input);
 
   const screen = await prisma.$transaction(async (tx) => {
     const maxOrder = await tx.quoteLedScreen.aggregate({
@@ -631,6 +668,130 @@ export const setLedScreenQty = async (userId: bigint, quoteId: bigint, screenId:
       changes: [{ field: 'qty', oldValue: String(screen.qty), newValue: String(qty) }],
     });
   });
+};
+
+/**
+ * Patch an existing LED screen's secondary options/services (U0) — frame, trim, GOB, hanging bar,
+ * engineering, install method, freight, warranty, service hours, access equipment, back cover, notes
+ * and margin override. The product + geometry + components are NOT touched (they are finalised at
+ * add time). RE-PRICES the screen via the shared {@link computeLedScreenPricing} (so the price stays
+ * correct), replaces the cost breakdown, recomputes the quote, and audits the change.
+ *
+ * This powers the LED "two-form" flow: finalise the screen (product + geometry), then edit
+ * trim/frame/etc. on the finalised screen.
+ */
+export const updateLedScreen = async (
+  userId: bigint,
+  quoteId: bigint,
+  screenId: bigint,
+  input: UpdateLedScreenInput,
+) => {
+  const quote = await getQuote(quoteId); // 404s if the quote is missing
+  const screen = await prisma.quoteLedScreen.findFirst({
+    where: { id: screenId, quoteId },
+    include: { components: true },
+  });
+  if (!screen) throw notFound('LED screen', screenId.toString());
+
+  // Reconstruct the screen's existing product/geometry/component inputs, then overlay the patch.
+  // `null` in the patch clears a FK/note; `undefined` (omitted) keeps the current value.
+  const opt = <T,>(patch: T | null | undefined, current: T | null): T | undefined => {
+    if (patch === undefined) return current ?? undefined; // unchanged
+    return patch ?? undefined; // null → cleared
+  };
+  const num = (v: bigint | null): number | undefined => (v != null ? Number(v) : undefined);
+
+  const pricingInput: LedScreenInput = {
+    screenName: screen.screenName ?? undefined,
+    ledProductId: num(screen.ledProductId),
+    qty: screen.qty,
+    desiredWidthMm: screen.desiredWidthMm ?? undefined,
+    desiredHeightMm: screen.desiredHeightMm ?? undefined,
+    rotateCabinets: screen.rotateCabinets,
+    orientation: (screen.orientation as LedScreenInput['orientation']) ?? undefined,
+    aspectRatioId: num(screen.aspectRatioId),
+    backCover: input.backCover ?? screen.backCover,
+    frameNote: opt(input.frameNote, screen.frameNote),
+    serviceDescriptionSuffix: opt(input.serviceDescriptionSuffix, screen.serviceDescriptionSuffix),
+    gobId: opt(input.gobId, num(screen.gobId) ?? null),
+    frameId: opt(input.frameId, num(screen.frameId) ?? null),
+    trimId: opt(input.trimId, num(screen.trimId) ?? null),
+    hangingBarId: opt(input.hangingBarId, num(screen.hangingBarId) ?? null),
+    engineeringId: opt(input.engineeringId, num(screen.engineeringId) ?? null),
+    installMethodId: opt(input.installMethodId, num(screen.installMethodId) ?? null),
+    freightOptionId: opt(input.freightOptionId, num(screen.freightOptionId) ?? null),
+    warrantyId: opt(input.warrantyId, num(screen.warrantyId) ?? null),
+    serviceHoursId: opt(input.serviceHoursId, num(screen.serviceHoursId) ?? null),
+    accessEquipmentId: opt(input.accessEquipmentId, num(screen.accessEquipmentId) ?? null),
+    marginOverride:
+      input.marginOverride === undefined
+        ? (screen.marginOverride != null ? Number(screen.marginOverride) : undefined)
+        : (input.marginOverride ?? undefined),
+    components: screen.components.map((c) => ({
+      componentType: c.componentType as LedScreenInput['components'][number]['componentType'],
+      controllerId: num(c.controllerId),
+      ledPeripheralId: num(c.ledPeripheralId),
+      mediaplayerId: num(c.mediaplayerId),
+      peripheralId: num(c.peripheralId),
+      qty: c.qty,
+    })),
+  };
+
+  const { lines, labourHours, freightKg, totals, unitSell, product } =
+    await computeLedScreenPricing(quote, pricingInput);
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.quoteLedScreen.update({
+      where: { id: screenId },
+      data: {
+        backCover: pricingInput.backCover,
+        frameNote: pricingInput.frameNote ?? null,
+        serviceDescriptionSuffix: pricingInput.serviceDescriptionSuffix ?? null,
+        gobId: pricingInput.gobId ? BigInt(pricingInput.gobId) : null,
+        frameId: pricingInput.frameId ? BigInt(pricingInput.frameId) : null,
+        trimId: pricingInput.trimId ? BigInt(pricingInput.trimId) : null,
+        hangingBarId: pricingInput.hangingBarId ? BigInt(pricingInput.hangingBarId) : null,
+        engineeringId: pricingInput.engineeringId ? BigInt(pricingInput.engineeringId) : null,
+        installMethodId: pricingInput.installMethodId ? BigInt(pricingInput.installMethodId) : null,
+        freightOptionId: pricingInput.freightOptionId ? BigInt(pricingInput.freightOptionId) : null,
+        warrantyId: pricingInput.warrantyId ? BigInt(pricingInput.warrantyId) : null,
+        serviceHoursId: pricingInput.serviceHoursId ? BigInt(pricingInput.serviceHoursId) : null,
+        accessEquipmentId: pricingInput.accessEquipmentId ? BigInt(pricingInput.accessEquipmentId) : null,
+        marginOverride: pricingInput.marginOverride ?? null,
+        cabinetDepthMm: product?.cabinetDepthMm ?? null,
+        labourHours: labourHours ? labourHours.toString() : null,
+        freightKg: freightKg !== null ? freightKg.toString() : null,
+        priceScreenMediaplayer: totals.screenMediaplayerSell.toString(),
+        priceFrameTrim: totals.frameTrimSell.toString(),
+        priceServices: totals.servicesSell.toString(),
+        priceTotal: unitSell.toString(),
+        // Re-derive the cost breakdown (the priced lines drive the itemised view + margin).
+        costBreakdown: {
+          deleteMany: {},
+          create: lines.map((l) => ({
+            lineLabel: l.label,
+            category: l.bucket,
+            cost: l.costAud.toString(),
+            sell: l.sellAud.toString(),
+          })),
+        },
+      },
+      include: { components: true, costBreakdown: true },
+    });
+    await recordAudit(tx, {
+      quoteId,
+      userId,
+      action: 'update',
+      entityTable: 'quote_led_screens',
+      entityId: screenId,
+      changes: [{ field: 'price_total', oldValue: dec(screen.priceTotal), newValue: row.priceTotal }],
+    });
+    return row;
+  });
+
+  // Re-roll the quote totals so the new screen price flows into the grand total.
+  await recomputeQuote(userId, quoteId);
+  return updated;
 };
 
 /**

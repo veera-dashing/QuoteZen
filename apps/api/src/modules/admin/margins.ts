@@ -67,7 +67,7 @@ export const marginRoutes = async (app: FastifyInstance): Promise<void> => {
       for (const [key, value] of Object.entries(values)) {
         const existing = byKey.get(key);
         if (!existing) throw new AppError('not_found', `Setting "${key}" does not exist`);
-        const oldStr = existing.value.toString();
+        const oldStr = existing.value?.toString() ?? '';
         const newStr = String(value);
         if (oldStr === newStr) continue; // no-op; don't write a noise audit row
 

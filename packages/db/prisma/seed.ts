@@ -24,7 +24,7 @@ const CURRENCIES: Array<{ code: string; name: string; rate: number; live: number
 ];
 
 // ─── Reference Data: markups / margins / multipliers ──────────────────────────
-const SETTINGS: Array<{ key: string; label: string; value: number; unit: string }> = [
+const SETTINGS: Array<{ key: string; label: string; value?: number; valueText?: string; unit: string }> = [
   { key: 'assembly_labour', label: 'Assembly Labour', value: 45, unit: '$/hr' },
   { key: 'philips_markup', label: 'Philips Markup', value: 1.4, unit: 'x' },
   { key: 'lcd_margin', label: 'LCD Margin', value: 0.3, unit: 'fraction' },
@@ -49,6 +49,20 @@ const SETTINGS: Array<{ key: string; label: string; value: number; unit: string 
   { key: 'install_hourly_cost', label: 'Install Labour Cost (per hour)', value: 95, unit: '$' },
   { key: 'out_of_hours_rate_cost', label: 'Out-of-Hours Uplift Cost (per hour)', value: 50, unit: '$' },
   { key: 'out_of_hours_rate_sell', label: 'Out-of-Hours Uplift Sell (per hour)', value: 80, unit: '$' },
+  // U0 — client discount system default (fraction 0..1); new clients inherit this when none is set.
+  { key: 'default_client_discount_pct', label: 'Default Client Discount %', value: 0, unit: 'fraction' },
+  // U0 — size-tolerance bands (% comma-separated) for over/under-sizing guidance; applied in a later feature.
+  { key: 'size_tolerance_bands', label: 'Size Tolerance Bands', valueText: '5,10,25', unit: '%' },
+];
+
+// ─── U0: hardware manufacturers (normalised from led_products.vendor) ─────────
+// priority orders manufacturers for future sourcing logic (lower = preferred); leadTimeDays is a
+// placeholder until real supplier lead times are loaded. Names MUST match the distinct LedProduct
+// `vendor` strings so the backfill below can link led_products.manufacturer_id by name.
+const MANUFACTURERS: Array<{ name: string; priority: number; leadTimeDays: number }> = [
+  { name: 'LEDFul', priority: 1, leadTimeDays: 45 },
+  { name: 'ZonePro', priority: 2, leadTimeDays: 60 },
+  { name: 'Muxwave', priority: 3, leadTimeDays: 60 },
 ];
 
 const SEAFREIGHT: Array<{ label: string; value: number; currency?: string }> = [
@@ -250,12 +264,12 @@ async function main(): Promise<void> {
   const usd = await prisma.currency.findUniqueOrThrow({ where: { code: 'USD' } });
   const aud = await prisma.currency.findUniqueOrThrow({ where: { code: 'AUD' } });
 
-  // Settings
+  // Settings — numeric settings carry `value`; text-only settings (e.g. size_tolerance_bands) use valueText.
   for (const s of SETTINGS) {
     await prisma.setting.upsert({
       where: { key: s.key },
-      update: { label: s.label, value: s.value, unit: s.unit },
-      create: s,
+      update: { label: s.label, value: s.value ?? null, valueText: s.valueText ?? null, unit: s.unit },
+      create: { key: s.key, label: s.label, value: s.value ?? null, valueText: s.valueText ?? null, unit: s.unit },
     });
   }
 
@@ -343,6 +357,27 @@ async function main(): Promise<void> {
   await seedIfEmpty('client', () =>
     prisma.client.createMany({ data: CLIENTS.map(([name, marginNote]) => ({ name, marginNote })) }),
   );
+
+  // ── U0: manufacturers (upsert by unique name) + backfill led_products.manufacturer_id by vendor ──
+  // Idempotent: upserts keep the configured priority/leadTimeDays in sync; the backfill only fills
+  // products whose vendor matches a manufacturer name and that aren't already linked.
+  for (const m of MANUFACTURERS) {
+    await prisma.manufacturer.upsert({
+      where: { name: m.name },
+      update: { priority: m.priority, leadTimeDays: m.leadTimeDays },
+      create: m,
+    });
+  }
+  const allManufacturers = await prisma.manufacturer.findMany();
+  let linked = 0;
+  for (const m of allManufacturers) {
+    const res = await prisma.ledProduct.updateMany({
+      where: { vendor: m.name, manufacturerId: null },
+      data: { manufacturerId: m.id },
+    });
+    linked += res.count;
+  }
+  console.warn(`  manufacturers: ${allManufacturers.length} present; linked ${linked} led_products by vendor`);
 
   console.warn('Seed complete.');
 }

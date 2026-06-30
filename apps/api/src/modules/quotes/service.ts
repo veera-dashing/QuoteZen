@@ -38,6 +38,9 @@ const QUOTE_HEADER_FIELDS = [
   'resellerMarkup',
   'validUntil',
   'requestedShippingDate',
+  'discountPct',
+  'siteAddress',
+  'projectNotes',
 ] as const;
 
 const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toString() : '0');
@@ -59,6 +62,9 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput) => {
         resellerMarkup: input.resellerMarkup,
         validUntil: input.validUntil ?? null,
         requestedShippingDate: input.requestedShippingDate ?? null,
+        discountPct: input.discountPct ?? null,
+        siteAddress: input.siteAddress ?? null,
+        projectNotes: input.projectNotes ?? null,
         createdById: userId,
         viewers: input.viewerUserIds?.length
           ? { create: input.viewerUserIds.map((uid) => ({ userId: BigInt(uid) })) }
@@ -214,6 +220,9 @@ export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuote
   if (input.resellerMarkup !== undefined) data.resellerMarkup = input.resellerMarkup;
   if (input.validUntil !== undefined) data.validUntil = input.validUntil;
   if (input.requestedShippingDate !== undefined) data.requestedShippingDate = input.requestedShippingDate;
+  if (input.discountPct !== undefined) data.discountPct = input.discountPct;
+  if (input.siteAddress !== undefined) data.siteAddress = input.siteAddress;
+  if (input.projectNotes !== undefined) data.projectNotes = input.projectNotes;
   if (input.currencyCode !== undefined) {
     const currency = await findCurrencyByCode(input.currencyCode);
     if (!currency) throw notFound('Currency', input.currencyCode);
