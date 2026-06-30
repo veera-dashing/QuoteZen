@@ -89,6 +89,7 @@ model User {
   viewerQuotes  QuoteViewer[]
   createdQuotes Quote[]         @relation("QuoteCreatedBy")
   updatedQuotes Quote[]         @relation("QuoteUpdatedBy")
+  overrides     QuoteOverride[] @relation("QuoteOverrideCreatedBy")
 
   @@map("users")
 }
@@ -680,10 +681,38 @@ model Quote {
   terms              QuoteTerm[]
   auditLogs          QuoteAuditLog[]
   revisions          QuoteRevision[]
+  overrides          QuoteOverride[]
 
   @@index([clientId])
   @@index([status])
   @@map("quotes")
+}
+
+/**
+ * Manual price override pinned as an input (P1-17). An overridden value pins, the engine recomputes
+ * everything downstream from it, and any affected line is flagged. One active override per
+ * (quote, targetType, targetId, field). `targetType` is open-ended so more override targets can be
+ * added later (start: 'led_screen_price', targetId = the LED screen id).
+ */
+model QuoteOverride {
+  id            BigInt   @id @default(autoincrement())
+  quoteId       BigInt   @map("quote_id")
+  targetType    String   @map("target_type")
+  targetId      BigInt?  @map("target_id")
+  fieldName     String   @map("field_name")
+  /** The computed value at the moment the override was set (for the flag/diff + audit). */
+  originalValue Decimal  @map("original_value") @db.Decimal(12, 2)
+  overrideValue Decimal  @map("override_value") @db.Decimal(12, 2)
+  reason        String?
+  createdById   BigInt   @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  quote     Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  createdBy User  @relation("QuoteOverrideCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([quoteId, targetType, targetId, fieldName])
+  @@index([quoteId])
+  @@map("quote_overrides")
 }
 
 model QuoteLedScreen {

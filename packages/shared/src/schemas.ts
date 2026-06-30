@@ -119,6 +119,25 @@ export const screenQtySchema = z.object({
 });
 export type ScreenQtyInput = z.infer<typeof screenQtySchema>;
 
+// ─── Manual price overrides (P1-17) ───────────────────────────────────────────
+/** Override target kinds. Open-ended by design; only 'led_screen_price' is wired today. */
+export const OVERRIDE_TARGET_TYPES = ['led_screen_price'] as const;
+export type OverrideTargetType = (typeof OVERRIDE_TARGET_TYPES)[number];
+
+/**
+ * Set a manual override on a computed field. `value` must be a finite, non-negative number
+ * (negative/NaN rejected at validation → 400). A value that lowers margin is allowed but warned.
+ */
+export const setOverrideSchema = z.object({
+  targetType: z.enum(OVERRIDE_TARGET_TYPES).default('led_screen_price'),
+  targetId: z.coerce.bigint(),
+  value: z.coerce.number().refine((v) => Number.isFinite(v) && v >= 0, {
+    message: 'Override value must be a finite, non-negative number',
+  }),
+  reason: z.string().max(500).optional(),
+});
+export type SetOverrideInput = z.infer<typeof setOverrideSchema>;
+
 // ─── Simple quote line collections (skippable wizard steps) ───────────────────
 const refQty = (key: string) =>
   z.object({ [key]: idSchema, qty: qtySchema } as Record<string, z.ZodTypeAny>);

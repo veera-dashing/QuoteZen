@@ -692,16 +692,27 @@ interface QuoteValidation {
 }
 
 interface PriceLine { label: string; category: string | null; qty: number; cost: string | null; sell: string | null }
-interface PriceSection { type: 'led' | 'lcd' | 'licence'; name: string; lines: PriceLine[]; total: string }
+interface PriceSection {
+  type: 'led' | 'lcd' | 'licence'; name: string; lines: PriceLine[]; total: string;
+  overridden?: boolean; targetId?: string; computedTotal?: string;
+}
+interface OverrideSummary {
+  id: string; targetType: string; targetId: string | null; fieldName: string;
+  originalValue: string; overrideValue: string; reason: string | null;
+  createdBy: { id: string; name: string } | null; createdAt: string;
+}
 interface PriceResult {
   costVisible: boolean;
   sections: PriceSection[];
+  overrides?: OverrideSummary[];
+  hasOverrides?: boolean;
   licences: Array<{ screenType: string; tier: string; qty: number; isInteractive: boolean; annual: string }>;
   totals: {
     equipment: string; services: string; recurring: string; grandTotal: string;
     margin: string | null; marginFloor: number | null;
   };
 }
+interface OverrideResult { override: OverrideSummary; warning: string | null }
 
 function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
@@ -721,6 +732,12 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const [price, setPrice] = useState<PriceResult | null>(null);
   const [pricing, setPricing] = useState(false);
   const [priceError, setPriceError] = useState<string | null>(null);
+  // Manual price overrides (P1-17): which screen is being edited + its draft value + last warning.
+  const [editOverride, setEditOverride] = useState<string | null>(null);
+  const [overrideDraft, setOverrideDraft] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
+  const [overrideWarning, setOverrideWarning] = useState<string | null>(null);
+  const [overrideBusy, setOverrideBusy] = useState(false);
   const role = getRole();
   const isAdmin = role === 'admin';
   const canPrice = role === 'admin' || role === 'sales';
@@ -775,6 +792,49 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
       setPriceError(e instanceof Error ? e.message : 'Pricing failed');
     } finally {
       setPricing(false);
+    }
+  };
+
+  // ── Manual price overrides (P1-17.3) ──
+  const overrideFor = (targetId?: string): OverrideSummary | undefined =>
+    targetId ? price?.overrides?.find((o) => o.targetType === 'led_screen_price' && o.targetId === targetId) : undefined;
+
+  const saveOverride = async (targetId: string) => {
+    const value = Number(overrideDraft);
+    if (!(Number.isFinite(value) && value >= 0)) {
+      setOverrideWarning('Enter a non-negative number.');
+      return;
+    }
+    setOverrideBusy(true);
+    setOverrideWarning(null);
+    try {
+      const res = await api<OverrideResult>(`/quotes/${quote.id}/overrides`, {
+        method: 'POST',
+        body: JSON.stringify({ targetType: 'led_screen_price', targetId: Number(targetId), value, reason: overrideReason || undefined }),
+      });
+      setEditOverride(null);
+      setOverrideReason('');
+      setOverrideWarning(res.warning); // null clears; a below-floor warning shows.
+      await loadPrice(); // re-price → refreshes sections + flags + totals.
+      await onChange();  // refresh the parent quote (LED step totals).
+    } catch (e) {
+      setOverrideWarning(e instanceof Error ? e.message : 'Override failed');
+    } finally {
+      setOverrideBusy(false);
+    }
+  };
+
+  const clearOverride = async (overrideId: string) => {
+    setOverrideBusy(true);
+    setOverrideWarning(null);
+    try {
+      await api(`/quotes/${quote.id}/overrides/${overrideId}`, { method: 'DELETE' });
+      await loadPrice();
+      await onChange();
+    } catch (e) {
+      setOverrideWarning(e instanceof Error ? e.message : 'Clear failed');
+    } finally {
+      setOverrideBusy(false);
     }
   };
 
@@ -913,13 +973,61 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
             {!price.costVisible && (
               <p className="muted" style={{ marginTop: 0 }}>Cost hidden for your role.</p>
             )}
+            {overrideWarning && <div className="error" style={{ marginTop: 10 }}>⚠️ {overrideWarning}</div>}
             {price.sections.length === 0 && <p className="muted">No priced lines yet.</p>}
-            {price.sections.map((sec, si) => (
+            {price.sections.map((sec, si) => {
+              const ov = overrideFor(sec.targetId);
+              const editable = sec.type === 'led' && sec.targetId && canWrite;
+              return (
               <div key={si} style={{ marginBottom: 14 }}>
                 <div className="topbar">
-                  <b>{sec.name} <span className="muted">· {sec.type.toUpperCase()}</span></b>
-                  <span>{cur} {Number(sec.total).toLocaleString()}</span>
+                  <b>
+                    {sec.name} <span className="muted">· {sec.type.toUpperCase()}</span>
+                    {sec.overridden && ov && (
+                      <span
+                        className="pill"
+                        style={{ marginLeft: 8, background: 'var(--warn-bg, #fef3c7)', color: 'var(--warn-fg, #92400e)' }}
+                        title={`Override: computed ${cur} ${Number(ov.originalValue).toLocaleString()} → ${cur} ${Number(ov.overrideValue).toLocaleString()}\nBy ${ov.createdBy?.name ?? 'unknown'}${ov.reason ? `\nReason: ${ov.reason}` : ''}`}
+                      >
+                        🚩 Overridden
+                      </span>
+                    )}
+                  </b>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {sec.overridden && sec.computedTotal && (
+                      <span className="muted" style={{ textDecoration: 'line-through' }}>
+                        {cur} {Number(sec.computedTotal).toLocaleString()}
+                      </span>
+                    )}
+                    <span>{cur} {Number(sec.total).toLocaleString()}</span>
+                    {editable && editOverride !== sec.targetId && (
+                      <button
+                        className="ghost"
+                        onClick={() => { setEditOverride(sec.targetId!); setOverrideDraft(sec.total); setOverrideReason(ov?.reason ?? ''); setOverrideWarning(null); }}
+                      >
+                        {sec.overridden ? 'Edit override' : 'Override price'}
+                      </button>
+                    )}
+                    {sec.overridden && ov && canWrite && (
+                      <button className="danger" disabled={overrideBusy} onClick={() => clearOverride(ov.id)}>Clear</button>
+                    )}
+                  </span>
                 </div>
+                {editable && editOverride === sec.targetId && (
+                  <div className="list-row" style={{ alignItems: 'center', gap: 8, marginTop: 6 }}>
+                    <label className="muted" style={{ display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
+                      Sell price ({cur})
+                      <input type="number" min={0} step="0.01" value={overrideDraft} style={{ width: 120 }}
+                        onChange={(e) => setOverrideDraft(e.target.value)} />
+                    </label>
+                    <input type="text" placeholder="Reason (optional)" value={overrideReason} style={{ flex: 1, minWidth: 160 }}
+                      onChange={(e) => setOverrideReason(e.target.value)} />
+                    <button className="primary" disabled={overrideBusy} onClick={() => saveOverride(sec.targetId!)}>
+                      {overrideBusy ? 'Saving…' : 'Apply'}
+                    </button>
+                    <button className="ghost" disabled={overrideBusy} onClick={() => { setEditOverride(null); setOverrideWarning(null); }}>Cancel</button>
+                  </div>
+                )}
                 <div className="table-wrap" style={{ marginTop: 6 }}>
                   <table>
                     <thead>
@@ -945,7 +1053,8 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
                   </table>
                 </div>
               </div>
-            ))}
+              );
+            })}
             {price.licences.length > 0 && (
               <div style={{ marginBottom: 14 }}>
                 <b>Licences</b>

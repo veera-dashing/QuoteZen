@@ -9,6 +9,7 @@ import {
   quoteTermsSchema,
   reorderScreensSchema,
   screenQtySchema,
+  setOverrideSchema,
   updateQuoteSchema,
 } from '@quotezen/shared';
 import { parse } from '../../lib/validate.js';
@@ -16,13 +17,16 @@ import type { UserRole } from '@quotezen/shared';
 import {
   assertOwnership,
   changeStatus,
+  clearOverride,
   createQuote,
   getAllAuditLog,
   getAuditLog,
+  getOverrides,
   getQuote,
   getQuotes,
   priceQuote,
   recomputeQuote,
+  setOverride,
   updateQuote,
   type Actor,
 } from './service.js';
@@ -117,6 +121,27 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     return priceQuote(actor(request), id);
+  });
+
+  // ── Manual price overrides (P1-17): pinned-override recalc ──
+  app.get('/quotes/:id/overrides', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return getOverrides(id);
+  });
+
+  app.post('/quotes/:id/overrides', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const input = parse(setOverrideSchema, request.body);
+    return setOverride(actor(request), id, input);
+  });
+
+  app.delete('/quotes/:id/overrides/:overrideId', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { overrideId } = parse(z.object({ overrideId: z.coerce.bigint() }), request.params);
+    return clearOverride(actor(request), id, overrideId);
   });
 
   // Conflict / validation engine (P1-15): per-screen findings + can-finalise gate.

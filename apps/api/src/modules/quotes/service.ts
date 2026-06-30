@@ -19,6 +19,14 @@ import {
   type AuditFilters,
   type QuoteWithChildren,
 } from './repository.js';
+import type { SetOverrideInput } from '@quotezen/shared';
+import {
+  effectiveLedScreenSell,
+  listOverrides,
+  overrideMap,
+  pruneOrphanOverrides,
+  type OverrideRow,
+} from './overrides.js';
 
 const QUOTE_HEADER_FIELDS = [
   'jobReference',
@@ -174,11 +182,26 @@ export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuote
 /** Statuses that "finalise" a quote — the margin guardrail is enforced on entry to these. */
 const FINALISED_STATUSES: QuoteStatus[] = ['approved', 'issued'];
 
-/** Realised margin from the stored cost/sell breakdown (equipment + services; recurring excluded). */
-export const computeMargin = (quote: QuoteWithChildren) => {
+/**
+ * Realised margin from the stored cost/sell breakdown (equipment + services; recurring excluded).
+ * When `overrides` is supplied, an overridden LED screen's SELL contribution = its override value
+ * (× qty) — cost stays the computed cost-sum — so margin reflects overrides and the existing
+ * below-floor finalisation guardrail (P1-19g.2) triggers automatically (P1-17.5).
+ */
+export const computeMargin = (
+  quote: QuoteWithChildren,
+  overrides?: Map<string, OverrideRow>,
+) => {
   const costs: Array<string> = [];
   const sells: Array<string> = [];
   for (const s of quote.ledScreens) {
+    const ov = overrides?.get(`led_screen_price:${s.id.toString()}`);
+    if (ov) {
+      // Pinned sell: override value scaled by screen qty. Cost still rolls up from the breakdown.
+      sells.push(round(Number(ov.overrideValue.toString()) * s.qty).toString());
+      for (const l of s.costBreakdown) if (l.cost) costs.push(l.cost.toString());
+      continue;
+    }
     for (const l of s.costBreakdown) {
       if (l.cost) costs.push(l.cost.toString());
       if (l.sell) sells.push(l.sell.toString());
@@ -217,7 +240,9 @@ export const changeStatus = async (
   let validationNote: string | null = null;
   if (FINALISED_STATUSES.includes(status)) {
     const floor = await getMarginFloor();
-    const { margin } = computeMargin(existing);
+    // Margin must reflect pinned overrides so a below-floor override trips the guardrail (P1-17.5).
+    const ovMap = overrideMap(await pruneOrphanOverrides(existing, await listOverrides(id)));
+    const { margin } = computeMargin(existing, ovMap);
     if (floor > 0 && margin.lessThan(floor)) {
       if (!isAdmin(actor)) {
         throw new AppError(
@@ -262,9 +287,10 @@ export const changeStatus = async (
         ...(validationNote ? [{ field: 'validation_guardrail', oldValue: null, newValue: validationNote }] : []),
       ],
     });
-    // Knowledge-base capture on outcome states (P1-19f).
+    // Knowledge-base capture on outcome states (P1-19f). Margin reflects pinned overrides.
     if (CAPTURE_STATUSES.includes(status)) {
-      await captureKbEntry(tx, quote, actor.id, status, computeMargin(quote).margin.toString());
+      const ov = overrideMap(await listOverrides(id));
+      await captureKbEntry(tx, quote, actor.id, status, computeMargin(quote, ov).margin.toString());
     }
     return quote;
   });
@@ -282,7 +308,27 @@ export interface PriceSection {
   type: 'led' | 'lcd' | 'licence';
   name: string;
   lines: PriceLine[];
+  /** Effective (pinned) total — the value that rolls into the quote totals. */
   total: string;
+  /** True when an active manual override is pinning this section's price (P1-17.2). */
+  overridden?: boolean;
+  /** The screen/target id (LED only) so the UI can set/clear the override. */
+  targetId?: string;
+  /** The computed price before any override — shown alongside the pinned value. */
+  computedTotal?: string;
+}
+
+/** A flagged active override surfaced to the client (P1-17.2/.3). */
+export interface OverrideSummary {
+  id: string;
+  targetType: string;
+  targetId: string | null;
+  fieldName: string;
+  originalValue: string;
+  overrideValue: string;
+  reason: string | null;
+  createdBy: { id: string; name: string } | null;
+  createdAt: string;
 }
 
 /**
@@ -293,13 +339,21 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
   await recomputeQuote(actor.id, id);
   const quote = await getQuote(id);
   const showCost = isAdmin(actor);
+  // Active overrides (post-prune) drive the per-line flag + the overrides summary (P1-17.2/.3).
+  const activeOverrides = await pruneOrphanOverrides(quote, await listOverrides(id));
+  const ovMap = overrideMap(activeOverrides);
 
   const sections: PriceSection[] = [];
   for (const s of quote.ledScreens) {
+    const eff = effectiveLedScreenSell(ovMap, s.id, dec(s.priceTotal));
     sections.push({
       type: 'led',
       name: s.screenName ?? 'LED screen',
-      total: dec(s.priceTotal),
+      // The section total is the effective (pinned) sell — what actually rolls into the totals.
+      total: eff.value,
+      overridden: eff.overridden,
+      targetId: s.id.toString(),
+      computedTotal: dec(s.priceTotal),
       lines: s.costBreakdown.map((l) => ({
         label: l.lineLabel,
         category: l.category,
@@ -324,9 +378,24 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
     });
   }
 
+  const overridesOut: OverrideSummary[] = activeOverrides.map((o) => ({
+    id: o.id.toString(),
+    targetType: o.targetType,
+    targetId: o.targetId?.toString() ?? null,
+    fieldName: o.fieldName,
+    originalValue: o.originalValue.toString(),
+    overrideValue: o.overrideValue.toString(),
+    reason: o.reason,
+    createdBy: o.createdBy ? { id: o.createdBy.id.toString(), name: o.createdBy.name } : null,
+    createdAt: o.createdAt.toISOString(),
+  }));
+
   return {
     costVisible: showCost,
     sections,
+    // Active overrides + a convenience flag so the UI can badge affected lines/totals (P1-17.2).
+    overrides: overridesOut,
+    hasOverrides: overridesOut.length > 0,
     licences: quote.licences.map((l) => ({
       screenType: l.screenType,
       tier: l.tier,
@@ -339,8 +408,8 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
       services: dec(quote.totalServices),
       recurring: dec(quote.totalRecurring),
       grandTotal: dec(quote.grandTotal),
-      // Margin derives from cost → admin-only (BR-081).
-      margin: showCost ? computeMargin(quote).margin.toString() : null,
+      // Margin derives from cost → admin-only (BR-081); reflects pinned overrides (P1-17.5).
+      margin: showCost ? computeMargin(quote, ovMap).margin.toString() : null,
       marginFloor: showCost ? await getMarginFloor() : null,
     },
   };
@@ -349,13 +418,17 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
 /** Map a quote's children to calc contributions, then recompute and persist the totals. */
 export const recomputeQuote = async (userId: bigint, id: bigint) => {
   const quote = await getQuote(id);
+  // Pinned overrides (P1-17): a screen's effective sell is its override value (if active) else the
+  // computed price; everything downstream (equipment, grand total) recomputes from the pinned value.
+  const overrides = overrideMap(await pruneOrphanOverrides(quote, await listOverrides(id)));
   const lines: QuoteLineContribution[] = [];
 
   // Per-screen qty multiplies the stored (per-unit) price into the rollup (P1-14.2). LED screens
   // carry a screen-level qty; LCD screens have none (their item rows carry their own qty), so the
   // stored LCD priceTotal is already the full screen price.
   for (const s of quote.ledScreens) {
-    lines.push({ kind: 'equipment', extendedSell: round(Number(dec(s.priceTotal)) * s.qty) });
+    const sell = effectiveLedScreenSell(overrides, s.id, dec(s.priceTotal)).value;
+    lines.push({ kind: 'equipment', extendedSell: round(Number(sell) * s.qty) });
   }
   for (const s of quote.lcdScreens) {
     lines.push({ kind: 'equipment', extendedSell: dec(s.priceTotal) });
@@ -400,4 +473,159 @@ export const recomputeQuote = async (userId: bigint, id: bigint) => {
     });
     return updated;
   });
+};
+
+// ─── Manual price overrides (P1-17) ───────────────────────────────────────────
+
+export interface OverrideResult {
+  override: OverrideSummary;
+  /** Set when the override lowers margin below the floor — allowed, but surfaced as a warning (.4). */
+  warning: string | null;
+  quote: QuoteWithChildren;
+}
+
+const toSummary = (o: OverrideRow): OverrideSummary => ({
+  id: o.id.toString(),
+  targetType: o.targetType,
+  targetId: o.targetId?.toString() ?? null,
+  fieldName: o.fieldName,
+  originalValue: o.originalValue.toString(),
+  overrideValue: o.overrideValue.toString(),
+  reason: o.reason,
+  createdBy: o.createdBy ? { id: o.createdBy.id.toString(), name: o.createdBy.name } : null,
+  createdAt: o.createdAt.toISOString(),
+});
+
+/**
+ * Pin a manual override on a computed field (P1-17.1/.2). Captures the CURRENT computed value as
+ * `originalValue`, upserts the override (one active per field), audits it, then recomputes so every
+ * downstream total reflects the pinned value. Returns a warning when the override drops margin below
+ * the floor (.4) — allowed (a judgement call) but flagged.
+ */
+export const setOverride = async (
+  actor: Actor,
+  quoteId: bigint,
+  input: SetOverrideInput,
+): Promise<OverrideResult> => {
+  const quote = await getQuote(quoteId);
+
+  // Resolve the target's current computed value (the value being pinned over).
+  let computed: string;
+  if (input.targetType === 'led_screen_price') {
+    const screen = quote.ledScreens.find((s) => s.id === input.targetId);
+    if (!screen) throw notFound('LED screen', input.targetId.toString());
+    computed = dec(screen.priceTotal);
+  } else {
+    throw new AppError('bad_request', `Unsupported override target "${input.targetType}"`);
+  }
+
+  const value = round(input.value).toString();
+  const fieldName = 'price_total';
+  const auditField = `override:${input.targetType}:${input.targetId.toString()}`;
+
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.quoteOverride.findUnique({
+      where: {
+        quoteId_targetType_targetId_fieldName: {
+          quoteId,
+          targetType: input.targetType,
+          targetId: input.targetId,
+          fieldName,
+        },
+      },
+    });
+    const saved = await tx.quoteOverride.upsert({
+      where: {
+        quoteId_targetType_targetId_fieldName: {
+          quoteId,
+          targetType: input.targetType,
+          targetId: input.targetId,
+          fieldName,
+        },
+      },
+      create: {
+        quoteId,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        fieldName,
+        originalValue: computed,
+        overrideValue: value,
+        reason: input.reason ?? null,
+        createdById: actor.id,
+      },
+      // Re-setting keeps the FIRST computed value as the original (the true baseline), only the value/reason change.
+      update: { overrideValue: value, reason: input.reason ?? null, createdById: actor.id },
+    });
+    await recordAudit(tx, {
+      quoteId,
+      userId: actor.id,
+      action: 'update',
+      entityTable: 'quote_overrides',
+      entityId: saved.id,
+      changes: [
+        {
+          field: auditField,
+          oldValue: existing ? existing.overrideValue.toString() : computed,
+          newValue: value,
+        },
+        ...(input.reason ? [{ field: `${auditField}:reason`, oldValue: null, newValue: input.reason }] : []),
+      ],
+    });
+  });
+
+  // Recompute downstream from the pinned value, then re-read with the override applied.
+  await recomputeQuote(actor.id, quoteId);
+  const updated = await getQuote(quoteId);
+  const ovMap = overrideMap(await listOverrides(quoteId));
+  const saved = ovMap.get(`${input.targetType}:${input.targetId.toString()}`);
+
+  // Margin warning (.4): allowed below floor, but flagged.
+  let warning: string | null = null;
+  const floor = await getMarginFloor();
+  if (floor > 0) {
+    const { margin } = computeMargin(updated, ovMap);
+    if (margin.lessThan(floor)) {
+      warning = `This override drops the quote margin to ${margin.times(100).toFixed(1)}%, below the floor of ${(floor * 100).toFixed(1)}%. Finalisation will require admin approval.`;
+    }
+  }
+
+  return { override: toSummary(saved as OverrideRow), warning, quote: updated };
+};
+
+/** Clear an override (P1-17.1): delete + audit + recompute so totals revert to the computed value. */
+export const clearOverride = async (
+  actor: Actor,
+  quoteId: bigint,
+  overrideId: bigint,
+): Promise<QuoteWithChildren> => {
+  const existing = await prisma.quoteOverride.findFirst({ where: { id: overrideId, quoteId } });
+  if (!existing) throw notFound('Override', overrideId.toString());
+
+  await prisma.$transaction(async (tx) => {
+    await tx.quoteOverride.delete({ where: { id: overrideId } });
+    await recordAudit(tx, {
+      quoteId,
+      userId: actor.id,
+      action: 'delete',
+      entityTable: 'quote_overrides',
+      entityId: overrideId,
+      changes: [
+        {
+          field: `override:${existing.targetType}:${existing.targetId?.toString() ?? ''}`,
+          oldValue: existing.overrideValue.toString(),
+          newValue: existing.originalValue.toString(),
+        },
+      ],
+    });
+  });
+
+  await recomputeQuote(actor.id, quoteId);
+  return getQuote(quoteId);
+};
+
+/** List a quote's active overrides (auto-pruning orphans). */
+export const getOverrides = async (quoteId: bigint): Promise<OverrideSummary[]> => {
+  const quote = await getQuote(quoteId);
+  const active = await pruneOrphanOverrides(quote, await listOverrides(quoteId));
+  return active.map(toSummary);
 };
