@@ -649,6 +649,8 @@ model Quote {
   lockVersion           Int         @default(0) @map("lock_version")
   validUntil            DateTime?   @map("valid_until")
   requestedShippingDate DateTime?   @map("requested_shipping_date")
+  /** Soft-delete / archive timestamp (P1-05.1); null = active. The row is never hard-deleted. */
+  archivedAt            DateTime?   @map("archived_at")
   estimatedCost         Decimal?    @map("estimated_cost") @db.Decimal(12, 2)
   actualCost            Decimal?    @map("actual_cost") @db.Decimal(12, 2)
   totalEquipment        Decimal     @default(0) @map("total_equipment") @db.Decimal(12, 2)

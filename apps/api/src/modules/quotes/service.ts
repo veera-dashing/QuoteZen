@@ -92,12 +92,64 @@ export interface Actor {
 
 const isAdmin = (actor: Actor): boolean => actor.role === 'admin';
 
-export const getQuotes = (actor: Actor) =>
-  listQuotes(
-    isAdmin(actor)
-      ? undefined
-      : { OR: [{ createdById: actor.id }, { viewers: { some: { userId: actor.id } } }] },
-  );
+export interface ListQuotesOptions {
+  /** Show archived quotes instead of active ones (P1-05.1). Defaults to active-only. */
+  archived?: boolean;
+}
+
+/**
+ * List quotes the actor may see (admins → all; others → own + assigned-as-viewer), composed with the
+ * archive filter: by default only active quotes (`archivedAt: null`); `archived:true` shows archived.
+ */
+export const getQuotes = (actor: Actor, opts: ListQuotesOptions = {}) => {
+  const archiveWhere = opts.archived ? { NOT: { archivedAt: null } } : { archivedAt: null };
+  const scopeWhere = isAdmin(actor)
+    ? undefined
+    : { OR: [{ createdById: actor.id }, { viewers: { some: { userId: actor.id } } }] };
+  return listQuotes(scopeWhere ? { AND: [archiveWhere, scopeWhere] } : archiveWhere);
+};
+
+/** Archive (soft-delete) a quote: stamp archivedAt, audit, never hard-delete (P1-05.1). */
+export const archiveQuote = async (userId: bigint, id: bigint) => {
+  const existing = await getQuote(id);
+  if (existing.archivedAt) return existing;
+  return prisma.$transaction(async (tx) => {
+    await tx.quote.update({
+      where: { id },
+      data: { archivedAt: new Date(), updatedById: userId, lockVersion: { increment: 1 } },
+    });
+    await recordAudit(tx, {
+      quoteId: id,
+      userId,
+      action: 'update',
+      entityTable: 'quotes',
+      entityId: id,
+      changes: [{ field: 'archived', oldValue: 'false', newValue: 'true' }],
+    });
+    return tx.quote.findUniqueOrThrow({ where: { id }, include: quoteInclude });
+  });
+};
+
+/** Restore an archived quote: clear archivedAt, audit (P1-05.1). */
+export const restoreQuote = async (userId: bigint, id: bigint) => {
+  const existing = await getQuote(id);
+  if (!existing.archivedAt) return existing;
+  return prisma.$transaction(async (tx) => {
+    await tx.quote.update({
+      where: { id },
+      data: { archivedAt: null, updatedById: userId, lockVersion: { increment: 1 } },
+    });
+    await recordAudit(tx, {
+      quoteId: id,
+      userId,
+      action: 'update',
+      entityTable: 'quotes',
+      entityId: id,
+      changes: [{ field: 'archived', oldValue: 'true', newValue: 'false' }],
+    });
+    return tx.quote.findUniqueOrThrow({ where: { id }, include: quoteInclude });
+  });
+};
 
 /** Cross-quote audit feed (admin only — enforced at the route via requireRole). */
 export const getAllAuditLog = (filters?: AuditFilters) => listAllAuditLog(filters);

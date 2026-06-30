@@ -52,6 +52,7 @@ export const listQuotes = (where?: Prisma.QuoteWhereInput) =>
     where,
     orderBy: { createdAt: 'desc' },
     include: { client: true, currency: true },
+    // archivedAt is selected by default (scalar), so the list can badge archived rows.
   });
 
 export const findCurrencyByCode = (code: string) => prisma.currency.findUnique({ where: { code } });

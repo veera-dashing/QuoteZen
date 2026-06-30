@@ -248,4 +248,57 @@ describe('quote lifecycle', () => {
     });
     expect(bad.statusCode).toBe(422);
   });
+
+  it('soft-deletes (archives) and restores a quote, preserving the row and audit (P1-05.1)', async () => {
+    const jobReference = `${JOB_PREFIX}arch-${Math.floor(Math.random() * 1e9)}`;
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: authHeader(),
+      payload: { jobReference, currencyCode: 'AUD' },
+    });
+    expect(created.statusCode).toBe(201);
+    const id = created.json().id as string;
+
+    // Active by default → appears in the default list.
+    const activeBefore = await app.inject({ method: 'GET', url: '/quotes', headers: authHeader() });
+    expect((activeBefore.json() as Array<{ id: string }>).map((q) => q.id)).toContain(id);
+
+    // Archive it.
+    const archived = await app.inject({
+      method: 'POST',
+      url: `/quotes/${id}/archive`,
+      headers: authHeader(),
+    });
+    expect(archived.statusCode).toBe(200);
+    expect(archived.json().archivedAt).not.toBeNull();
+
+    // Gone from the default (active) list…
+    const activeList = await app.inject({ method: 'GET', url: '/quotes', headers: authHeader() });
+    expect((activeList.json() as Array<{ id: string }>).map((q) => q.id)).not.toContain(id);
+
+    // …but present in the archived view, and still readable directly (row preserved, not hard-deleted).
+    const archivedList = await app.inject({ method: 'GET', url: '/quotes?archived=true', headers: authHeader() });
+    expect((archivedList.json() as Array<{ id: string }>).map((q) => q.id)).toContain(id);
+    const stillThere = await app.inject({ method: 'GET', url: `/quotes/${id}`, headers: authHeader() });
+    expect(stillThere.statusCode).toBe(200);
+
+    // Audit trail records the archive transition.
+    const audit = await app.inject({ method: 'GET', url: `/quotes/${id}/audit`, headers: authHeader() });
+    const archivedChange = (audit.json() as Array<{ fieldName: string | null; newValue: string | null }>).find(
+      (a) => a.fieldName === 'archived' && a.newValue === 'true',
+    );
+    expect(archivedChange).toBeTruthy();
+
+    // Restore brings it back to the active list and clears archivedAt.
+    const restored = await app.inject({
+      method: 'POST',
+      url: `/quotes/${id}/restore`,
+      headers: authHeader(),
+    });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json().archivedAt).toBeNull();
+    const activeAfter = await app.inject({ method: 'GET', url: '/quotes', headers: authHeader() });
+    expect((activeAfter.json() as Array<{ id: string }>).map((q) => q.id)).toContain(id);
+  });
 });

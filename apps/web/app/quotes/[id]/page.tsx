@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api, ApiError, downloadFile, getRole } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
@@ -98,7 +98,11 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
-  const [saved, setSaved] = useState(false);
+  // Auto-save status (P1-05.1): idle until the first edit, then saving → saved (with a timestamp).
+  const [autoStatus, setAutoStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  // `dirty` gates the debounced auto-save: set only by genuine user edits (never on mount/refetch).
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     if (!canWrite) return;
@@ -115,19 +119,24 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
     });
   }, [canWrite]);
 
-  const toggleViewer = (id: string) =>
+  const toggleViewer = (id: string) => {
+    setDirty(true);
     setSelectedViewers((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+  };
 
-  const save = async () => {
+  // The shared PATCH path used by both the explicit Save button and the debounced auto-save. Always
+  // sends the CURRENT lockVersion (refreshed by onChange after each success) so consecutive auto-saves
+  // never trigger a self-inflicted 409 loop. On conflict it raises the banner and auto-save halts.
+  const persist = useCallback(async () => {
     setBusy(true);
     setErr(null);
     setConflict(false);
-    setSaved(false);
+    setAutoStatus('saving');
     try {
       await api(`/quotes/${quote.id}`, {
         method: 'PATCH',
@@ -141,15 +150,31 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
           expectedVersion: quote.lockVersion,
         }),
       });
-      await onChange();
-      setSaved(true);
+      await onChange(); // refetch → quote.lockVersion advances, so the next save uses the new token.
+      setAutoStatus('saved');
+      setSavedAt(new Date().toLocaleTimeString());
     } catch (e) {
+      setAutoStatus('idle');
       if (e instanceof ApiError && e.code === 'conflict') setConflict(true);
       else setErr(e instanceof Error ? e.message : 'Save failed');
     } finally {
       setBusy(false);
     }
-  };
+  }, [quote.id, quote.lockVersion, jobReference, currencyCode, clientId, locationId, selectedViewers, onChange]);
+
+  const save = persist;
+
+  // Debounced auto-save (~1.5s after the last edit). `dirty` gates it so it never fires on mount or
+  // on the prop-sync re-render after a save/refetch — only genuine user edits arm the timer. When a
+  // conflict is showing, auto-save is suspended until the user reloads (which resets dirty).
+  useEffect(() => {
+    if (!canWrite || !dirty || conflict || !jobReference) return;
+    const t = setTimeout(() => {
+      setDirty(false);
+      void persist();
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [dirty, conflict, canWrite, jobReference, persist]);
 
   if (!canWrite) {
     return (
@@ -176,15 +201,21 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
     <div className="card">
       <div className="topbar">
         <h3 style={{ margin: 0 }}>Quote details</h3>
-        <span className="muted" title="Optimistic-locking token; bumped on every change">v{quote.lockVersion}</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {autoStatus === 'saving' && <span className="muted">Saving…</span>}
+          {autoStatus === 'saved' && (
+            <span className="muted">✓ Saved{savedAt ? ` ${savedAt}` : ''}</span>
+          )}
+          <span className="muted" title="Optimistic-locking token; bumped on every change">v{quote.lockVersion}</span>
+        </span>
       </div>
       <div className="grid3">
-        <div><label>Job reference</label><input value={jobReference} onChange={(e) => setJobReference(e.target.value)} /></div>
+        <div><label>Job reference</label><input value={jobReference} onChange={(e) => { setJobReference(e.target.value); setDirty(true); }} /></div>
         <div>
           <label>Client</label>
           <SearchSelect
             value={clientId}
-            onChange={setClientId}
+            onChange={(v) => { setClientId(v); setDirty(true); }}
             allowEmpty
             placeholder="Select client…"
             options={clients.map((c) => ({ value: c.id, label: c.name ?? '' }))}
@@ -194,7 +225,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
           <label>Location</label>
           <SearchSelect
             value={locationId}
-            onChange={setLocationId}
+            onChange={(v) => { setLocationId(v); setDirty(true); }}
             allowEmpty
             placeholder="Select location…"
             options={locations.map((l) => ({ value: l.id, label: l.name ?? '' }))}
@@ -204,7 +235,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
           <label>Currency</label>
           <SearchSelect
             value={currencyCode}
-            onChange={setCurrencyCode}
+            onChange={(v) => { setCurrencyCode(v); setDirty(true); }}
             options={currencies.map((c) => ({ value: c.code ?? '', label: c.code ?? '' }))}
           />
         </div>
@@ -227,15 +258,15 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
 
       {conflict && (
         <div className="error" style={{ marginTop: 12 }}>
-          This quote was changed elsewhere since you opened it. Your edits were not saved.{' '}
-          <button className="ghost" onClick={() => onChange()}>Reload latest</button>
+          This quote was changed elsewhere since you opened it. Your edits were not saved. Auto-save is
+          paused.{' '}
+          <button className="ghost" onClick={() => { setDirty(false); setConflict(false); void onChange(); }}>Reload latest</button>
         </div>
       )}
       {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
-      {saved && <div className="muted" style={{ marginTop: 12 }}>✓ Saved.</div>}
 
       <div className="step-actions">
-        <button className="primary" onClick={save} disabled={busy || !jobReference}>
+        <button className="primary" onClick={() => { setDirty(false); void save(); }} disabled={busy || !jobReference}>
           {busy ? 'Saving…' : 'Save details'}
         </button>
       </div>

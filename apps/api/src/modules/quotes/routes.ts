@@ -4,6 +4,7 @@ import {
   changeStatusSchema,
   createQuoteSchema,
   lcdScreenSchema,
+  listQuotesQuerySchema,
   ledScreenSchema,
   quoteLicenceSchema,
   quoteTermsSchema,
@@ -15,10 +16,12 @@ import {
 import { parse } from '../../lib/validate.js';
 import type { UserRole } from '@quotezen/shared';
 import {
+  archiveQuote,
   assertOwnership,
   changeStatus,
   clearOverride,
   createQuote,
+  restoreQuote,
   getAllAuditLog,
   getAuditLog,
   getOverrides,
@@ -82,7 +85,10 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     role: request.user.role,
   });
 
-  app.get('/quotes', auth, (request) => getQuotes(actor(request)));
+  app.get('/quotes', auth, (request) => {
+    const { archived } = parse(listQuotesQuerySchema, request.query);
+    return getQuotes(actor(request), { archived });
+  });
 
   app.post('/quotes', write, async (request, reply) => {
     const input = parse(createQuoteSchema, request.body);
@@ -101,6 +107,20 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     await assertOwnership(id, actor(request));
     const input = parse(updateQuoteSchema, request.body);
     return updateQuote(userId(request), id, input);
+  });
+
+  // Soft-delete / restore (P1-05.1): the row + audit are preserved; the quote is hidden from the
+  // default list. Writers only; ownership enforced.
+  app.post('/quotes/:id/archive', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return archiveQuote(userId(request), id);
+  });
+
+  app.post('/quotes/:id/restore', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return restoreQuote(userId(request), id);
   });
 
   app.post('/quotes/:id/status', write, async (request) => {

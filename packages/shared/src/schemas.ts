@@ -46,6 +46,15 @@ export const changeStatusSchema = z.object({
   reason: z.string().max(500).optional(),
 });
 
+/** Query for GET /quotes: `?archived=true` shows the archived view instead of active quotes (P1-05.1). */
+export const listQuotesQuerySchema = z.object({
+  archived: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform((v) => v === true || v === 'true')
+    .optional(),
+});
+export type ListQuotesQuery = z.infer<typeof listQuotesQuerySchema>;
+
 // ─── LED screen config (the LED-1 questionnaire) ──────────────────────────────
 export const ledComponentSchema = z
   .object({
