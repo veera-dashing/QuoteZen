@@ -563,6 +563,13 @@ interface Version {
   createdBy?: { name: string };
 }
 
+interface ValidationFinding { rule: string; severity: 'error' | 'warning' | 'cannot_evaluate'; message: string }
+interface QuoteValidation {
+  canFinalise: boolean;
+  counts: { error: number; warning: number; cannotEvaluate: number };
+  screens: Array<{ screenId: string; screenName: string; findings: ValidationFinding[] }>;
+}
+
 function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [audit, setAudit] = useState<Audit[]>([]);
@@ -570,6 +577,8 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
   const [versions, setVersions] = useState<Version[]>([]);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [validation, setValidation] = useState<QuoteValidation | null>(null);
+  const isAdmin = getRole() === 'admin';
 
   const loadAudit = useCallback(() => {
     api<Audit[]>(`/quotes/${quote.id}/audit`).then(setAudit);
@@ -577,11 +586,15 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const loadVersions = useCallback(() => {
     api<Version[]>(`/quotes/${quote.id}/versions`).then(setVersions);
   }, [quote.id]);
+  const loadValidation = useCallback(() => {
+    api<QuoteValidation>(`/quotes/${quote.id}/validate`).then(setValidation).catch(() => setValidation(null));
+  }, [quote.id]);
 
   useEffect(() => {
     loadAudit();
     loadVersions();
-  }, [loadAudit, loadVersions]);
+    loadValidation();
+  }, [loadAudit, loadVersions, loadValidation]);
 
   const saveVersion = async () => {
     await api(`/quotes/${quote.id}/versions`, { method: 'POST', body: JSON.stringify({ label: `Saved ${new Date().toLocaleString()}` }) });
@@ -602,6 +615,7 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
       await api(`/quotes/${quote.id}/recompute`, { method: 'POST' });
       await onChange();
       loadAudit();
+      loadValidation();
     } finally {
       setBusy(false);
     }
@@ -613,6 +627,7 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
       await api(`/quotes/${quote.id}/status`, { method: 'POST', body: JSON.stringify({ status }) });
       await onChange();
       loadAudit();
+      loadValidation();
     } catch (e) {
       // Surfaces the margin-guardrail block, etc.
       setStatusError(e instanceof Error ? e.message : 'Status change failed');
@@ -678,12 +693,75 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
       </div>
 
       <div className="card">
+        <h3 style={{ marginTop: 0 }}>Validation</h3>
+        {!validation && <p className="muted">Checking…</p>}
+        {validation && validation.screens.length === 0 && (
+          <p className="muted">No LED screens to validate.</p>
+        )}
+        {validation && validation.screens.length > 0 && (
+          <>
+            <p className="muted" style={{ marginTop: 0 }}>
+              {validation.counts.error} error(s) · {validation.counts.warning} warning(s) ·{' '}
+              {validation.counts.cannotEvaluate} not yet evaluable
+            </p>
+            {validation.counts.error + validation.counts.warning + validation.counts.cannotEvaluate === 0 && (
+              <p style={{ color: 'var(--ok, #16a34a)' }}>✓ No conflicts found — ready to finalise.</p>
+            )}
+            {validation.screens.map((s) =>
+              s.findings.length === 0 ? null : (
+                <div key={s.screenId} style={{ marginBottom: 10 }}>
+                  <b>{s.screenName}</b>
+                  {s.findings.map((f, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        marginTop: 4,
+                        fontSize: 13,
+                        color:
+                          f.severity === 'error'
+                            ? 'var(--danger, #dc2626)'
+                            : f.severity === 'warning'
+                            ? 'var(--warn, #d97706)'
+                            : 'var(--muted, #6b7280)',
+                      }}
+                    >
+                      {f.severity === 'error' ? '⛔' : f.severity === 'warning' ? '⚠️' : 'ℹ️'}{' '}
+                      <span className="muted">[{f.rule}]</span> {f.message}
+                    </div>
+                  ))}
+                </div>
+              ),
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="card">
         <h3 style={{ marginTop: 0 }}>Workflow</h3>
         <div className="row-actions">
           <button onClick={() => setStatus('in_review')}>Send to review</button>
-          <button onClick={() => setStatus('approved')}>Approve</button>
-          <button onClick={() => setStatus('issued')}>Issue</button>
+          <button
+            onClick={() => setStatus('approved')}
+            disabled={!isAdmin && validation != null && !validation.canFinalise}
+            title={!isAdmin && validation != null && !validation.canFinalise ? 'Resolve validation errors first' : undefined}
+          >
+            Approve
+          </button>
+          <button
+            onClick={() => setStatus('issued')}
+            disabled={!isAdmin && validation != null && !validation.canFinalise}
+            title={!isAdmin && validation != null && !validation.canFinalise ? 'Resolve validation errors first' : undefined}
+          >
+            Issue
+          </button>
         </div>
+        {validation != null && !validation.canFinalise && (
+          <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+            {isAdmin
+              ? `${validation.counts.error} validation error(s) present — you may override as admin (the override is audited).`
+              : `Finalisation is blocked: ${validation.counts.error} validation error(s) must be resolved.`}
+          </div>
+        )}
         {statusError && <div className="error" style={{ marginTop: 10 }}>{statusError}</div>}
       </div>
 

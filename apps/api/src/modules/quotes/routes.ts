@@ -24,6 +24,7 @@ import {
   type Actor,
 } from './service.js';
 import { listKbEntries } from './kb.js';
+import { validateQuote } from './validate.js';
 
 const auditFilterQuery = z.object({
   field: z.string().optional(),
@@ -103,6 +104,13 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     return priceQuote(actor(request), id);
+  });
+
+  // Conflict / validation engine (P1-15): per-screen findings + can-finalise gate.
+  app.get('/quotes/:id/validate', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return validateQuote(id);
   });
 
   app.get('/quotes/:id/audit', auth, async (request) => {

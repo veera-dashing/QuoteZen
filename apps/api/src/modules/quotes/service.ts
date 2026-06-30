@@ -7,6 +7,7 @@ import { AppError, conflict, notFound } from '../../errors.js';
 import type { UserRole } from '@quotezen/shared';
 import { diffFields, recordAudit } from '../../services/audit.js';
 import { CAPTURE_STATUSES, captureKbEntry } from './kb.js';
+import { collectScreenErrors, validateQuote } from './validate.js';
 import {
   findCurrencyByCode,
   findQuoteById,
@@ -211,6 +212,9 @@ export const changeStatus = async (
   // Margin guardrail (P1-19g.2): block finalisation below the floor unless the actor is an admin
   // (elevated approval). Admin overrides are allowed but audited.
   let guardrailNote: string | null = null;
+  // Validation guardrail (P1-15.3): block finalisation when any error-severity conflict exists,
+  // unless the actor is an admin (override, audited). Layered alongside the margin guardrail.
+  let validationNote: string | null = null;
   if (FINALISED_STATUSES.includes(status)) {
     const floor = await getMarginFloor();
     const { margin } = computeMargin(existing);
@@ -223,6 +227,19 @@ export const changeStatus = async (
         );
       }
       guardrailNote = `below-floor override: margin ${margin.times(100).toFixed(1)}% < floor ${(floor * 100).toFixed(1)}%`;
+    }
+
+    const validation = await validateQuote(id);
+    if (!validation.canFinalise) {
+      const errors = collectScreenErrors(validation);
+      if (!isAdmin(actor)) {
+        throw new AppError(
+          'conflict',
+          `Quote has ${errors.length} unresolved validation error(s): ${errors.map((e) => e.message).join(' ')} Resolve them or request admin approval.`,
+          { errors: errors.map((e) => ({ rule: e.rule, message: e.message })) },
+        );
+      }
+      validationNote = `validation override: ${errors.map((e) => e.rule).join(', ')}`;
     }
   }
 
@@ -242,6 +259,7 @@ export const changeStatus = async (
         { field: 'status', oldValue: existing.status, newValue: status },
         ...(reason ? [{ field: 'reason', oldValue: null, newValue: reason }] : []),
         ...(guardrailNote ? [{ field: 'margin_guardrail', oldValue: null, newValue: guardrailNote }] : []),
+        ...(validationNote ? [{ field: 'validation_guardrail', oldValue: null, newValue: validationNote }] : []),
       ],
     });
     // Knowledge-base capture on outcome states (P1-19f).
