@@ -192,4 +192,60 @@ describe('quote lifecycle', () => {
     });
     expect(res.statusCode).toBe(200);
   });
+
+  it('serves editable, versioned proposal terms (P1-18.2)', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: authHeader(),
+      payload: { jobReference: `${JOB_PREFIX}terms-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const id = created.json().id as string;
+
+    // GET with no stored terms → pre-filled defaults (all three kinds present).
+    const initial = await app.inject({ method: 'GET', url: `/quotes/${id}/terms`, headers: authHeader() });
+    expect(initial.statusCode).toBe(200);
+    const initialRows = initial.json() as Array<{ kind: string; text: string }>;
+    expect(initialRows.length).toBeGreaterThan(0);
+    expect(initialRows.map((r) => r.kind)).toEqual(
+      expect.arrayContaining(['assumption', 'exclusion', 'term']),
+    );
+
+    // PUT replaces the whole set; seq derives from index.
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/quotes/${id}/terms`,
+      headers: authHeader(),
+      payload: {
+        terms: [
+          { kind: 'assumption', text: 'Custom assumption A' },
+          { kind: 'exclusion', text: 'Custom exclusion X' },
+          { kind: 'term', text: 'Custom term 1' },
+          { kind: 'term', text: 'Custom term 2' },
+        ],
+      },
+    });
+    expect(put.statusCode).toBe(200);
+    const saved = put.json() as Array<{ kind: string; text: string }>;
+    expect(saved).toHaveLength(4);
+    expect(saved[3]).toMatchObject({ kind: 'term', text: 'Custom term 2' });
+
+    // GET now returns the stored set, not the defaults.
+    const after = await app.inject({ method: 'GET', url: `/quotes/${id}/terms`, headers: authHeader() });
+    expect((after.json() as unknown[]).length).toBe(4);
+
+    // The PDF still exports cleanly (now rendering the stored terms).
+    const pdf = await app.inject({ method: 'GET', url: `/quotes/${id}/export.pdf`, headers: authHeader() });
+    expect(pdf.statusCode).toBe(200);
+    expect(pdf.rawPayload.subarray(0, 4).toString()).toBe('%PDF');
+
+    // Invalid input (empty text) → 422.
+    const bad = await app.inject({
+      method: 'PUT',
+      url: `/quotes/${id}/terms`,
+      headers: authHeader(),
+      payload: { terms: [{ kind: 'term', text: '' }] },
+    });
+    expect(bad.statusCode).toBe(422);
+  });
 });

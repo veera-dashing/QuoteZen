@@ -6,6 +6,7 @@ import {
   lcdScreenSchema,
   ledScreenSchema,
   quoteLicenceSchema,
+  quoteTermsSchema,
   reorderScreensSchema,
   screenQtySchema,
   updateQuoteSchema,
@@ -47,6 +48,7 @@ import {
 } from './screens.js';
 import { buildQuotePdf } from './pdf.js';
 import { buildBom, buildDescriptions, buildPmHandoff, buildSolutionSummary, loadRatios } from './outputs.js';
+import { getTerms, replaceTerms } from './terms.js';
 import {
   createVersion,
   diffVersions,
@@ -175,6 +177,20 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     return buildPmHandoff(await getQuote(id));
+  });
+
+  // ── Editable proposal text (P1-18.2): assumptions / exclusions / T&Cs ──
+  app.get('/quotes/:id/terms', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return getTerms(id);
+  });
+
+  app.put('/quotes/:id/terms', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const input = parse(quoteTermsSchema, request.body);
+    return replaceTerms(userId(request), id, input);
   });
 
   // ── Versioning & snapshots (P1-04) ──

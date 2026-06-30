@@ -955,6 +955,8 @@ model QuoteTerm {
   id      BigInt @id @default(autoincrement())
   quoteId BigInt @map("quote_id")
   seq     Int
+  /** 'assumption' | 'exclusion' | 'term' — groups the line in the proposal (app-level enum). */
+  kind    String @default("term")
   text    String
 
   quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)

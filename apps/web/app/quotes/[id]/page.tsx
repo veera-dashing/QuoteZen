@@ -724,6 +724,47 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const role = getRole();
   const isAdmin = role === 'admin';
   const canPrice = role === 'admin' || role === 'sales';
+  const canWrite = role !== 'viewer';
+
+  // Editable proposal text (P1-18.2): three textareas, one line per item, pre-filled from the API.
+  const [assumptionsText, setAssumptionsText] = useState('');
+  const [exclusionsText, setExclusionsText] = useState('');
+  const [termsText, setTermsText] = useState('');
+  const [termsSaving, setTermsSaving] = useState(false);
+  const [termsSaved, setTermsSaved] = useState(false);
+  const [termsError, setTermsError] = useState<string | null>(null);
+
+  const loadTerms = useCallback(() => {
+    api<Array<{ kind: 'assumption' | 'exclusion' | 'term'; text: string }>>(`/quotes/${quote.id}/terms`)
+      .then((rows) => {
+        const byKind = (k: string) => rows.filter((r) => r.kind === k).map((r) => r.text).join('\n');
+        setAssumptionsText(byKind('assumption'));
+        setExclusionsText(byKind('exclusion'));
+        setTermsText(byKind('term'));
+      })
+      .catch(() => setTermsError('Could not load proposal text'));
+  }, [quote.id]);
+
+  const saveTerms = async () => {
+    setTermsSaving(true);
+    setTermsError(null);
+    setTermsSaved(false);
+    const split = (s: string) => s.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+    const terms = [
+      ...split(assumptionsText).map((text) => ({ kind: 'assumption' as const, text })),
+      ...split(exclusionsText).map((text) => ({ kind: 'exclusion' as const, text })),
+      ...split(termsText).map((text) => ({ kind: 'term' as const, text })),
+    ];
+    try {
+      await api(`/quotes/${quote.id}/terms`, { method: 'PUT', body: JSON.stringify({ terms }) });
+      setTermsSaved(true);
+      loadAudit();
+    } catch (e) {
+      setTermsError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setTermsSaving(false);
+    }
+  };
 
   const loadPrice = async () => {
     setPricing(true);
@@ -765,7 +806,8 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
     loadAudit();
     loadVersions();
     loadValidation();
-  }, [loadAudit, loadVersions, loadValidation]);
+    loadTerms();
+  }, [loadAudit, loadVersions, loadValidation, loadTerms]);
 
   const saveVersion = async () => {
     await api(`/quotes/${quote.id}/versions`, { method: 'POST', body: JSON.stringify({ label: `Saved ${new Date().toLocaleString()}` }) });
@@ -995,6 +1037,43 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
           <pre style={{ marginTop: 14, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, overflowX: 'auto', fontSize: 12 }}>
             {JSON.stringify(summary, null, 2)}
           </pre>
+        )}
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Proposal text</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          One item per line. This text flows into the proposal PDF and is captured in version
+          snapshots. Empty groups fall back to the standard defaults in the PDF.
+        </p>
+        {([
+          ['Assumptions', assumptionsText, setAssumptionsText] as const,
+          ['Exclusions', exclusionsText, setExclusionsText] as const,
+          ['Terms & conditions', termsText, setTermsText] as const,
+        ]).map(([label, value, setter]) => (
+          <div key={label} style={{ marginBottom: 12 }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>{label}</label>
+            <textarea
+              value={value}
+              onChange={(e) => {
+                setter(e.target.value);
+                setTermsSaved(false);
+              }}
+              disabled={!canWrite}
+              rows={5}
+              style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box' }}
+              placeholder={canWrite ? 'One item per line…' : undefined}
+            />
+          </div>
+        ))}
+        {canWrite && (
+          <div className="row-actions" style={{ alignItems: 'center' }}>
+            <button className="primary" onClick={saveTerms} disabled={termsSaving}>
+              {termsSaving ? 'Saving…' : 'Save proposal text'}
+            </button>
+            {termsSaved && <span style={{ color: 'var(--ok, #16a34a)' }}>✓ Saved</span>}
+            {termsError && <span style={{ color: 'var(--danger, #dc2626)' }}>{termsError}</span>}
+          </div>
         )}
       </div>
 

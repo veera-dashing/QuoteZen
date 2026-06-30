@@ -136,6 +136,22 @@ export const quoteHypervsnSchema = z.object({
   rateCard: z.enum(['aud', 'reseller_aud', 'nzd', 'reseller_nzd']).default('aud'),
 });
 
+// ─── Proposal text (assumptions / exclusions / T&Cs) — P1-18.2 ────────────────
+/** A single proposal-text line; `kind` groups it in the PDF. */
+export const TERM_KINDS = ['assumption', 'exclusion', 'term'] as const;
+export type TermKind = (typeof TERM_KINDS)[number];
+
+/** The full ordered set of proposal-text lines; seq is derived from the array index on save. */
+export const quoteTermsSchema = z.object({
+  terms: z.array(
+    z.object({
+      kind: z.enum(TERM_KINDS),
+      text: z.string().min(1).max(2000),
+    }),
+  ),
+});
+export type QuoteTermsInput = z.infer<typeof quoteTermsSchema>;
+
 export const quoteLicenceSchema = z.object({
   licenceComponentId: idSchema.optional(),
   screenType: z.enum(SCREEN_TYPES),
