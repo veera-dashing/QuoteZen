@@ -440,6 +440,9 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const [tiers, setTiers] = useState<TierOption[] | null>(null);
   const [tierReasons, setTierReasons] = useState<string[]>([]);
   const [distinctProducts, setDistinctProducts] = useState(0);
+  // The "Screen selection" accordion is open until a product is selected, then collapses to a
+  // compact summary; the user can re-open it any time to pick a different product.
+  const [accordionOpen, setAccordionOpen] = useState(true);
 
   // S1: orientation + aspect ratio (with auto-dimension calc), components, back cover, notes.
   const [orientation, setOrientation] = useState('');
@@ -453,6 +456,18 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const [draftType, setDraftType] = useState<LedComponentType>('controller');
   const [draftItem, setDraftItem] = useState('');
   const [draftQty, setDraftQty] = useState('1');
+
+  // Options & services lookups (merged in from the per-screen editor) — same admin tables, loaded
+  // once so a single add POST can carry frame/trim/GOB/install/freight/warranty/etc.
+  const [optionRows, setOptionRows] = useState<Record<LedOptionKey, Opt[]>>(
+    () => Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, [] as Opt[]])) as unknown as Record<LedOptionKey, Opt[]>,
+  );
+  const [selectedOpts, setSelectedOpts] = useState<Record<LedOptionKey, string>>(
+    () => Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, ''])) as unknown as Record<LedOptionKey, string>,
+  );
+  const [backCover, setBackCover] = useState(false);
+  const [frameNote, setFrameNote] = useState('');
+  const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState('');
 
   useEffect(() => {
     // activeOnly=true hides deprecated catalog rows from NEW selections (P1-11.4); existing quotes
@@ -472,6 +487,15 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
     ).then((entries) => {
       setComponentRows(Object.fromEntries(entries) as unknown as Record<LedComponentType, Opt[]>);
     });
+    // The ten options/services catalogs (frame / trim / hanging-bar / engineering / install / freight /
+    // warranty / service-hours / access-equipment / GOB).
+    Promise.all(
+      LED_OPTION_TABLES.map((t) =>
+        api<{ rows: Opt[] }>(`/admin/${t.slug}?take=200&activeOnly=true`)
+          .then((r) => [t.key, r.rows] as const)
+          .catch(() => [t.key, [] as Opt[]] as const),
+      ),
+    ).then((entries) => setOptionRows(Object.fromEntries(entries) as unknown as Record<LedOptionKey, Opt[]>));
   }, []);
 
   // Parse "16:9" → { w: 16, h: 9 }; null when unparseable.
@@ -565,28 +589,45 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
       return { componentType: c.componentType, [def.idField as LedComponentIdField]: Number(c.itemId), qty: c.qty };
     });
 
-  const addScreen = async (chosenProductId?: string, rotated?: boolean) => {
+  const addScreen = async () => {
     setBusy(true);
     setErr(null);
     try {
+      // Selected option FKs (omit empties), housing/notes — all carried in the one add POST.
+      const optionFks: Record<string, number> = {};
+      for (const t of LED_OPTION_TABLES) if (selectedOpts[t.key]) optionFks[t.key] = Number(selectedOpts[t.key]);
       await api(`/quotes/${quote.id}/led-screens`, {
         method: 'POST',
         body: JSON.stringify({
           screenName: name || undefined,
-          ledProductId: Number(chosenProductId ?? productId),
+          ledProductId: Number(productId),
           desiredWidthMm: Number(w),
           desiredHeightMm: Number(h),
-          rotateCabinets: rotated ?? rotate,
+          rotateCabinets: rotate,
           // S1 inputs (only sent when set).
           ...(orientation ? { orientation } : {}),
           ...(aspectRatioId ? { aspectRatioId: Number(aspectRatioId) } : {}),
           components: componentPayload(),
+          // Options & services FKs (only the selected ones).
+          ...optionFks,
+          backCover,
+          ...(frameNote.trim() ? { frameNote: frameNote.trim() } : {}),
+          ...(serviceDescriptionSuffix.trim() ? { serviceDescriptionSuffix: serviceDescriptionSuffix.trim() } : {}),
         }),
       });
+      // Reset the whole form for the next screen and re-open the selection accordion.
       setName('');
+      setProductId('');
       setOptions(null);
       setTiers(null);
       setComponents([]);
+      setOrientation('');
+      setAspectRatioId('');
+      setSelectedOpts(Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, ''])) as unknown as Record<LedOptionKey, string>);
+      setBackCover(false);
+      setFrameNote('');
+      setServiceDescriptionSuffix('');
+      setAccordionOpen(true);
       await onChange();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed');
@@ -595,29 +636,47 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
     }
   };
 
-  // Selecting a Configure / Good-Better-Best option fills the mandatory Product form below
-  // (product + rotation) — it does NOT add the screen yet. Width/height stay the entered opening;
-  // the rest of the form then attaches to this product before finalising.
+  // Selecting a Configure / Good-Better-Best option sets the product + rotation and collapses the
+  // selection accordion to its summary — it does NOT add the screen yet. Width/height stay the
+  // entered opening; the merged details form below then attaches to this product before finalising.
   const selectProduct = (chosenProductId: string, rotated: boolean) => {
     setProductId(chosenProductId);
     setRotate(rotated);
     setErr(null);
-    setOptions(null);
-    setTiers(null);
+    setAccordionOpen(false);
   };
 
-  // Required-field gating (P1-12.3): the essentials before "+ Add & price".
+  // The selected product's model name, for the collapsed accordion summary.
+  const selectedModel = products.find((p) => p.id === productId)?.model ?? '';
+
+  // Required-field gating (P1-12.3): the essentials before "+ Add screen".
   const missing: string[] = [];
-  if (!productId) missing.push('LED product');
+  if (!productId) missing.push('select a product above');
   if (!(Number(w) > 0)) missing.push('width');
   if (!(Number(h) > 0)) missing.push('height');
   const canAddSpecific = missing.length === 0;
 
   return (
     <div>
+      {/* Screen-selection accordion: collapses to a compact summary once a product is selected. */}
+      {!accordionOpen && productId ? (
+        <div className="card">
+          <div className="list-row" style={{ alignItems: 'center' }}>
+            <div>
+              <span className="pill" style={{ marginRight: 6 }}>Selected</span>
+              <b>{selectedModel || `Product ${productId}`}</b>{rotate ? ' (rot)' : ''}{' '}
+              <span className="muted">· {w}×{h}mm</span>
+            </div>
+            <button className="ghost" onClick={() => setAccordionOpen(true)}>Expand / change</button>
+          </div>
+        </div>
+      ) : (
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Configure from opening</h3>
-        <p className="muted">Enter the opening size; the engine ranks every LED product that fits.</p>
+        <div className="list-row" style={{ alignItems: 'center' }}>
+          <h3 style={{ margin: 0 }}>Screen selection</h3>
+          {productId && <button className="ghost" onClick={() => setAccordionOpen(false)}>Collapse</button>}
+        </div>
+        <p className="muted">Enter the opening size; the engine ranks every LED product that fits. Pick one to attach the screen details below.</p>
         <div className="grid3">
           <div><label>Screen name</label><input value={name} onChange={(e) => setName(e.target.value)} /></div>
           <div><label>Width (mm)</label><input type="number" value={w} onChange={(e) => setW(e.target.value)} /></div>
@@ -636,7 +695,6 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
             {busy ? 'Comparing…' : '⚖️ Good / Better / Best'}
           </button>
         </div>
-      </div>
 
       {tiers && (
         <div className="card">
@@ -765,21 +823,15 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
           )}
         </div>
       )}
+      </div>
+      )}
 
+      {/* Merged details form — only once a product is selected via the accordion. */}
+      {productId && (
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Product <span className="muted" style={{ fontWeight: 400, fontSize: 13 }}>· required</span></h3>
-        <p className="muted">The product you selected from the options above appears here — or choose one directly. Width, height and rotation come from “Configure from opening” above; the rest of the form below attaches to this product to build the screen.</p>
+        <h3 style={{ marginTop: 0 }}>Screen details</h3>
+        <p className="muted">Geometry, orientation, components and options &amp; services for the selected product — all sent in one go when you add the screen.</p>
         <div className="grid3">
-          <div>
-            <label style={!productId ? { color: 'var(--danger, #dc2626)' } : undefined}>Product *</label>
-            <SearchSelect
-              value={productId}
-              onChange={setProductId}
-              allowEmpty
-              placeholder="Search products…"
-              options={products.map((p) => ({ value: p.id, label: p.model ?? '' }))}
-            />
-          </div>
           <div>
             <label style={Number(w) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Width (mm) *</label>
             <input type="number" value={w} onChange={(e) => recalcDim('w', e.target.value)} />
@@ -862,22 +914,57 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
           </div>
         )}
 
+        <h4 style={{ margin: '16px 0 4px' }}>Options &amp; services</h4>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Frame, trim, GOB, install, freight, warranty and more — all optional; each is priced with the screen.
+        </p>
+        <div className="grid3">
+          {LED_OPTION_TABLES.map((t) => (
+            <div key={t.key}>
+              <label>{t.label}</label>
+              <SearchSelect
+                value={selectedOpts[t.key]}
+                onChange={(v) => setSelectedOpts((p) => ({ ...p, [t.key]: v }))}
+                allowEmpty
+                placeholder={`Select ${t.label.toLowerCase()}…`}
+                options={(optionRows[t.key] ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
+              />
+            </div>
+          ))}
+        </div>
+        <h4 style={{ margin: '14px 0 4px' }}>Housing &amp; descriptions</h4>
+        <div className="grid3">
+          <div>
+            <label>Back cover</label>
+            <input type="checkbox" checked={backCover} onChange={(e) => setBackCover(e.target.checked)} style={{ width: 'auto' }} />
+          </div>
+          <div>
+            <label>Frame / housing description</label>
+            <input value={frameNote} onChange={(e) => setFrameNote(e.target.value)} placeholder="optional" />
+          </div>
+          <div>
+            <label>Service description suffix</label>
+            <input value={serviceDescriptionSuffix} onChange={(e) => setServiceDescriptionSuffix(e.target.value)} placeholder="optional" />
+          </div>
+        </div>
+
+        {err && <div className="error" style={{ marginTop: 8 }}>{err}</div>}
         {!canAddSpecific && (
           <p className="muted" style={{ marginTop: 12 }}>
             ⚠️ Required before pricing: {missing.join(', ')}.
           </p>
         )}
         <p className="muted" style={{ marginTop: 12 }}>
-          Finalising adds the LED screen with the panel, geometry &amp; components. Set trim, frame, GOB,
-          install, freight, warranty and notes afterwards in the per-screen <b>Options &amp; services</b>
-          editor below.
+          Adds the LED screen with the panel, geometry, components and the options &amp; services above —
+          all in one. You can still tweak options later in the per-screen editor.
         </p>
         <div className="step-actions">
           <button className="primary" onClick={() => addScreen()} disabled={busy || !canAddSpecific}>
-            {busy ? 'Pricing…' : '+ Finalise panel & add screen'}
+            {busy ? 'Pricing…' : '+ Add screen'}
           </button>
         </div>
       </div>
+      )}
     </div>
   );
 }
