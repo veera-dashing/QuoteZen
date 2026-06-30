@@ -17,7 +17,7 @@ import {
 } from '@quotezen/calc';
 import { applyMargin, applyMarkup, round } from '@quotezen/shared';
 import type { LcdScreenInput, LedScreenInput } from '@quotezen/shared';
-import { notFound } from '../../errors.js';
+import { AppError, notFound } from '../../errors.js';
 import { recordAudit } from '../../services/audit.js';
 import { loadPricingConfig } from '../../lib/pricing-config.js';
 import { getQuote } from './service.js';
@@ -238,15 +238,22 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
   }
 
   const totals = composeScreenTotals(lines);
-  const totalSellQty = round(totals.totalSell.times(qty));
+  // priceTotal is the per-unit screen price; the quote rollup multiplies by qty (P1-14.2).
+  const unitSell = round(totals.totalSell);
 
   const screen = await prisma.$transaction(async (tx) => {
+    const maxOrder = await tx.quoteLedScreen.aggregate({
+      where: { quoteId },
+      _max: { sortOrder: true },
+    });
+    const sortOrder = (maxOrder._max.sortOrder ?? -1) + 1;
     const created = await tx.quoteLedScreen.create({
       data: {
         quoteId,
         screenName: input.screenName ?? null,
         ledProductId: input.ledProductId ? BigInt(input.ledProductId) : null,
         qty,
+        sortOrder,
         desiredWidthMm: input.desiredWidthMm ?? null,
         desiredHeightMm: input.desiredHeightMm ?? null,
         rotateCabinets: input.rotateCabinets,
@@ -273,7 +280,7 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
         priceScreenMediaplayer: totals.screenMediaplayerSell.toString(),
         priceFrameTrim: totals.frameTrimSell.toString(),
         priceServices: totals.servicesSell.toString(),
-        priceTotal: totalSellQty.toString(),
+        priceTotal: unitSell.toString(),
         components: {
           create: compRows.map((r) => ({
             componentType: r.componentType as never,
@@ -326,15 +333,160 @@ export const deleteLedScreen = async (userId: bigint, quoteId: bigint, screenId:
   });
 };
 
+/**
+ * Deep-copy an LED screen (all input FKs + computed/snapshot columns) plus its components and
+ * cost-breakdown children, placed at the end of the quote's order, named "<name> (copy)" (P1-14.1).
+ */
+export const duplicateLedScreen = async (userId: bigint, quoteId: bigint, screenId: bigint) => {
+  const source = await prisma.quoteLedScreen.findFirst({
+    where: { id: screenId, quoteId },
+    include: { components: true, costBreakdown: true },
+  });
+  if (!source) throw notFound('LED screen', screenId.toString());
+
+  const copy = await prisma.$transaction(async (tx) => {
+    const maxOrder = await tx.quoteLedScreen.aggregate({ where: { quoteId }, _max: { sortOrder: true } });
+    const created = await tx.quoteLedScreen.create({
+      data: {
+        quoteId,
+        seq: source.seq,
+        sortOrder: (maxOrder._max.sortOrder ?? -1) + 1,
+        screenName: `${source.screenName ?? 'LED screen'} (copy)`,
+        ledProductId: source.ledProductId,
+        qty: source.qty,
+        desiredWidthMm: source.desiredWidthMm,
+        desiredHeightMm: source.desiredHeightMm,
+        rotateCabinets: source.rotateCabinets,
+        gobId: source.gobId,
+        frameId: source.frameId,
+        trimId: source.trimId,
+        hangingBarId: source.hangingBarId,
+        engineeringId: source.engineeringId,
+        installMethodId: source.installMethodId,
+        freightOptionId: source.freightOptionId,
+        warrantyId: source.warrantyId,
+        serviceHoursId: source.serviceHoursId,
+        accessEquipmentId: source.accessEquipmentId,
+        marginOverride: source.marginOverride,
+        resolutionWpx: source.resolutionWpx,
+        resolutionHpx: source.resolutionHpx,
+        totalPixels: source.totalPixels,
+        weightKg: source.weightKg,
+        powerAvgW: source.powerAvgW,
+        powerMaxW: source.powerMaxW,
+        heatAvgBtu: source.heatAvgBtu,
+        heatMaxBtu: source.heatMaxBtu,
+        cabinetDepthMm: source.cabinetDepthMm,
+        recessSize: source.recessSize,
+        freightKg: source.freightKg,
+        labourHours: source.labourHours,
+        spareModulesPct: source.spareModulesPct,
+        spareHubCard: source.spareHubCard,
+        sparePowerSupply: source.sparePowerSupply,
+        powerSupplySpec: source.powerSupplySpec,
+        cabinetSizes: source.cabinetSizes,
+        protectivePackage: source.protectivePackage,
+        gobCoatingNote: source.gobCoatingNote,
+        bracketsNote: source.bracketsNote,
+        controllerSeenRef: source.controllerSeenRef,
+        ledSize: source.ledSize,
+        dataSpec: source.dataSpec,
+        serviceAccess: source.serviceAccess,
+        physicalInstall: source.physicalInstall,
+        powerAndData: source.powerAndData,
+        estimatedCost: source.estimatedCost,
+        actualCost: source.actualCost,
+        priceScreenMediaplayer: source.priceScreenMediaplayer,
+        priceFrameTrim: source.priceFrameTrim,
+        priceServices: source.priceServices,
+        priceTotal: source.priceTotal,
+        components: {
+          create: source.components.map((c) => ({
+            componentType: c.componentType,
+            controllerId: c.controllerId,
+            ledPeripheralId: c.ledPeripheralId,
+            mediaplayerId: c.mediaplayerId,
+            peripheralId: c.peripheralId,
+            qty: c.qty,
+            unitCostSnapshot: c.unitCostSnapshot,
+            unitSellSnapshot: c.unitSellSnapshot,
+          })),
+        },
+        costBreakdown: {
+          create: source.costBreakdown.map((l) => ({
+            lineLabel: l.lineLabel,
+            category: l.category,
+            cost: l.cost,
+            sell: l.sell,
+          })),
+        },
+      },
+      include: { components: true, costBreakdown: true },
+    });
+    await recordAudit(tx, {
+      quoteId,
+      userId,
+      action: 'create',
+      entityTable: 'quote_led_screens',
+      entityId: created.id,
+      changes: [{ field: 'duplicated_from', oldValue: null, newValue: screenId.toString() }],
+    });
+    return created;
+  });
+  return copy;
+};
+
+/** Set LED screen order from a full list of ids (index → sortOrder). All ids must belong to the quote. */
+export const reorderLedScreens = async (userId: bigint, quoteId: bigint, orderedIds: number[]) => {
+  const owned = await prisma.quoteLedScreen.findMany({ where: { quoteId }, select: { id: true } });
+  const ownedIds = new Set(owned.map((s) => s.id.toString()));
+  const ids = orderedIds.map((n) => BigInt(n));
+  if (ids.length !== ownedIds.size || ids.some((id) => !ownedIds.has(id.toString()))) {
+    throw new AppError('bad_request', 'orderedIds must list exactly the screens belonging to this quote');
+  }
+  await prisma.$transaction(async (tx) => {
+    for (let i = 0; i < ids.length; i++) {
+      await tx.quoteLedScreen.update({ where: { id: ids[i]! }, data: { sortOrder: i } });
+    }
+    await recordAudit(tx, {
+      quoteId,
+      userId,
+      action: 'update',
+      entityTable: 'quote_led_screens',
+      entityId: quoteId,
+      changes: [{ field: 'sort_order', oldValue: null, newValue: orderedIds.join(',') }],
+    });
+  });
+};
+
+/** Update a single LED screen's quantity (positive int enforced by the schema), then recompute. */
+export const setLedScreenQty = async (userId: bigint, quoteId: bigint, screenId: bigint, qty: number) => {
+  const screen = await prisma.quoteLedScreen.findFirst({ where: { id: screenId, quoteId } });
+  if (!screen) throw notFound('LED screen', screenId.toString());
+  await prisma.$transaction(async (tx) => {
+    await tx.quoteLedScreen.update({ where: { id: screenId }, data: { qty } });
+    await recordAudit(tx, {
+      quoteId,
+      userId,
+      action: 'update',
+      entityTable: 'quote_led_screens',
+      entityId: screenId,
+      changes: [{ field: 'qty', oldValue: String(screen.qty), newValue: String(qty) }],
+    });
+  });
+};
+
 /** Add an LCD screen as a set of qty-priced line items (display + brackets + install). */
 export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdScreenInput) => {
   await getQuote(quoteId);
   const totalSell = input.items.reduce((acc, i) => acc + Number(i.unitSell ?? 0) * Number(i.qty ?? 1), 0);
 
   return prisma.$transaction(async (tx) => {
+    const maxOrder = await tx.quoteLcdScreen.aggregate({ where: { quoteId }, _max: { sortOrder: true } });
     const screen = await tx.quoteLcdScreen.create({
       data: {
         quoteId,
+        sortOrder: (maxOrder._max.sortOrder ?? -1) + 1,
         screenName: input.screenName ?? null,
         displayId: input.displayId ? BigInt(input.displayId) : null,
         installMethodId: input.installMethodId ? BigInt(input.installMethodId) : null,

@@ -6,7 +6,7 @@ import { api, ApiError, downloadFile, getRole } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
 
 interface Opt { id: string; name?: string; model?: string; sell?: string | null; category?: string; code?: string }
-interface LedScreen { id: string; screenName: string | null; resolutionWpx: number | null; resolutionHpx: number | null; priceTotal: string | null }
+interface LedScreen { id: string; screenName: string | null; qty: number; resolutionWpx: number | null; resolutionHpx: number | null; priceTotal: string | null }
 interface LcdScreen { id: string; screenName: string | null; priceTotal: string | null }
 interface Licence { id: string; screenType: string; tier: string; qty: number; isInteractive: boolean }
 interface Quote {
@@ -363,6 +363,26 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
     await onChange();
   };
 
+  const setQty = async (sid: string, qty: number) => {
+    if (!(qty >= 1)) return;
+    await api(`/quotes/${quote.id}/led-screens/${sid}/qty`, { method: 'PATCH', body: JSON.stringify({ qty }) });
+    await onChange();
+  };
+
+  const duplicate = async (sid: string) => {
+    await api(`/quotes/${quote.id}/led-screens/${sid}/duplicate`, { method: 'POST', body: JSON.stringify({}) });
+    await onChange();
+  };
+
+  const move = async (index: number, dir: -1 | 1) => {
+    const ids = quote.ledScreens.map((s) => Number(s.id));
+    const target = index + dir;
+    if (target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target]!, ids[index]!];
+    await api(`/quotes/${quote.id}/led-screens/reorder`, { method: 'POST', body: JSON.stringify({ orderedIds: ids }) });
+    await onChange();
+  };
+
   // Required-field gating (P1-12.3): the essentials before "+ Add & price".
   const missing: string[] = [];
   if (!productId) missing.push('LED product');
@@ -485,7 +505,7 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
       <div className="card">
         <h3 style={{ marginTop: 0 }}>LED screens ({quote.ledScreens.length})</h3>
         {quote.ledScreens.length === 0 && <p className="muted">None yet — this step is optional.</p>}
-        {quote.ledScreens.map((s) => (
+        {quote.ledScreens.map((s, i) => (
           <div className="list-row" key={s.id}>
             <div>
               <b>{s.screenName || 'LED screen'}</b>{' '}
@@ -494,7 +514,21 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
               </span>
             </div>
             <div className="row-actions">
-              <span>{quote.currency?.code} {Number(s.priceTotal ?? 0).toLocaleString()}</span>
+              <button className="ghost" title="Move up" disabled={i === 0} onClick={() => move(i, -1)}>▲</button>
+              <button className="ghost" title="Move down" disabled={i === quote.ledScreens.length - 1} onClick={() => move(i, 1)}>▼</button>
+              <label className="muted" style={{ display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
+                Qty
+                <input
+                  type="number"
+                  min={1}
+                  defaultValue={s.qty}
+                  style={{ width: 60 }}
+                  onBlur={(e) => { const v = Number(e.target.value); if (v !== s.qty) setQty(s.id, v); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                />
+              </label>
+              <span>{quote.currency?.code} {(Number(s.priceTotal ?? 0) * s.qty).toLocaleString()}</span>
+              <button className="ghost" onClick={() => duplicate(s.id)}>Duplicate</button>
               <button className="danger" onClick={() => remove(s.id)}>Delete</button>
             </div>
           </div>

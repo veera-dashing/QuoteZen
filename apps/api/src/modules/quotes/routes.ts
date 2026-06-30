@@ -6,6 +6,8 @@ import {
   lcdScreenSchema,
   ledScreenSchema,
   quoteLicenceSchema,
+  reorderScreensSchema,
+  screenQtySchema,
   updateQuoteSchema,
 } from '@quotezen/shared';
 import { parse } from '../../lib/validate.js';
@@ -33,7 +35,16 @@ const auditFilterQuery = z.object({
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
 });
-import { addLcdScreen, addLedScreen, addLicence, configureForQuote, deleteLedScreen } from './screens.js';
+import {
+  addLcdScreen,
+  addLedScreen,
+  addLicence,
+  configureForQuote,
+  deleteLedScreen,
+  duplicateLedScreen,
+  reorderLedScreens,
+  setLedScreenQty,
+} from './screens.js';
 import { buildQuotePdf } from './pdf.js';
 import { buildBom, buildDescriptions, buildPmHandoff, buildSolutionSummary, loadRatios } from './outputs.js';
 import {
@@ -224,6 +235,35 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     const { screenId } = parse(z.object({ screenId: z.coerce.bigint() }), request.params);
     await deleteLedScreen(userId(request), id, screenId);
     return reply.code(204).send();
+  });
+
+  // Reorder LED screens (P1-14.1): full ordered id list → sortOrder by index.
+  app.post('/quotes/:id/led-screens/reorder', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { orderedIds } = parse(reorderScreensSchema, request.body);
+    await reorderLedScreens(userId(request), id, orderedIds);
+    return recomputeQuote(userId(request), id);
+  });
+
+  // Duplicate an LED screen (P1-14.1): deep-copy row + children, recompute.
+  app.post('/quotes/:id/led-screens/:screenId/duplicate', write, async (request, reply) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { screenId } = parse(z.object({ screenId: z.coerce.bigint() }), request.params);
+    const screen = await duplicateLedScreen(userId(request), id, screenId);
+    await recomputeQuote(userId(request), id);
+    return reply.code(201).send(screen);
+  });
+
+  // Per-screen quantity (P1-14.2): update qty, then recompute the rollup.
+  app.patch('/quotes/:id/led-screens/:screenId/qty', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { screenId } = parse(z.object({ screenId: z.coerce.bigint() }), request.params);
+    const { qty } = parse(screenQtySchema, request.body);
+    await setLedScreenQty(userId(request), id, screenId, qty);
+    return recomputeQuote(userId(request), id);
   });
 
   app.post('/quotes/:id/lcd-screens', write, async (request, reply) => {

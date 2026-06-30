@@ -106,6 +106,19 @@ export const lcdScreenSchema = z.object({
 });
 export type LcdScreenInput = z.infer<typeof lcdScreenSchema>;
 
+// ─── Screen management (duplicate / reorder / per-screen qty) — P1-14 ─────────
+/** Reorder screens: the full set of screen ids in their new order. */
+export const reorderScreensSchema = z.object({
+  orderedIds: z.array(z.coerce.number().int().positive()).min(1),
+});
+export type ReorderScreensInput = z.infer<typeof reorderScreensSchema>;
+
+/** Patch a single screen's quantity (positive integer; 0/negative rejected). */
+export const screenQtySchema = z.object({
+  qty: z.coerce.number().int().positive(),
+});
+export type ScreenQtyInput = z.infer<typeof screenQtySchema>;
+
 // ─── Simple quote line collections (skippable wizard steps) ───────────────────
 const refQty = (key: string) =>
   z.object({ [key]: idSchema, qty: qtySchema } as Record<string, z.ZodTypeAny>);

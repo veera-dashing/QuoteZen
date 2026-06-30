@@ -351,8 +351,11 @@ export const recomputeQuote = async (userId: bigint, id: bigint) => {
   const quote = await getQuote(id);
   const lines: QuoteLineContribution[] = [];
 
+  // Per-screen qty multiplies the stored (per-unit) price into the rollup (P1-14.2). LED screens
+  // carry a screen-level qty; LCD screens have none (their item rows carry their own qty), so the
+  // stored LCD priceTotal is already the full screen price.
   for (const s of quote.ledScreens) {
-    lines.push({ kind: 'equipment', extendedSell: dec(s.priceTotal) });
+    lines.push({ kind: 'equipment', extendedSell: round(Number(dec(s.priceTotal)) * s.qty) });
   }
   for (const s of quote.lcdScreens) {
     lines.push({ kind: 'equipment', extendedSell: dec(s.priceTotal) });

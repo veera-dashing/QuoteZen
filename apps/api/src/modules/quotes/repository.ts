@@ -9,6 +9,7 @@ export const quoteInclude = {
   location: true,
   currency: true,
   ledScreens: {
+    orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
     include: {
       components: {
         include: { controller: true, ledPeripheral: true, mediaplayer: true, peripheral: true },
@@ -22,7 +23,10 @@ export const quoteInclude = {
       gob: true,
     },
   },
-  lcdScreens: { include: { items: { include: { display: true } }, display: true, warranty: true } },
+  lcdScreens: {
+    orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+    include: { items: { include: { display: true } }, display: true, warranty: true },
+  },
   viewers: { include: { user: { select: { id: true, name: true, email: true } } } },
   mediaplayers: { include: { mediaplayer: true } },
   peripherals: { include: { peripheral: true } },

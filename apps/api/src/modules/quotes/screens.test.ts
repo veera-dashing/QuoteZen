@@ -132,6 +132,89 @@ describe('configuration engine', () => {
   });
 });
 
+describe('per-screen qty rollup + management (P1-14)', () => {
+  it('a screen with qty 2 contributes 2× its per-unit priceTotal to the equipment rollup', async () => {
+    const product = await prisma.ledProduct.findFirst({
+      where: { minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchH: { not: null }, costPerSqmUsd: { not: null } },
+    });
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: auth(),
+      payload: { jobReference: `${JOB_PREFIX}qty-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const quoteId = created.json().id as string;
+
+    const led = await app.inject({
+      method: 'POST',
+      url: `/quotes/${quoteId}/led-screens`,
+      headers: auth(),
+      payload: { screenName: 'Qty screen', ledProductId: Number(product!.id), desiredWidthMm: 1120, desiredHeightMm: 1920, rotateCabinets: true },
+    });
+    const screen = led.json();
+    const unit = Number(screen.priceTotal);
+    expect(unit).toBeGreaterThan(0);
+
+    // qty 1 → equipment == 1× unit
+    const r1 = await app.inject({ method: 'POST', url: `/quotes/${quoteId}/recompute`, headers: auth() });
+    expect(Number(r1.json().totalEquipment)).toBeCloseTo(unit, 2);
+
+    // bump qty to 2 → equipment == 2× unit
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: `/quotes/${quoteId}/led-screens/${screen.id}/qty`,
+      headers: auth(),
+      payload: { qty: 2 },
+    });
+    expect(patched.statusCode).toBe(200);
+    expect(Number(patched.json().totalEquipment)).toBeCloseTo(unit * 2, 2);
+
+    // qty 0 is rejected (positive int only) — Zod validation failure → 422
+    const bad = await app.inject({
+      method: 'PATCH',
+      url: `/quotes/${quoteId}/led-screens/${screen.id}/qty`,
+      headers: auth(),
+      payload: { qty: 0 },
+    });
+    expect(bad.statusCode).toBe(422);
+  });
+
+  it('duplicates a screen and reorders the set', async () => {
+    const product = await prisma.ledProduct.findFirst({
+      where: { minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchH: { not: null }, costPerSqmUsd: { not: null } },
+    });
+    const created = await app.inject({
+      method: 'POST', url: '/quotes', headers: auth(),
+      payload: { jobReference: `${JOB_PREFIX}dup-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const quoteId = created.json().id as string;
+    const led = await app.inject({
+      method: 'POST', url: `/quotes/${quoteId}/led-screens`, headers: auth(),
+      payload: { screenName: 'Original', ledProductId: Number(product!.id), desiredWidthMm: 1120, desiredHeightMm: 1920, rotateCabinets: true },
+    });
+    const origId = led.json().id as string;
+
+    const dup = await app.inject({ method: 'POST', url: `/quotes/${quoteId}/led-screens/${origId}/duplicate`, headers: auth() });
+    expect(dup.statusCode).toBe(201);
+
+    const quote = await app.inject({ method: 'GET', url: `/quotes/${quoteId}`, headers: auth() });
+    const screens = (quote.json() as { ledScreens: Array<{ id: string; screenName: string }> }).ledScreens;
+    expect(screens.length).toBe(2);
+    expect(screens.some((s) => s.screenName === 'Original (copy)')).toBe(true);
+
+    // reorder: reverse the current order
+    const reversed = screens.map((s) => Number(s.id)).reverse();
+    const reord = await app.inject({
+      method: 'POST', url: `/quotes/${quoteId}/led-screens/reorder`, headers: auth(),
+      payload: { orderedIds: reversed },
+    });
+    expect(reord.statusCode).toBe(200);
+    const after = await app.inject({ method: 'GET', url: `/quotes/${quoteId}`, headers: auth() });
+    const afterIds = (after.json() as { ledScreens: Array<{ id: string }> }).ledScreens.map((s) => Number(s.id));
+    expect(afterIds).toEqual(reversed);
+  });
+});
+
 describe('quote wizard backend', () => {
   it('prices an LED screen from a real product and rolls it into the quote total', async () => {
     // a product with the specs needed to price (cabinet dims, pitch, cost/sqm)
