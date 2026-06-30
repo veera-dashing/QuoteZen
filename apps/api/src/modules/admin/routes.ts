@@ -6,10 +6,10 @@ import { parse } from '../../lib/validate.js';
 import { TABLE_BY_RESOURCE, TABLES, type FieldDef, type TableDef } from './registry.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const delegate = (def: TableDef): any => (prisma as Record<string, any>)[def.model];
+export const delegate = (def: TableDef): any => (prisma as Record<string, any>)[def.model];
 
 /** Zod validator for one field. */
-const fieldSchema = (field: FieldDef): z.ZodTypeAny => {
+export const fieldSchema = (field: FieldDef): z.ZodTypeAny => {
   switch (field.type) {
     case 'int':
       return z.coerce.number().int();
@@ -29,7 +29,7 @@ const fieldSchema = (field: FieldDef): z.ZodTypeAny => {
 };
 
 /** Build create (required honoured) and update (all optional) schemas for a table. */
-const buildSchemas = (def: TableDef) => {
+export const buildSchemas = (def: TableDef) => {
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const field of def.fields) {
     const base = fieldSchema(field);
