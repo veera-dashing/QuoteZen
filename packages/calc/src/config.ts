@@ -62,7 +62,18 @@ export interface ConfigProduct {
   costPerSqmUsd?: number | null;
   kgPerSqm?: number | null;
   rotationAllowed?: boolean;
+  // ─── U2: manufacturer sourcing priority + lead time. `manufacturerPriority` is the PRIMARY ranking
+  // key (lower = preferred); products with no manufacturer default to a high value so they sort last.
+  /** Manufacturer sourcing priority — lower wins. Default {@link NO_MANUFACTURER_PRIORITY} when unset. */
+  manufacturerPriority?: number | null;
+  /** Manufacturer display name (carried through to the option for the UI). */
+  manufacturerName?: string | null;
+  /** Manufacturer lead time in days (carried through to the option for the UI). */
+  leadTimeDays?: number | null;
 }
+
+/** Default priority for a product with no manufacturer — sorts after every real (lower) priority. */
+export const NO_MANUFACTURER_PRIORITY = 999;
 
 export interface ConfigRequest {
   desiredWidthMm: number;
@@ -112,6 +123,13 @@ export interface ConfigOption {
   ratioPreferred: boolean;
   /** Human guidance when the ratio is not preferred (names the closest preferred); null when preferred. */
   ratioGuidance: string | null;
+  // ─── U2: manufacturer priority ordering + lead time (carried from {@link ConfigProduct}).
+  /** Manufacturer sourcing priority used as the PRIMARY sort key (lower first). */
+  manufacturerPriority: number;
+  /** Manufacturer display name (null when the product has no manufacturer). */
+  manufacturerName: string | null;
+  /** Manufacturer lead time in days (null when unknown). */
+  leadTimeDays: number | null;
 }
 
 export interface ConfigResult {
@@ -205,6 +223,9 @@ const buildOption = (
     sizeDeltaPct,
     ratioPreferred,
     ratioGuidance,
+    manufacturerPriority: product.manufacturerPriority ?? NO_MANUFACTURER_PRIORITY,
+    manufacturerName: product.manufacturerName ?? null,
+    leadTimeDays: product.leadTimeDays ?? null,
   };
 };
 
@@ -259,10 +280,13 @@ export const configureScreen = (
     return { options: [], reasons: ['No valid cabinet fit for the requested opening.'] };
   }
 
-  // Rank: closest area fit, then exact > under/over at equal deviation, then non-rotated preferred,
+  // Rank (U2): manufacturer sourcing priority FIRST (lower = preferred), so options group by the
+  // manufacturer order the user wants to see; WITHIN each manufacturer, the existing best-fit ranking
+  // applies — closest area fit, then exact > under/over at equal deviation, then non-rotated preferred,
   // then a preferred aspect ratio, then fewer cabinets, then model name (stable & explainable).
   const sizeRank: Record<SizeMode, number> = { exact: 0, under: 1, over: 2 };
   deduped.sort((a, b) => {
+    if (a.manufacturerPriority !== b.manufacturerPriority) return a.manufacturerPriority - b.manufacturerPriority;
     const da = areaDeviation(a, req);
     const db = areaDeviation(b, req);
     if (da !== db) return da - db;

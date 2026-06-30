@@ -32,21 +32,71 @@ const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toS
  * (install/labour) are left at 0 for now — see CLAUDE.md (LED install breakdown is the next calc
  * increment); the value is explicit, not hidden.
  */
+/** A config option annotated with its size-tolerance band (U2). */
+export type ConfigOptionWithBand = ConfigOption & {
+  /** Smallest band (%) whose |sizeDeltaPct| ≤ band; 0 for an exact fit. Always within an allowed band. */
+  toleranceBand: number;
+  /** Always true on returned options — out-of-band candidates are excluded from the result. */
+  withinTolerance: boolean;
+};
+
+/** Result of {@link configureForQuote} — ranked options carrying manufacturer/lead-time + band data. */
+export interface ConfigureResult {
+  options: ConfigOptionWithBand[];
+  reasons: string[];
+  /** The size-tolerance bands (%) applied, ascending — sourced from the `size_tolerance_bands` setting. */
+  toleranceBands: number[];
+}
+
+/**
+ * Size-tolerance bands (U2). Admin-editable via the `size_tolerance_bands` setting (stored as a CSV in
+ * `settings.value_text`, e.g. "5,10,25"). An option is "in band" if its absolute size deviation vs the
+ * opening (|sizeDeltaPct|) is within one of the bands; its `toleranceBand` is the SMALLEST such band.
+ * Options whose deviation exceeds the LARGEST band are excluded (the count is noted in `reasons`).
+ * Exact / on-band fits are always kept (band 0 / the matching band).
+ */
+const DEFAULT_TOLERANCE_BANDS = [5, 10, 25];
+
+/** Read + parse the `size_tolerance_bands` setting (CSV → sorted ascending positive numbers). */
+const loadToleranceBands = async (): Promise<number[]> => {
+  const s = await prisma.setting.findUnique({ where: { key: 'size_tolerance_bands' } });
+  const parsed = (s?.valueText ?? '')
+    .split(',')
+    .map((x) => Number(x.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const bands = parsed.length > 0 ? parsed : DEFAULT_TOLERANCE_BANDS;
+  return [...new Set(bands)].sort((a, b) => a - b);
+};
+
+/** The smallest band whose value ≥ |deviation%|, or null when the deviation exceeds the largest band. */
+const bandFor = (sizeDeltaPct: number, bands: readonly number[]): number | null => {
+  const abs = Math.abs(sizeDeltaPct);
+  if (abs === 0) return 0;
+  for (const b of bands) if (abs <= b) return b;
+  return null;
+};
+
 /**
  * Run the catalogue-iteration config engine (P1-13) over the live LED catalogue for a desired
  * opening, returning ranked valid configurations the estimator can pick from.
+ *
+ * U2: options are ordered by **manufacturer priority first** (best-fit within each manufacturer), and
+ * each carries its manufacturer name + lead time. Options whose size deviation exceeds the largest
+ * admin-configured tolerance band are excluded ("show as options only within the allowed bands").
  */
 export const configureForQuote = async (
   quoteId: bigint,
   input: { desiredWidthMm: number; desiredHeightMm: number; allowRotation?: boolean },
-) => {
+): Promise<ConfigureResult> => {
   await getQuote(quoteId);
-  const [products, ratios] = await Promise.all([
+  const [products, ratios, toleranceBands] = await Promise.all([
     prisma.ledProduct.findMany({
       // P1-11.4: deprecated LED products are retained for old quotes but excluded from NEW configs.
       where: { deprecated: false, minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchH: { not: null } },
+      include: { manufacturer: true },
     }),
     prisma.screenRatio.findMany(),
+    loadToleranceBands(),
   ]);
   const cfgProducts: ConfigProduct[] = products.map((p) => ({
     id: p.id.toString(),
@@ -61,18 +111,40 @@ export const configureForQuote = async (
     brightnessNits: p.brightnessNits,
     costPerSqmUsd: p.costPerSqmUsd ? Number(p.costPerSqmUsd) : null,
     kgPerSqm: p.kgPerSqm ? Number(p.kgPerSqm) : null,
+    // U2: manufacturer priority/name/lead-time from the joined relation (high default when unlinked).
+    manufacturerPriority: p.manufacturer?.priority ?? null,
+    manufacturerName: p.manufacturer?.name ?? null,
+    leadTimeDays: p.manufacturer?.leadTimeDays ?? null,
   }));
   const ratioRows = ratios.map((r) => ({
     minValue: Number(r.minValue),
     maxValue: Number(r.maxValue),
     ratioLabel: r.ratioLabel,
   }));
-  return configureScreen(cfgProducts, {
+  const ranked = configureScreen(cfgProducts, {
     desiredWidthMm: input.desiredWidthMm,
     desiredHeightMm: input.desiredHeightMm,
     allowRotation: input.allowRotation ?? true,
     ratios: ratioRows,
   });
+
+  // U2: annotate with tolerance band; drop options beyond the largest band (noting how many).
+  const within: ConfigOptionWithBand[] = [];
+  let excluded = 0;
+  for (const o of ranked.options) {
+    const band = bandFor(Number(o.sizeDeltaPct), toleranceBands);
+    if (band === null) {
+      excluded += 1;
+      continue;
+    }
+    within.push({ ...o, toleranceBand: band, withinTolerance: true });
+  }
+  const reasons = [...ranked.reasons];
+  if (excluded > 0) {
+    const max = toleranceBands[toleranceBands.length - 1]!;
+    reasons.push(`${excluded} option(s) excluded for exceeding the largest size-tolerance band (±${max}%).`);
+  }
+  return { options: within, reasons, toleranceBands };
 };
 
 /**
@@ -114,6 +186,10 @@ export interface TierOption {
   sizeDeltaPct: string;
   ratioPreferred: boolean;
   ratioGuidance: string | null;
+  // U2: manufacturer ordering + lead time + size-tolerance band (carried through from configureForQuote).
+  manufacturerName: string | null;
+  leadTimeDays: number | null;
+  toleranceBand: number;
   /** Supply cost (AUD) — masked (null) for non-admin callers (BR-081). */
   supplyCostAud: string | null;
   /** Supply sell price (AUD) — always visible. */
@@ -173,7 +249,7 @@ export const optionsForQuote = async (
   };
 
   const options: TierOption[] = selection.picks.map((pick) => {
-    const o = pick.option;
+    const o = pick.option as ConfigOptionWithBand;
     const { cost, sell } = priceSupply(o);
     const margin = sell > 0 ? (sell - cost) / sell : 0;
     return {
@@ -198,6 +274,9 @@ export const optionsForQuote = async (
       sizeDeltaPct: o.sizeDeltaPct.toString(),
       ratioPreferred: o.ratioPreferred,
       ratioGuidance: o.ratioGuidance,
+      manufacturerName: o.manufacturerName,
+      leadTimeDays: o.leadTimeDays,
+      toleranceBand: o.toleranceBand,
       supplyCostAud: showCost ? round(cost).toString() : null,
       supplySellAud: round(sell).toString(),
       margin: showCost ? round(margin, 4).toString() : null,

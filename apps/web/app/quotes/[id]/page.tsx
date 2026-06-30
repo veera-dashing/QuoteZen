@@ -300,6 +300,10 @@ interface ConfigOption {
   sizeDeltaPct: string;
   ratioPreferred: boolean;
   ratioGuidance: string | null;
+  // U2: manufacturer-priority ordering + lead time + size-tolerance band.
+  manufacturerName: string | null;
+  leadTimeDays: number | null;
+  toleranceBand: number;
 }
 
 // Good / Better / Best tiered option (T2): a ranked config + tier label/rationale + supply price.
@@ -645,6 +649,8 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
                     <div style={{ fontWeight: 600 }}>{t.model}{t.rotated ? ' (rot)' : ''}</div>
                     <table style={{ width: '100%', fontSize: 13, margin: '8px 0' }}>
                       <tbody>
+                        <tr><td className="muted">Manufacturer</td><td>{t.manufacturerName ?? '—'}</td></tr>
+                        <tr><td className="muted">Lead time</td><td>{t.leadTimeDays != null ? `${t.leadTimeDays} d` : '—'}</td></tr>
                         <tr><td className="muted">Size (mm)</td><td>{t.widthMm}×{t.heightMm}</td></tr>
                         <tr><td className="muted">Resolution</td><td>{t.resolutionWpx}×{t.resolutionHpx}</td></tr>
                         <tr>
@@ -688,7 +694,8 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
               <table>
                 <thead>
                   <tr>
-                    <th>Product</th><th>Size (mm)</th><th>Sizing</th><th>Resolution</th><th>Ratio</th>
+                    <th>Product</th><th>Manufacturer</th><th className="cell-num">Lead (d)</th>
+                    <th>Size (mm)</th><th>Sizing</th><th>Resolution</th><th>Ratio</th>
                     <th className="cell-num">Fill %</th><th className="cell-num">Cabinets</th><th>Cut?</th><th></th>
                   </tr>
                 </thead>
@@ -696,10 +703,12 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
                   {options.slice(0, 25).map((o, i) => (
                     <tr key={`${o.productId}-${o.rotated}-${o.sizeMode}-${i}`}>
                       <td>{o.model}{o.rotated ? ' (rot)' : ''}</td>
+                      <td>{o.manufacturerName ?? '—'}</td>
+                      <td className="cell-num">{o.leadTimeDays ?? '—'}</td>
                       <td>{o.widthMm}×{o.heightMm}</td>
                       <td>
                         <span
-                          title={`Δ ${o.deltaWidthMm >= 0 ? '+' : ''}${o.deltaWidthMm}mm × ${o.deltaHeightMm >= 0 ? '+' : ''}${o.deltaHeightMm}mm vs opening`}
+                          title={`Δ ${o.deltaWidthMm >= 0 ? '+' : ''}${o.deltaWidthMm}mm × ${o.deltaHeightMm >= 0 ? '+' : ''}${o.deltaHeightMm}mm vs opening · within ±${o.toleranceBand}% band`}
                           style={{
                             color:
                               o.sizeMode === 'over' ? 'var(--danger, #dc2626)'

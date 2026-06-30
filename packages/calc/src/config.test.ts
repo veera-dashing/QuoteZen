@@ -163,6 +163,81 @@ describe('configureScreen — T3 aspect-ratio guardrail', () => {
   });
 });
 
+describe('configureScreen — U2 manufacturer-priority ordering', () => {
+  // Two products that both produce an EXACT 1000×1000 fit (identical area deviation), differing only by
+  // manufacturer priority. Without the priority key, the model-name tiebreak would put 'AAA' first; the
+  // priority key must override that and put the lower-priority manufacturer first.
+  const PREFERRED: ConfigProduct = {
+    id: 'pref',
+    model: 'ZModel', // model sorts AFTER 'AModel' — proves priority beats the model tiebreak
+    minCabinetWMm: 500,
+    minCabinetHMm: 500,
+    pixelPitchHmm: 2.6,
+    pixelPitchVmm: 2.6,
+    manufacturerPriority: 1,
+    manufacturerName: 'LEDFul',
+    leadTimeDays: 45,
+  };
+  const SECONDARY: ConfigProduct = {
+    id: 'sec',
+    model: 'AModel',
+    minCabinetWMm: 500,
+    minCabinetHMm: 500,
+    pixelPitchHmm: 2.6,
+    pixelPitchVmm: 2.6,
+    manufacturerPriority: 3,
+    manufacturerName: 'Muxwave',
+    leadTimeDays: 60,
+  };
+
+  it('orders by manufacturer priority FIRST (lower wins), even at equal best-fit', () => {
+    const res = configureScreen([SECONDARY, PREFERRED], {
+      desiredWidthMm: 1000,
+      desiredHeightMm: 1000,
+      ratios: RATIOS,
+    }).options;
+    expect(res[0]!.manufacturerName).toBe('LEDFul');
+    expect(res[0]!.manufacturerPriority).toBe(1);
+    expect(res[1]!.manufacturerName).toBe('Muxwave');
+    // lead time carried through
+    expect(res[0]!.leadTimeDays).toBe(45);
+    expect(res[1]!.leadTimeDays).toBe(60);
+  });
+
+  it('within a manufacturer, best-fit (closest area) still ranks first', () => {
+    // 1100×1100 with the preferred product alone → under(1000) is closer than over(1500); both same mfr.
+    const res = configureScreen([PREFERRED], {
+      desiredWidthMm: 1100,
+      desiredHeightMm: 1100,
+      ratios: RATIOS,
+    }).options;
+    expect(res[0]!.widthMm).toBe(1000); // best fit within the manufacturer
+    expect(res[res.length - 1]!.widthMm).toBe(1500);
+    expect(res.every((o) => o.manufacturerName === 'LEDFul')).toBe(true);
+  });
+
+  it('defaults an unlinked product to a high priority so it sorts after real manufacturers', () => {
+    const UNLINKED: ConfigProduct = {
+      id: 'none',
+      model: 'AAA', // sorts first by model, but no manufacturer → should sort LAST by priority
+      minCabinetWMm: 500,
+      minCabinetHMm: 500,
+      pixelPitchHmm: 2.6,
+      pixelPitchVmm: 2.6,
+    };
+    const res = configureScreen([UNLINKED, PREFERRED], {
+      desiredWidthMm: 1000,
+      desiredHeightMm: 1000,
+      ratios: RATIOS,
+    }).options;
+    expect(res[0]!.manufacturerName).toBe('LEDFul');
+    const unlinked = res.find((o) => o.productId === 'none')!;
+    expect(unlinked.manufacturerName).toBeNull();
+    expect(unlinked.manufacturerPriority).toBe(999);
+    expect(res.indexOf(unlinked)).toBe(res.length - 1);
+  });
+});
+
 describe('selectTiers (Good/Better/Best — T2)', () => {
   // Three distinct products. "Mid" snaps to an EXACT 1000×1000 fit (500mm cabinets) so it is
   // unambiguously best-fit (recommended); the other two snap to a worse fit, leaving cost/pitch
