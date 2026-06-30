@@ -8,6 +8,7 @@ import {
   changeStatusSchema,
   createQuoteSchema,
   lcdScreenSchema,
+  recordReviewSchema,
   listQuotesQuerySchema,
   ledScreenSchema,
   quoteLicenceSchema,
@@ -39,6 +40,7 @@ import {
   type Actor,
 } from './service.js';
 import { listKbEntries } from './kb.js';
+import { listReviews, recordReview } from './reviews.js';
 import { validateQuote } from './validate.js';
 
 const auditFilterQuery = z.object({
@@ -139,6 +141,23 @@ export const quoteRoutes = async (
     await assertOwnership(id, actor(request));
     const { status, reason } = parse(changeStatusSchema, request.body);
     return changeStatus(actor(request), id, status, reason);
+  });
+
+  // ── Two-stage Review & Approval (T1 / BR-001) ──
+  // Record a technical/commercial review decision (advances or kicks back the workflow).
+  app.post('/quotes/:id/reviews', write, async (request, reply) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { stage, decision, comment } = parse(recordReviewSchema, request.body);
+    const quote = await recordReview(actor(request), id, stage, decision, comment);
+    return reply.code(201).send(quote);
+  });
+
+  // The immutable review history (preserved across revisions, FR-110).
+  app.get('/quotes/:id/reviews', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return listReviews(id);
   });
 
   app.post('/quotes/:id/recompute', write, async (request) => {

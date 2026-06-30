@@ -8,6 +8,7 @@ import { AppError, conflict, notFound } from '../../errors.js';
 import type { UserRole } from '@quotezen/shared';
 import { diffFields, recordAudit } from '../../services/audit.js';
 import { CAPTURE_STATUSES, captureKbEntry } from './kb.js';
+import { assertIssueReviews } from './reviews.js';
 import { collectScreenErrors, validateQuote } from './validate.js';
 import {
   findCurrencyByCode,
@@ -302,6 +303,14 @@ export const changeStatus = async (
 ) => {
   const existing = await getQuote(id);
   if (existing.status === status) return existing;
+
+  // BR-001 (T1): no quotation issues without human review and approval. Block the transition to
+  // `issued` unless BOTH a technical AND a commercial `approved` review exist for the CURRENT
+  // revision (existing.lockVersion — the revision the reviews signed off on, before this issue
+  // transition bumps it). Absolute: admins MAY NOT bypass human review (unlike the margin floor).
+  if (status === 'issued') {
+    await assertIssueReviews(id, existing.lockVersion);
+  }
 
   // Margin guardrail (P1-19g.2): block finalisation below the floor unless the actor is an admin
   // (elevated approval). Admin overrides are allowed but audited.

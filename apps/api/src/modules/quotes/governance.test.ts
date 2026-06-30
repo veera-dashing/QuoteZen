@@ -178,6 +178,9 @@ describe('named-ratio description (refinement)', () => {
 describe('KB capture (P1-19f)', () => {
   it('captures a completed quote into the knowledge base on issue', async () => {
     const id = await newQuoteWithScreen(admin());
+    // BR-001 (T1): issuing now requires both review approvals for the current revision.
+    await app.inject({ method: 'POST', url: `/quotes/${id}/reviews`, headers: admin(), payload: { stage: 'technical', decision: 'approved' } });
+    await app.inject({ method: 'POST', url: `/quotes/${id}/reviews`, headers: admin(), payload: { stage: 'commercial', decision: 'approved' } });
     const issued = await app.inject({ method: 'POST', url: `/quotes/${id}/status`, headers: admin(), payload: { status: 'issued' } });
     expect(issued.statusCode).toBe(200);
 

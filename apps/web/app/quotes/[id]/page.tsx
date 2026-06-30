@@ -1127,6 +1127,18 @@ interface PriceResult {
 }
 interface OverrideResult { override: OverrideSummary; warning: string | null }
 
+// Two-stage Review & Approval (T1 / BR-001). A review is a reviewer's decision at one stage,
+// recorded against the revision (lockVersion) it was signed off on; history is preserved.
+interface Review {
+  id: string;
+  stage: 'technical' | 'commercial';
+  decision: 'approved' | 'rejected';
+  lockVersion: number;
+  comment: string | null;
+  reviewer: { id: string; name: string } | null;
+  createdAt: string;
+}
+
 function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [audit, setAudit] = useState<Audit[]>([]);
@@ -1142,6 +1154,11 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const [diffError, setDiffError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [validation, setValidation] = useState<QuoteValidation | null>(null);
+  // Two-stage Review & Approval (T1): history + per-stage comment drafts + busy flag.
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewComment, setReviewComment] = useState<{ technical: string; commercial: string }>({ technical: '', commercial: '' });
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const [price, setPrice] = useState<PriceResult | null>(null);
   const [pricing, setPricing] = useState(false);
   const [priceError, setPriceError] = useState<string | null>(null);
@@ -1285,6 +1302,9 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const loadDocs = useCallback(() => {
     api<QuoteDoc[]>(`/quotes/${quote.id}/documents`).then(setDocs).catch(() => setDocs([]));
   }, [quote.id]);
+  const loadReviews = useCallback(() => {
+    api<Review[]>(`/quotes/${quote.id}/reviews`).then(setReviews).catch(() => setReviews([]));
+  }, [quote.id]);
 
   useEffect(() => {
     loadAudit();
@@ -1292,7 +1312,28 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
     loadValidation();
     loadTerms();
     loadDocs();
-  }, [loadAudit, loadVersions, loadValidation, loadTerms, loadDocs]);
+    loadReviews();
+  }, [loadAudit, loadVersions, loadValidation, loadTerms, loadDocs, loadReviews]);
+
+  // Record a technical/commercial review decision (T1). Advances or kicks back the workflow server-side.
+  const recordReview = async (stage: 'technical' | 'commercial', decision: 'approved' | 'rejected') => {
+    setReviewBusy(true);
+    setReviewError(null);
+    try {
+      await api(`/quotes/${quote.id}/reviews`, {
+        method: 'POST',
+        body: JSON.stringify({ stage, decision, comment: reviewComment[stage] || undefined }),
+      });
+      setReviewComment((p) => ({ ...p, [stage]: '' }));
+      await onChange();
+      loadReviews();
+      loadAudit();
+    } catch (e) {
+      setReviewError(e instanceof Error ? e.message : 'Review failed');
+    } finally {
+      setReviewBusy(false);
+    }
+  };
 
   const uploadDoc = async (file: File) => {
     setUploading(true);
@@ -1772,34 +1813,118 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
         )}
       </div>
 
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Workflow</h3>
-        <div className="row-actions">
-          <button onClick={() => setStatus('in_review')}>Send to review</button>
-          <button
-            onClick={() => setStatus('approved')}
-            disabled={!isAdmin && validation != null && !validation.canFinalise}
-            title={!isAdmin && validation != null && !validation.canFinalise ? 'Resolve validation errors first' : undefined}
-          >
-            Approve
-          </button>
-          <button
-            onClick={() => setStatus('issued')}
-            disabled={!isAdmin && validation != null && !validation.canFinalise}
-            title={!isAdmin && validation != null && !validation.canFinalise ? 'Resolve validation errors first' : undefined}
-          >
-            Issue
-          </button>
-        </div>
-        {validation != null && !validation.canFinalise && (
-          <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
-            {isAdmin
-              ? `${validation.counts.error} validation error(s) present — you may override as admin (the override is audited).`
-              : `Finalisation is blocked: ${validation.counts.error} validation error(s) must be resolved.`}
+      {(() => {
+        // BR-001 gate: issuing requires an `approved` review at BOTH stages for the CURRENT revision.
+        // A review only counts for the lockVersion it was signed off on (editing re-arms the gate).
+        const approvedFor = (stage: 'technical' | 'commercial') =>
+          reviews.some((r) => r.stage === stage && r.decision === 'approved' && r.lockVersion === quote.lockVersion);
+        const techApproved = approvedFor('technical');
+        const commApproved = approvedFor('commercial');
+        const bothApproved = techApproved && commApproved;
+        const stageBadge = (ok: boolean) => (
+          <span className="pill" style={{ background: ok ? 'var(--ok, #dcfce7)' : 'var(--warn, #fef3c7)', color: ok ? '#166534' : '#92400e' }}>
+            {ok ? '✓ approved' : 'pending'}
+          </span>
+        );
+        const stagePanel = (stage: 'technical' | 'commercial', ok: boolean) => (
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <b style={{ textTransform: 'capitalize' }}>{stage} review</b>
+              {stageBadge(ok)}
+            </div>
+            {canWrite ? (
+              <>
+                <textarea
+                  rows={2}
+                  placeholder="Comment (optional)"
+                  value={reviewComment[stage]}
+                  onChange={(e) => setReviewComment((p) => ({ ...p, [stage]: e.target.value }))}
+                  style={{ width: '100%' }}
+                />
+                <div className="row-actions" style={{ marginTop: 6 }}>
+                  <button className="primary" disabled={reviewBusy} onClick={() => recordReview(stage, 'approved')}>Approve</button>
+                  <button className="danger" disabled={reviewBusy} onClick={() => recordReview(stage, 'rejected')}>Reject</button>
+                </div>
+              </>
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>Review actions are restricted to admin/sales.</p>
+            )}
           </div>
-        )}
-        {statusError && <div className="error" style={{ marginTop: 10 }}>{statusError}</div>}
-      </div>
+        );
+        return (
+          <div className="card">
+            <h3 style={{ marginTop: 0 }}>Review &amp; approval</h3>
+            <p className="muted" style={{ marginTop: 0 }}>
+              BR-001: a quote must pass a technical review then a commercial review before it can be issued.
+              Approvals count only for the current revision (v{quote.lockVersion}).
+            </p>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              {stagePanel('technical', techApproved)}
+              {stagePanel('commercial', commApproved)}
+            </div>
+            {reviewError && <div className="error" style={{ marginTop: 10 }}>{reviewError}</div>}
+
+            {reviews.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <h4 style={{ margin: '0 0 6px' }}>Approval history</h4>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>Stage</th><th>Decision</th><th>Reviewer</th><th>Revision</th><th>Comment</th><th>When</th></tr>
+                    </thead>
+                    <tbody>
+                      {reviews.map((r) => (
+                        <tr key={r.id}>
+                          <td style={{ textTransform: 'capitalize' }}>{r.stage}</td>
+                          <td style={{ color: r.decision === 'approved' ? '#166534' : 'var(--danger, #dc2626)' }}>{r.decision}</td>
+                          <td>{r.reviewer?.name ?? '—'}</td>
+                          <td>v{r.lockVersion}</td>
+                          <td>{r.comment ?? '—'}</td>
+                          <td className="muted">{new Date(r.createdAt).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <h3 style={{ margin: '18px 0 0' }}>Workflow</h3>
+            <div className="row-actions">
+              <button onClick={() => setStatus('in_review')}>Send to review</button>
+              <button onClick={() => setStatus('technical_review')}>Start technical review</button>
+              <button
+                onClick={() => setStatus('approved')}
+                disabled={!isAdmin && validation != null && !validation.canFinalise}
+                title={!isAdmin && validation != null && !validation.canFinalise ? 'Resolve validation errors first' : undefined}
+              >
+                Approve
+              </button>
+              <button
+                onClick={() => setStatus('issued')}
+                disabled={!bothApproved || (!isAdmin && validation != null && !validation.canFinalise)}
+                title={!bothApproved ? 'Both technical and commercial reviews must be approved for this revision before issuing (BR-001)' : (!isAdmin && validation != null && !validation.canFinalise ? 'Resolve validation errors first' : undefined)}
+              >
+                Issue
+              </button>
+            </div>
+            {!bothApproved && (
+              <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+                Issuing is blocked until both reviews are approved for revision v{quote.lockVersion}
+                {techApproved !== commApproved ? ` (still need ${techApproved ? 'commercial' : 'technical'} approval).` : '.'} This is absolute — admins cannot bypass human review (BR-001).
+              </div>
+            )}
+            {validation != null && !validation.canFinalise && (
+              <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+                {isAdmin
+                  ? `${validation.counts.error} validation error(s) present — you may override as admin (the override is audited).`
+                  : `Finalisation is blocked: ${validation.counts.error} validation error(s) must be resolved.`}
+              </div>
+            )}
+            {statusError && <div className="error" style={{ marginTop: 10 }}>{statusError}</div>}
+          </div>
+        );
+      })()}
 
       <div className="card">
         <div className="topbar">

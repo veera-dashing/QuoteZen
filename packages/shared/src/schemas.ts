@@ -5,6 +5,8 @@ import {
   LICENCE_TIERS,
   ORIENTATIONS,
   QUOTE_STATUSES,
+  REVIEW_DECISIONS,
+  REVIEW_STAGES,
   SCREEN_TYPES,
 } from './enums.js';
 
@@ -46,6 +48,17 @@ export const changeStatusSchema = z.object({
   status: z.enum(QUOTE_STATUSES),
   reason: z.string().max(500).optional(),
 });
+
+/**
+ * Record a two-stage review decision (T1 / BR-001). A `technical` or `commercial` reviewer either
+ * approves (advancing the workflow) or rejects (kicking the quote back) with an optional comment.
+ */
+export const recordReviewSchema = z.object({
+  stage: z.enum(REVIEW_STAGES),
+  decision: z.enum(REVIEW_DECISIONS),
+  comment: z.string().max(2000).optional(),
+});
+export type RecordReviewInput = z.infer<typeof recordReviewSchema>;
 
 /**
  * Query for GET /quotes (the management dashboard, P1-19d.1). `?archived=true` shows the archived

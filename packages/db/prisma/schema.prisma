@@ -15,6 +15,10 @@ datasource db {
 enum QuoteStatus {
   draft
   in_review
+  // Two-stage human review & approval (T1 / BR-001): a quote passes a technical review then a
+  // commercial review before it can be approved and issued.
+  technical_review
+  commercial_review
   approved
   issued
   won
@@ -85,6 +89,7 @@ model User {
   role          Role            @relation(fields: [roleId], references: [id])
   auditLogs     QuoteAuditLog[]
   revisions     QuoteRevision[]
+  reviews       QuoteReview[]   @relation("QuoteReviewReviewer")
   kbEntries     KbEntry[]
   viewerQuotes  QuoteViewer[]
   createdQuotes Quote[]         @relation("QuoteCreatedBy")
@@ -156,6 +161,31 @@ model QuoteRevision {
 
   @@unique([quoteId, revisionNo])
   @@map("quote_revisions")
+}
+
+/**
+ * Two-stage review & approval record (T1 / BR-001, FR-102–110). Each row is an immutable approval
+ * artifact: a reviewer's decision at one stage against ONE specific revision (`lockVersion` captured
+ * at sign-off). Review rows are never deleted, so the full approval history is preserved across
+ * revisions (FR-110). Issuing a quote requires an `approved` row at BOTH stages for the CURRENT
+ * revision — see `recordReview` / `changeStatus`.
+ */
+model QuoteReview {
+  id          BigInt   @id @default(autoincrement())
+  quoteId     BigInt   @map("quote_id")
+  /** The quote revision (lockVersion) this decision was made against. */
+  lockVersion Int      @map("lock_version")
+  stage       String // 'technical' | 'commercial'
+  decision    String // 'approved' | 'rejected'
+  reviewerId  BigInt   @map("reviewer_id")
+  comment     String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  quote    Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  reviewer User  @relation("QuoteReviewReviewer", fields: [reviewerId], references: [id])
+
+  @@index([quoteId])
+  @@map("quote_reviews")
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -730,6 +760,7 @@ model Quote {
   terms              QuoteTerm[]
   auditLogs          QuoteAuditLog[]
   revisions          QuoteRevision[]
+  reviews            QuoteReview[]
   overrides          QuoteOverride[]
   documents          QuoteDocument[]
 
