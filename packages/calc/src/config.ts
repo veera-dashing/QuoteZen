@@ -1,5 +1,38 @@
 import { Decimal, d, round } from '@quotezen/shared';
-import { areaSqm, resolutionPx, resolveScreenRatio, snapToCabinets, type ScreenRatioRow } from './geometry.js';
+import { areaSqm, resolutionPx, resolveScreenRatio, type ScreenRatioRow } from './geometry.js';
+
+/**
+ * Preferred aspect-ratio order (T3 guardrail — BR-033 / DR-021).
+ *
+ * SOURCE: the Workshop "Capability 4" ratio-preference guidance, mapped onto the labels used by the
+ * `screen_ratios` lookup (Reference Data A231:C251 — see packages/db seed `SCREEN_RATIOS`). The order is
+ * the preference ranking the estimator should steer toward: 16:9 landscape first, then the wide formats,
+ * the near-square / square family, and finally "Fashion Portrait". Dan's note named the portrait format
+ * "5:16" but the catalogue's portrait label for that band (~0.5625) is `9:16`, so we use the table label
+ * `9:16` (the closest practical, documented here so the mapping is explicit). Anything outside this set is
+ * still offered — it just carries a guidance note pointing at the closest preferred ratio.
+ */
+export const PREFERRED_RATIO_LABELS: readonly string[] = ['16:9', '2:1', '3:1', '5:4', '1:1', '9:16'];
+
+/** Numeric centre of each preferred ratio (W/H), for "closest preferred" guidance. Derived from the label. */
+const ratioValue = (label: string): number => {
+  const [w, h] = label.split(':').map(Number);
+  return w && h ? w / h : Number(label);
+};
+const PREFERRED_RATIO_VALUES: ReadonlyArray<{ label: string; value: number }> = PREFERRED_RATIO_LABELS.map(
+  (label) => ({ label, value: ratioValue(label) }),
+);
+
+/** The preferred label numerically closest to a given W:H ratio — used in the non-preferred guidance string. */
+const closestPreferred = (widthMm: number, heightMm: number): string => {
+  if (heightMm <= 0) return PREFERRED_RATIO_VALUES[0]!.label;
+  const ratio = widthMm / heightMm;
+  let best = PREFERRED_RATIO_VALUES[0]!;
+  for (const r of PREFERRED_RATIO_VALUES) {
+    if (Math.abs(r.value - ratio) < Math.abs(best.value - ratio)) best = r;
+  }
+  return best.label;
+};
 
 /**
  * Technical configuration engine (P1-13).
@@ -41,6 +74,9 @@ export interface ConfigRequest {
   ratios: readonly ScreenRatioRow[];
 }
 
+/** Whether this candidate is smaller than, equal to, or larger than the opening (T3 over/under). */
+export type SizeMode = 'under' | 'exact' | 'over';
+
 export interface ConfigOption {
   productId: string | number;
   model: string;
@@ -62,6 +98,20 @@ export interface ConfigOption {
   deviationWmm: number;
   deviationHmm: number;
   cutCabinetSuggested: boolean;
+  // ─── T3: over/under sizing (Capability 4, FR-059–067; Dan: "ability to Over/Under for options
+  // larger/smaller than opening"). Guidance only — these are *additional* candidates, never blocking.
+  /** 'under' = whole-cabinet fit smaller than the opening; 'over' = larger; 'exact' = divides evenly. */
+  sizeMode: SizeMode;
+  /** Signed size delta vs the opening, mm (snapped − desired). Negative = under, positive = over. */
+  deltaWidthMm: number;
+  deltaHeightMm: number;
+  /** Signed overall size delta vs the opening as a %: 100 × (snappedArea/openingArea − 1). */
+  sizeDeltaPct: Decimal;
+  // ─── T3: aspect-ratio guardrail (BR-033 / DR-021 preference order). Advisory only — never filters.
+  /** Is the achieved {@link ratioLabel} in the workbook's preferred-ratio set? */
+  ratioPreferred: boolean;
+  /** Human guidance when the ratio is not preferred (names the closest preferred); null when preferred. */
+  ratioGuidance: string | null;
 }
 
 export interface ConfigResult {
@@ -70,24 +120,44 @@ export interface ConfigResult {
   reasons: string[];
 }
 
+/** Which whole-cabinet rounding to apply: 'fit' = nearest (the original snap), 'under' = floor, 'over' = ceil. */
+type SnapMode = 'fit' | 'under' | 'over';
+
+/** Snap one axis to whole cabinets under the chosen rounding mode; always ≥ 1 cabinet. */
+const snapAxis = (desired: number, unit: number, mode: SnapMode): { mm: number; count: number } => {
+  const exact = desired / unit;
+  const count =
+    mode === 'under'
+      ? Math.max(1, Math.floor(exact))
+      : mode === 'over'
+        ? Math.max(1, Math.ceil(exact))
+        : Math.max(1, Math.round(exact));
+  return { mm: count * unit, count };
+};
+
 const buildOption = (
   product: ConfigProduct,
   req: ConfigRequest,
   rotated: boolean,
+  mode: SnapMode = 'fit',
 ): ConfigOption => {
-  const snapped = snapToCabinets({
-    desiredWidthMm: req.desiredWidthMm,
-    desiredHeightMm: req.desiredHeightMm,
-    cabinetWidthMm: product.minCabinetWMm,
-    cabinetHeightMm: product.minCabinetHMm,
-    rotate: rotated,
-  });
+  const cabW = rotated ? product.minCabinetHMm : product.minCabinetWMm;
+  const cabH = rotated ? product.minCabinetWMm : product.minCabinetHMm;
+  // 'fit' (nearest cabinet) reproduces the canonical snapToCabinets exactly; under/over force floor/ceil.
+  const wa = snapAxis(req.desiredWidthMm, cabW, mode);
+  const ha = snapAxis(req.desiredHeightMm, cabH, mode);
+  const snapped = {
+    widthMm: wa.mm,
+    heightMm: ha.mm,
+    cabinetsWide: wa.count,
+    cabinetsHigh: ha.count,
+    cabinetCount: wa.count * ha.count,
+  };
+
   const opening = d(req.desiredWidthMm).times(req.desiredHeightMm);
   const snappedArea = d(snapped.widthMm).times(snapped.heightMm);
   const fillPercent = opening.isZero() ? d(0) : round(snappedArea.dividedBy(opening).times(100), 1);
 
-  const cabW = rotated ? product.minCabinetHMm : product.minCabinetWMm;
-  const cabH = rotated ? product.minCabinetWMm : product.minCabinetHMm;
   const threshold = req.cutThreshold ?? 0.25;
   const widthRemainder = Math.abs(req.desiredWidthMm - snapped.widthMm) / cabW;
   const heightRemainder = Math.abs(req.desiredHeightMm - snapped.heightMm) / cabH;
@@ -95,6 +165,20 @@ const buildOption = (
 
   const resolutionWpx = resolutionPx(snapped.widthMm, product.pixelPitchHmm);
   const resolutionHpx = resolutionPx(snapped.heightMm, product.pixelPitchVmm);
+
+  // Size classification vs the opening, by signed area delta (under/exact/over). 'exact' = divides evenly.
+  const deltaWidthMm = snapped.widthMm - req.desiredWidthMm;
+  const deltaHeightMm = snapped.heightMm - req.desiredHeightMm;
+  const sizeDeltaPct = opening.isZero() ? d(0) : round(snappedArea.dividedBy(opening).minus(1).times(100), 1);
+  const sizeMode: SizeMode = sizeDeltaPct.isZero() ? 'exact' : sizeDeltaPct.isNegative() ? 'under' : 'over';
+
+  // Aspect-ratio guardrail (advisory): is the achieved label in the preferred set?
+  const ratioLabel = resolveScreenRatio(snapped.widthMm, snapped.heightMm, req.ratios);
+  const ratioPreferred = ratioLabel !== null && PREFERRED_RATIO_LABELS.includes(ratioLabel);
+  const closest = closestPreferred(snapped.widthMm, snapped.heightMm);
+  const ratioGuidance = ratioPreferred
+    ? null
+    : `Achieved ${ratioLabel ?? 'ratio'} is not a preferred ratio — closest preferred is ${closest}`;
 
   return {
     productId: product.id,
@@ -110,11 +194,17 @@ const buildOption = (
     resolutionWpx,
     resolutionHpx,
     totalPixels: resolutionWpx * resolutionHpx,
-    ratioLabel: resolveScreenRatio(snapped.widthMm, snapped.heightMm, req.ratios),
+    ratioLabel,
     fillPercent,
-    deviationWmm: snapped.widthMm - req.desiredWidthMm,
-    deviationHmm: snapped.heightMm - req.desiredHeightMm,
+    deviationWmm: deltaWidthMm,
+    deviationHmm: deltaHeightMm,
     cutCabinetSuggested,
+    sizeMode,
+    deltaWidthMm,
+    deltaHeightMm,
+    sizeDeltaPct,
+    ratioPreferred,
+    ratioGuidance,
   };
 };
 
@@ -137,16 +227,26 @@ export const configureScreen = (
   }
 
   const allowRotation = req.allowRotation ?? true;
+  // For each product/orientation, generate the closest fit + the under (round down) + over (round up)
+  // variants (T3). Many openings divide evenly on one or both axes, so under/over often coincide with the
+  // fit — the dedupe below collapses those. Order matters for the dedupe: the 'fit' candidate is pushed
+  // first so it wins the geometry key when an under/over produces identical dimensions.
+  const orientations: boolean[] = [false];
   const raw: ConfigOption[] = [];
   for (const product of usable) {
-    raw.push(buildOption(product, req, false));
-    if (allowRotation && (product.rotationAllowed ?? true)) {
-      const square = product.minCabinetWMm === product.minCabinetHMm;
-      if (!square) raw.push(buildOption(product, req, true));
+    const square = product.minCabinetWMm === product.minCabinetHMm;
+    const useRotation = allowRotation && (product.rotationAllowed ?? true) && !square;
+    const oris = useRotation ? [false, true] : orientations;
+    for (const rotated of oris) {
+      for (const mode of ['fit', 'under', 'over'] as const) {
+        raw.push(buildOption(product, req, rotated, mode));
+      }
     }
   }
 
-  // Dedupe identical geometry (rotation of a square cabinet, etc.).
+  // Dedupe identical geometry (the fit/under/over collapsing to the same size, rotation of a square
+  // cabinet, etc.). First occurrence wins — and we push 'fit' first per orientation, so an exact-fit
+  // option is preferred over an under/over that happens to land on the same dimensions.
   const seen = new Set<string>();
   const deduped = raw.filter((o) => {
     const key = `${o.productId}:${o.widthMm}x${o.heightMm}`;
@@ -159,12 +259,16 @@ export const configureScreen = (
     return { options: [], reasons: ['No valid cabinet fit for the requested opening.'] };
   }
 
-  // Rank: closest area fit, then non-rotated preferred, then fewer cabinets, then model name (stable).
+  // Rank: closest area fit, then exact > under/over at equal deviation, then non-rotated preferred,
+  // then a preferred aspect ratio, then fewer cabinets, then model name (stable & explainable).
+  const sizeRank: Record<SizeMode, number> = { exact: 0, under: 1, over: 2 };
   deduped.sort((a, b) => {
     const da = areaDeviation(a, req);
     const db = areaDeviation(b, req);
     if (da !== db) return da - db;
+    if (a.sizeMode !== b.sizeMode) return sizeRank[a.sizeMode] - sizeRank[b.sizeMode];
     if (a.rotated !== b.rotated) return a.rotated ? 1 : -1;
+    if (a.ratioPreferred !== b.ratioPreferred) return a.ratioPreferred ? -1 : 1;
     if (a.cabinetCount !== b.cabinetCount) return a.cabinetCount - b.cabinetCount;
     return a.model.localeCompare(b.model);
   });

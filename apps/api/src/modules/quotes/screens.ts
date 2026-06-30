@@ -107,6 +107,13 @@ export interface TierOption {
   ratioLabel: string | null;
   fillPercent: string;
   cutCabinetSuggested: boolean;
+  // T3: over/under sizing + aspect-ratio guardrail (guidance, carried through from the config engine).
+  sizeMode: 'under' | 'exact' | 'over';
+  deltaWidthMm: number;
+  deltaHeightMm: number;
+  sizeDeltaPct: string;
+  ratioPreferred: boolean;
+  ratioGuidance: string | null;
   /** Supply cost (AUD) — masked (null) for non-admin callers (BR-081). */
   supplyCostAud: string | null;
   /** Supply sell price (AUD) — always visible. */
@@ -185,6 +192,12 @@ export const optionsForQuote = async (
       ratioLabel: o.ratioLabel,
       fillPercent: o.fillPercent.toString(),
       cutCabinetSuggested: o.cutCabinetSuggested,
+      sizeMode: o.sizeMode,
+      deltaWidthMm: o.deltaWidthMm,
+      deltaHeightMm: o.deltaHeightMm,
+      sizeDeltaPct: o.sizeDeltaPct.toString(),
+      ratioPreferred: o.ratioPreferred,
+      ratioGuidance: o.ratioGuidance,
       supplyCostAud: showCost ? round(cost).toString() : null,
       supplySellAud: round(sell).toString(),
       margin: showCost ? round(margin, 4).toString() : null,

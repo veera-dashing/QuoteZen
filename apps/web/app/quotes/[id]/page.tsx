@@ -293,6 +293,13 @@ interface ConfigOption {
   ratioLabel: string | null;
   fillPercent: string;
   cutCabinetSuggested: boolean;
+  // T3: over/under sizing + aspect-ratio guardrail (guidance only).
+  sizeMode: 'under' | 'exact' | 'over';
+  deltaWidthMm: number;
+  deltaHeightMm: number;
+  sizeDeltaPct: string;
+  ratioPreferred: boolean;
+  ratioGuidance: string | null;
 }
 
 // Good / Better / Best tiered option (T2): a ranked config + tier label/rationale + supply price.
@@ -335,6 +342,14 @@ type LedComponentType = (typeof LED_COMPONENT_TABLES)[number]['componentType'];
 type LedComponentIdField = (typeof LED_COMPONENT_TABLES)[number]['idField'];
 // A chosen component row in local state: its type, the selected catalog id, and a qty.
 interface ComponentRow { componentType: LedComponentType; itemId: string; qty: number }
+
+// T3: human "Size" indicator for a config — under/exact/over with the signed % delta vs the opening.
+function sizeLabel(o: Pick<ConfigOption, 'sizeMode' | 'sizeDeltaPct'>): string {
+  const pct = Number(o.sizeDeltaPct);
+  if (o.sizeMode === 'exact') return 'exact';
+  const sign = pct > 0 ? '+' : '';
+  return `${sign}${pct}% ${o.sizeMode}`;
+}
 
 function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
   const [products, setProducts] = useState<Opt[]>([]);
@@ -632,7 +647,15 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
                       <tbody>
                         <tr><td className="muted">Size (mm)</td><td>{t.widthMm}×{t.heightMm}</td></tr>
                         <tr><td className="muted">Resolution</td><td>{t.resolutionWpx}×{t.resolutionHpx}</td></tr>
-                        <tr><td className="muted">Ratio</td><td>{t.ratioLabel ?? '—'}</td></tr>
+                        <tr>
+                          <td className="muted">Ratio</td>
+                          <td>
+                            {t.ratioLabel ?? '—'}
+                            {!t.ratioPreferred && t.ratioGuidance && (
+                              <span title={t.ratioGuidance} style={{ marginLeft: 4, cursor: 'help' }}>⚠️</span>
+                            )}
+                          </td>
+                        </tr>
                         <tr><td className="muted">Fill %</td><td>{t.fillPercent}</td></tr>
                         <tr><td className="muted">Cabinets</td><td>{t.cabinetCount}</td></tr>
                         <tr><td className="muted">Cut?</td><td>{t.cutCabinetSuggested ? '⚠️ yes' : '—'}</td></tr>
@@ -665,17 +688,35 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
               <table>
                 <thead>
                   <tr>
-                    <th>Product</th><th>Size (mm)</th><th>Resolution</th><th>Ratio</th>
+                    <th>Product</th><th>Size (mm)</th><th>Sizing</th><th>Resolution</th><th>Ratio</th>
                     <th className="cell-num">Fill %</th><th className="cell-num">Cabinets</th><th>Cut?</th><th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {options.slice(0, 25).map((o, i) => (
-                    <tr key={`${o.productId}-${o.rotated}-${i}`}>
+                    <tr key={`${o.productId}-${o.rotated}-${o.sizeMode}-${i}`}>
                       <td>{o.model}{o.rotated ? ' (rot)' : ''}</td>
                       <td>{o.widthMm}×{o.heightMm}</td>
+                      <td>
+                        <span
+                          title={`Δ ${o.deltaWidthMm >= 0 ? '+' : ''}${o.deltaWidthMm}mm × ${o.deltaHeightMm >= 0 ? '+' : ''}${o.deltaHeightMm}mm vs opening`}
+                          style={{
+                            color:
+                              o.sizeMode === 'over' ? 'var(--danger, #dc2626)'
+                                : o.sizeMode === 'under' ? 'var(--warn, #b45309)'
+                                  : 'var(--ok, #15803d)',
+                          }}
+                        >
+                          {sizeLabel(o)}
+                        </span>
+                      </td>
                       <td>{o.resolutionWpx}×{o.resolutionHpx}</td>
-                      <td>{o.ratioLabel ?? '—'}</td>
+                      <td>
+                        {o.ratioLabel ?? '—'}
+                        {!o.ratioPreferred && o.ratioGuidance && (
+                          <span title={o.ratioGuidance} style={{ marginLeft: 4, cursor: 'help' }}>⚠️</span>
+                        )}
+                      </td>
                       <td className="cell-num">{o.fillPercent}</td>
                       <td className="cell-num">{o.cabinetCount}</td>
                       <td>{o.cutCabinetSuggested ? '⚠️' : '—'}</td>
