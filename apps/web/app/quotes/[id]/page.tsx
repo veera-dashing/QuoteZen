@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import { api, ApiError, downloadFile, getRole, uploadFile } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
 
-interface Opt { id: string; name?: string; model?: string; sell?: string | null; category?: string; code?: string }
+interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string }
 interface LedScreen {
   id: string; screenName: string | null; qty: number;
   resolutionWpx: number | null; resolutionHpx: number | null; priceTotal: string | null;
@@ -775,28 +775,135 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
   );
 }
 
+// ── LCD-1 questionnaire model ──────────────────────────────────────────────
+// The LCD-1 sheet is a structured line-item form grouped into sections. Each section maps display_catalog
+// rows (filtered by category keyword) to one of the lcdItemSchema itemTypes; the Configuration / Seen
+// Labour / Location sections also allow fixed/manual rows (e.g. Parking 50, Travel 75). The server
+// resolves catalog prices authoritatively and applies the fixed LCD margin + out-of-hours uplift.
+type LcdItemType = 'display' | 'mediaplayer' | 'bracket' | 'install' | 'labour' | 'location_fee';
+interface LcdSectionDef {
+  key: string;
+  title: string;
+  itemType: LcdItemType;
+  // Substrings (lower-case) of display_catalog.category that belong in this section's picker.
+  catMatch: string[];
+  allowManual?: boolean;
+}
+const LCD_SECTIONS: LcdSectionDef[] = [
+  { key: 'display', title: 'Display', itemType: 'display', catMatch: ['indoor', 'outdoor', 'screen', 'video wall', 'touch', 'stretch', 'smartv', 'videri', 'projector', 'redback', 'high bright', 'all in one'] },
+  { key: 'mediaplayer', title: 'Mediaplayer & Peripherals', itemType: 'mediaplayer', catMatch: ['mediaplayer', 'peripheral', 'networking', 'chromecast', 'nexmosphere'] },
+  { key: 'bracket', title: 'Bracket & Shroud', itemType: 'bracket', catMatch: ['bracket', 'shroud', 'culpan', 'wall kit'] },
+  { key: 'install', title: 'Configuration / Installation', itemType: 'install', catMatch: ['service'], allowManual: true },
+  { key: 'labour', title: 'Seen Labour', itemType: 'labour', catMatch: ['service', 'consumable', 'spare'], allowManual: true },
+  { key: 'location_fee', title: 'Location Fees', itemType: 'location_fee', catMatch: ['freight', 'rental'], allowManual: true },
+];
+// Common fixed rows from the sheet, offered as quick-add manual templates.
+const LCD_MANUAL_TEMPLATES: Record<string, Array<{ description: string; unitCost: number }>> = {
+  install: [
+    { description: 'Parking', unitCost: 50 },
+    { description: 'Travel', unitCost: 75 },
+    { description: 'Induction', unitCost: 0 },
+    { description: 'Installation, Per hour', unitCost: 95 },
+  ],
+  labour: [
+    { description: 'Consumables', unitCost: 30 },
+    { description: 'Rubbish Allowance', unitCost: 25 },
+  ],
+  location_fee: [
+    { description: 'Other Freight, Packaging and Handling', unitCost: 25 },
+  ],
+};
+
+interface LcdLine { sectionKey: string; itemType: LcdItemType; displayId?: string; description: string; qty: number; unitCost?: number; manual: boolean }
+
 function LcdStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
-  const [displays, setDisplays] = useState<Opt[]>([]);
-  const [displayId, setDisplayId] = useState('');
-  const [qty, setQty] = useState('1');
+  const [catalog, setCatalog] = useState<Opt[]>([]);
+  const [serviceHoursId, setServiceHoursId] = useState('');
+  const [warrantyId, setWarrantyId] = useState('');
+  const [installMethodId, setInstallMethodId] = useState('');
+  const [serviceHours, setServiceHours] = useState<Opt[]>([]);
+  const [warranties, setWarranties] = useState<Opt[]>([]);
+  const [installMethods, setInstallMethods] = useState<Opt[]>([]);
+  const [orientation, setOrientation] = useState('');
+  const [screenName, setScreenName] = useState('');
+  const [lines, setLines] = useState<LcdLine[]>([]);
+  // Per-section draft (catalog pick + qty) and per-section manual draft.
+  const [pick, setPick] = useState<Record<string, string>>({});
+  const [pickQty, setPickQty] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api<{ rows: Opt[] }>('/admin/display-catalog?q=philips&take=100&activeOnly=true').then((r) => setDisplays(r.rows));
+    api<{ rows: Opt[] }>('/admin/display-catalog?take=500&activeOnly=true').then((r) => setCatalog(r.rows));
+    api<{ rows: Opt[] }>('/admin/service-hours?take=200').then((r) => setServiceHours(r.rows));
+    api<{ rows: Opt[] }>('/admin/warranties?take=200').then((r) => setWarranties(r.rows));
+    api<{ rows: Opt[] }>('/admin/install-methods?take=200').then((r) => setInstallMethods(r.rows));
   }, []);
 
-  const add = async () => {
+  const catFor = (def: LcdSectionDef): Opt[] =>
+    catalog.filter((r) => {
+      const c = (r.category ?? '').toLowerCase();
+      return def.catMatch.some((m) => c.includes(m));
+    });
+
+  const ohName = serviceHours.find((x) => x.id === serviceHoursId)?.name;
+  const outOfHours = !!ohName && ohName !== 'Business Hours';
+
+  const addCatalog = (def: LcdSectionDef) => {
+    const id = pick[def.key];
+    if (!id) return;
+    const row = catalog.find((x) => x.id === id);
+    setLines((ls) => [
+      ...ls,
+      { sectionKey: def.key, itemType: def.itemType, displayId: id, description: row?.model ?? '', qty: Number(pickQty[def.key] ?? '1') || 1, manual: false },
+    ]);
+    setPick((p) => ({ ...p, [def.key]: '' }));
+    setPickQty((q) => ({ ...q, [def.key]: '1' }));
+  };
+  const addManual = (def: LcdSectionDef, tpl?: { description: string; unitCost: number }) => {
+    setLines((ls) => [
+      ...ls,
+      { sectionKey: def.key, itemType: def.itemType, description: tpl?.description ?? '', qty: 1, unitCost: tpl?.unitCost ?? 0, manual: true },
+    ]);
+  };
+  const updateLine = (idx: number, patch: Partial<LcdLine>) =>
+    setLines((ls) => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+  const removeLine = (idx: number) => setLines((ls) => ls.filter((_, i) => i !== idx));
+
+  // Live preview totals (server is authoritative; this mirrors the same fixed-margin gross-up).
+  const MARGIN = 0.3; // lcd_margin (Reference Data F12) — display-only preview
+  const sellOf = (l: LcdLine): number => {
+    if (l.manual) return Math.round((l.unitCost ?? 0) / (1 - MARGIN));
+    const row = catalog.find((x) => x.id === l.displayId);
+    const cost = Number(row?.totalCost ?? row?.usd ?? 0);
+    return Math.round(cost / (1 - MARGIN));
+  };
+  const grand = Math.round(lines.reduce((a, l) => a + sellOf(l) * l.qty, 0) / 10) * 10;
+
+  const save = async () => {
     setBusy(true);
-    const d = displays.find((x) => x.id === displayId);
     try {
+      const items = lines.map((l) => ({
+        itemType: l.itemType,
+        displayId: l.manual ? undefined : l.displayId ? Number(l.displayId) : undefined,
+        description: l.description || undefined,
+        qty: l.qty,
+        unitCost: l.manual ? (l.unitCost ?? 0) : undefined,
+      }));
+      const firstDisplay = lines.find((l) => l.itemType === 'display' && l.displayId)?.displayId;
       await api(`/quotes/${quote.id}/lcd-screens`, {
         method: 'POST',
         body: JSON.stringify({
-          screenName: d?.model,
-          displayId: displayId ? Number(displayId) : undefined,
-          items: [{ itemType: 'display', displayId: Number(displayId), qty: Number(qty), unitSell: d?.sell ?? 0 }],
+          screenName: screenName || undefined,
+          orientation: orientation || undefined,
+          displayId: firstDisplay ? Number(firstDisplay) : undefined,
+          serviceHoursId: serviceHoursId ? Number(serviceHoursId) : undefined,
+          warrantyId: warrantyId ? Number(warrantyId) : undefined,
+          installMethodId: installMethodId ? Number(installMethodId) : undefined,
+          items,
         }),
       });
+      setLines([]);
+      setScreenName('');
       await onChange();
     } finally {
       setBusy(false);
@@ -806,24 +913,93 @@ function LcdStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
   return (
     <div>
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Add LCD display</h3>
+        <h3 style={{ marginTop: 0 }}>New LCD screen (LCD-1)</h3>
         <div className="grid3">
+          <div><label>Screen name</label><input value={screenName} onChange={(e) => setScreenName(e.target.value)} placeholder="e.g. Foyer menu board" /></div>
           <div>
-            <label>Display (Philips)</label>
-            <SearchSelect
-              value={displayId}
-              onChange={setDisplayId}
-              allowEmpty
-              placeholder="Search displays…"
-              options={displays.map((d) => ({ value: d.id, label: `${d.model}${d.sell ? ` ($${d.sell})` : ''}` }))}
-            />
+            <label>Orientation</label>
+            <SearchSelect value={orientation} onChange={setOrientation} allowEmpty placeholder="—"
+              options={[{ value: 'L', label: 'Landscape' }, { value: 'P', label: 'Portrait' }]} />
           </div>
-          <div><label>Qty</label><input type="number" value={qty} onChange={(e) => setQty(e.target.value)} /></div>
+          <div>
+            <label>Service hours</label>
+            <SearchSelect value={serviceHoursId} onChange={setServiceHoursId} allowEmpty placeholder="—"
+              options={serviceHours.map((o) => ({ value: o.id, label: o.name ?? o.id }))} />
+          </div>
+          <div>
+            <label>Warranty</label>
+            <SearchSelect value={warrantyId} onChange={setWarrantyId} allowEmpty placeholder="—"
+              options={warranties.map((o) => ({ value: o.id, label: o.name ?? o.id }))} />
+          </div>
+          <div>
+            <label>Install method</label>
+            <SearchSelect value={installMethodId} onChange={setInstallMethodId} allowEmpty placeholder="—"
+              options={installMethods.map((o) => ({ value: o.id, label: o.name ?? o.id }))} />
+          </div>
+        </div>
+        {outOfHours && (
+          <p className="muted" style={{ marginBottom: 0 }}>Out-of-hours service hours selected — an out-of-hours labour uplift will be added on save (F31).</p>
+        )}
+      </div>
+
+      {LCD_SECTIONS.map((def) => {
+        const opts = catFor(def);
+        const secLines = lines.map((l, i) => ({ l, i })).filter(({ l }) => l.sectionKey === def.key);
+        const subtotal = secLines.reduce((a, { l }) => a + sellOf(l) * l.qty, 0);
+        return (
+          <div className="card" key={def.key}>
+            <h3 style={{ marginTop: 0, display: 'flex', justifyContent: 'space-between' }}>
+              <span>{def.title}</span>
+              <span className="muted">{quote.currency?.code} {subtotal.toLocaleString()}</span>
+            </h3>
+            <div className="grid3">
+              <div style={{ gridColumn: 'span 2' }}>
+                <label>Catalog item</label>
+                <SearchSelect value={pick[def.key] ?? ''} onChange={(v) => setPick((p) => ({ ...p, [def.key]: v }))} allowEmpty
+                  placeholder={`Search ${def.title.toLowerCase()}…`}
+                  options={opts.map((d) => ({ value: d.id, label: `${d.model}${d.sell ? ` ($${d.sell})` : ''}` }))} />
+              </div>
+              <div>
+                <label>Qty</label>
+                <input type="number" min="1" value={pickQty[def.key] ?? '1'} onChange={(e) => setPickQty((q) => ({ ...q, [def.key]: e.target.value }))} />
+              </div>
+            </div>
+            <div className="step-actions" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button onClick={() => addCatalog(def)} disabled={!pick[def.key]}>+ Add item</button>
+              {def.allowManual && <button onClick={() => addManual(def)}>+ Manual row</button>}
+              {(LCD_MANUAL_TEMPLATES[def.key] ?? []).map((tpl) => (
+                <button key={tpl.description} onClick={() => addManual(def, tpl)} title={`$${tpl.unitCost} cost`}>+ {tpl.description}</button>
+              ))}
+            </div>
+            {secLines.map(({ l, i }) => (
+              <div className="list-row" key={i} style={{ gap: 8, alignItems: 'center' }}>
+                {l.manual ? (
+                  <>
+                    <input style={{ flex: 1 }} value={l.description} placeholder="Description" onChange={(e) => updateLine(i, { description: e.target.value })} />
+                    <input style={{ width: 90 }} type="number" value={l.unitCost ?? 0} title="Unit cost" onChange={(e) => updateLine(i, { unitCost: Number(e.target.value) })} />
+                  </>
+                ) : (
+                  <span style={{ flex: 1 }}>{l.description}</span>
+                )}
+                <input style={{ width: 64 }} type="number" min="1" value={l.qty} onChange={(e) => updateLine(i, { qty: Number(e.target.value) || 1 })} />
+                <span style={{ width: 100, textAlign: 'right' }}>{quote.currency?.code} {(sellOf(l) * l.qty).toLocaleString()}</span>
+                <button onClick={() => removeLine(i)} aria-label="Remove">✕</button>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+
+      <div className="card">
+        <div className="list-row" style={{ fontWeight: 600 }}>
+          <span>Screen total (at fixed margin, rounded)</span>
+          <span>{quote.currency?.code} {grand.toLocaleString()}</span>
         </div>
         <div className="step-actions">
-          <button className="primary" onClick={add} disabled={busy || !displayId}>+ Add display</button>
+          <button className="primary" onClick={save} disabled={busy || lines.length === 0}>+ Add LCD screen</button>
         </div>
       </div>
+
       <div className="card">
         <h3 style={{ marginTop: 0 }}>LCD screens ({quote.lcdScreens.length})</h3>
         {quote.lcdScreens.length === 0 && <p className="muted">None yet — optional.</p>}

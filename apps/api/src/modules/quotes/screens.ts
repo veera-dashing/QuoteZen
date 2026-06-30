@@ -19,7 +19,7 @@ import { applyMargin, applyMarkup, round } from '@quotezen/shared';
 import type { LcdScreenInput, LedScreenInput } from '@quotezen/shared';
 import { AppError, notFound } from '../../errors.js';
 import { recordAudit } from '../../services/audit.js';
-import { loadPricingContext } from '../../lib/pricing-config.js';
+import { loadPricingConfig, loadPricingContext } from '../../lib/pricing-config.js';
 import { getQuote } from './service.js';
 
 const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toString() : '0');
@@ -499,10 +499,107 @@ export const setLedScreenQty = async (userId: bigint, quoteId: bigint, screenId:
   });
 };
 
-/** Add an LCD screen as a set of qty-priced line items (display + brackets + install). */
+/**
+ * Price and persist an LCD screen as the LCD-1 questionnaire — a set of qty-priced line items
+ * across the sheet's sections (Display, Mediaplayer & Peripherals, Bracket & Shroud,
+ * Configuration/Installation, Seen Labour, Location Fees). Faithful to the workbook:
+ *
+ * - **Catalog items** (rows carrying `displayId`) resolve their cost+sell SERVER-SIDE from
+ *   `display_catalog` (authoritative point-in-time snapshot), never trusting client-sent prices.
+ *   Cost = `total_cost` (LCDRef col 8); manual/fixed rows (no `displayId`) use the client-sent
+ *   `unitCost`/`unitSell` (e.g. Parking 50, Travel 75).
+ * - **Fixed margin** (Reference Data F12 = `lcd_margin`): the workbook derives the screen total as
+ *   `G54 = ROUND(totalCost/(1−margin), -1)`. We push that margin down to each line so the per-item
+ *   `unitSell = round(cost/(1−margin))` and `priceTotal = round(Σ extendedSell, -1)` — i.e. the sum
+ *   of line sells equals the grossed-up total, so the quote rollup (which sums line sells) and this
+ *   total never drift. A manual row that already carries a `unitSell` keeps it (an explicit price);
+ *   otherwise sell is computed from cost.
+ * - **Out-of-hours uplift (F31):** when Service Hours ≠ "Business Hours", an uplift is added on the
+ *   install+labour COST subtotal (config-driven `out_of_hours_uplift_pct`; see seed note) and
+ *   grossed up by the same margin.
+ *
+ * Subtotals are persisted into `priceScreenMediaplayer` (display+mediaplayer sells),
+ * `priceBracketShroud` (bracket sells) and `priceServices` (install+labour+location sells).
+ */
 export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdScreenInput) => {
   await getQuote(quoteId);
-  const totalSell = input.items.reduce((acc, i) => acc + Number(i.unitSell ?? 0) * Number(i.qty ?? 1), 0);
+  const config = await loadPricingConfig();
+  const margin = config.markups.lcdMargin;
+
+  // Out-of-hours? Service Hours is a lookup; the workbook keys off the literal "Business Hours".
+  const serviceHours = input.serviceHoursId
+    ? await prisma.serviceHoursOption.findUnique({ where: { id: BigInt(input.serviceHoursId) } })
+    : null;
+  const outOfHours = !!serviceHours && serviceHours.name !== 'Business Hours';
+  const upliftSetting = await prisma.setting.findUnique({ where: { key: 'out_of_hours_uplift_pct' } });
+  const upliftPct = upliftSetting ? Number(upliftSetting.value) : 0;
+
+  // Resolve every line's authoritative cost; catalog rows win over client-sent prices.
+  type Resolved = {
+    displayId?: bigint;
+    itemType: LcdScreenInput['items'][number]['itemType'];
+    description: string | null;
+    qty: number;
+    unitCost: number;
+    unitSell: number; // per-unit
+  };
+  const resolved: Resolved[] = [];
+  for (const i of input.items) {
+    const qty = Number(i.qty ?? 1);
+    let cost = Number(i.unitCost ?? 0);
+    let sell: number | null = i.unitSell !== undefined ? Number(i.unitSell) : null;
+    let description = i.description ?? null;
+    if (i.displayId) {
+      const row = await prisma.displayCatalog.findUnique({ where: { id: BigInt(i.displayId) } });
+      if (row) {
+        // Authoritative snapshot: cost = total_cost (LCDRef col 8); catalog sell is ignored in favour
+        // of the fixed-margin gross-up so the line sell stays consistent with the screen total.
+        cost = Number(row.totalCost ?? row.usd ?? 0);
+        sell = null; // recompute from margin below
+        if (!description) description = row.model;
+      }
+    }
+    // Sell: explicit manual price kept; otherwise gross cost up by the fixed margin (G54 per-line).
+    const unitSell = sell !== null ? sell : round(applyMargin(cost, margin)).toNumber();
+    resolved.push({
+      displayId: i.displayId ? BigInt(i.displayId) : undefined,
+      itemType: i.itemType,
+      description,
+      qty,
+      unitCost: round(cost).toNumber(),
+      unitSell: round(unitSell).toNumber(),
+    });
+  }
+
+  // Out-of-hours uplift: a synthetic services line on the install+labour COST subtotal (F31).
+  if (outOfHours && upliftPct > 0) {
+    const labourCost = resolved
+      .filter((r) => r.itemType === 'install' || r.itemType === 'labour')
+      .reduce((acc, r) => acc + r.unitCost * r.qty, 0);
+    const upliftCost = round(labourCost * upliftPct).toNumber();
+    if (upliftCost > 0) {
+      resolved.push({
+        itemType: 'install',
+        description: `Out of Hours uplift (${Math.round(upliftPct * 100)}%)`,
+        qty: 1,
+        unitCost: upliftCost,
+        unitSell: round(applyMargin(upliftCost, margin)).toNumber(),
+      });
+    }
+  }
+
+  // Section subtotals (sell) into the dedicated columns.
+  const ext = (r: Resolved) => r.unitSell * r.qty;
+  const sumWhere = (pred: (r: Resolved) => boolean) =>
+    round(resolved.filter(pred).reduce((a, r) => a + ext(r), 0)).toNumber();
+  const priceScreenMediaplayer = sumWhere((r) => r.itemType === 'display' || r.itemType === 'mediaplayer');
+  const priceBracketShroud = sumWhere((r) => r.itemType === 'bracket');
+  const priceServices = sumWhere(
+    (r) => r.itemType === 'install' || r.itemType === 'labour' || r.itemType === 'location_fee',
+  );
+  // Screen total: workbook G54 — total grossed-up sell rounded to the nearest $10 (ROUND(…, -1)).
+  const totalSell = resolved.reduce((a, r) => a + ext(r), 0);
+  const priceTotal = round(round(totalSell / 10, 0).toNumber() * 10).toNumber();
 
   return prisma.$transaction(async (tx) => {
     const maxOrder = await tx.quoteLcdScreen.aggregate({ where: { quoteId }, _max: { sortOrder: true } });
@@ -516,21 +613,31 @@ export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdSc
         installMethodId: input.installMethodId ? BigInt(input.installMethodId) : null,
         serviceHoursId: input.serviceHoursId ? BigInt(input.serviceHoursId) : null,
         warrantyId: input.warrantyId ? BigInt(input.warrantyId) : null,
-        priceTotal: round(totalSell).toString(),
+        priceScreenMediaplayer: priceScreenMediaplayer.toString(),
+        priceBracketShroud: priceBracketShroud.toString(),
+        priceServices: priceServices.toString(),
+        priceTotal: priceTotal.toString(),
         items: {
-          create: input.items.map((i) => ({
-            displayId: i.displayId ? BigInt(i.displayId) : null,
-            itemType: i.itemType,
-            description: i.description ?? null,
-            qty: i.qty ?? 1,
-            unitCost: i.unitCost ?? null,
-            unitSell: i.unitSell ?? null,
+          create: resolved.map((r) => ({
+            displayId: r.displayId ?? null,
+            itemType: r.itemType,
+            description: r.description,
+            qty: r.qty,
+            unitCost: r.unitCost.toString(),
+            unitSell: r.unitSell.toString(),
           })),
         },
       },
       include: { items: true },
     });
-    await recordAudit(tx, { quoteId, userId, action: 'create', entityTable: 'quote_lcd_screens', entityId: screen.id });
+    await recordAudit(tx, {
+      quoteId,
+      userId,
+      action: 'create',
+      entityTable: 'quote_lcd_screens',
+      entityId: screen.id,
+      changes: [{ field: 'price_total', oldValue: null, newValue: screen.priceTotal?.toString() ?? null }],
+    });
     return screen;
   });
 };

@@ -345,6 +345,93 @@ describe('per-screen input fields round-trip (S0)', () => {
   });
 });
 
+describe('LCD-1 faithful pricing (S2)', () => {
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const sellAtMargin = (cost: number) => round2(cost / (1 - 0.3)); // lcd_margin = 0.3 (F12)
+
+  it('prices catalog + manual items at fixed margin, applies out-of-hours uplift, persists subtotals', async () => {
+    // A catalog display with a known total_cost so we can assert the server-resolved (authoritative) price.
+    const display = await prisma.displayCatalog.findFirst({ where: { deprecated: false, totalCost: { not: null } } });
+    expect(display).toBeTruthy();
+    const displayCost = Number(display!.totalCost);
+
+    const outOfHours = await prisma.serviceHoursOption.findFirst({ where: { name: { not: 'Business Hours' } } });
+    expect(outOfHours).toBeTruthy();
+    const uplift = await prisma.setting.findUnique({ where: { key: 'out_of_hours_uplift_pct' } });
+    const upliftPct = uplift ? Number(uplift.value) : 0.25;
+
+    const created = await app.inject({
+      method: 'POST', url: '/quotes', headers: auth(),
+      payload: { jobReference: `${JOB_PREFIX}lcdprice-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const quoteId = created.json().id as string;
+
+    // display (catalog) + a manual install row ($95 cost) + a manual labour row ($30) → out-of-hours uplift.
+    const lcd = await app.inject({
+      method: 'POST', url: `/quotes/${quoteId}/lcd-screens`, headers: auth(),
+      payload: {
+        screenName: 'LCD priced', orientation: 'L',
+        serviceHoursId: Number(outOfHours!.id),
+        items: [
+          { itemType: 'display', displayId: Number(display!.id), qty: 2 },
+          { itemType: 'install', description: 'Installation, Per hour', qty: 1, unitCost: 95 },
+          { itemType: 'labour', description: 'Consumables', qty: 1, unitCost: 30 },
+        ],
+      },
+    });
+    expect(lcd.statusCode).toBe(201);
+    const screen = lcd.json() as {
+      items: Array<{ itemType: string; displayId: string | null; unitCost: string; unitSell: string; description: string | null }>;
+      priceScreenMediaplayer: string; priceBracketShroud: string; priceServices: string; priceTotal: string;
+    };
+
+    // Catalog price is resolved server-side (ignores client-sent prices) at the fixed margin.
+    const displayItem = screen.items.find((i) => i.itemType === 'display')!;
+    expect(Number(displayItem.unitCost)).toBe(round2(displayCost));
+    expect(Number(displayItem.unitSell)).toBe(sellAtMargin(displayCost));
+
+    // Manual rows keep their cost; sell = cost grossed up by the margin.
+    const installItem = screen.items.find((i) => i.itemType === 'install' && i.description === 'Installation, Per hour')!;
+    expect(Number(installItem.unitCost)).toBe(95);
+    expect(Number(installItem.unitSell)).toBe(sellAtMargin(95));
+
+    // Out-of-hours uplift line: on the install+labour COST subtotal (95 + 30 = 125), grossed up.
+    const upliftCost = round2((95 + 30) * upliftPct);
+    const upliftItem = screen.items.find((i) => i.description?.startsWith('Out of Hours uplift'));
+    expect(upliftItem).toBeTruthy();
+    expect(Number(upliftItem!.unitCost)).toBe(upliftCost);
+    expect(Number(upliftItem!.unitSell)).toBe(sellAtMargin(upliftCost));
+
+    // Section subtotals + grand total (G54: rounded to nearest 10).
+    const expectScreenMp = sellAtMargin(displayCost) * 2;
+    expect(Number(screen.priceScreenMediaplayer)).toBeCloseTo(expectScreenMp, 2);
+    expect(Number(screen.priceBracketShroud)).toBe(0);
+    const expectServices = sellAtMargin(95) + sellAtMargin(30) + sellAtMargin(upliftCost);
+    expect(Number(screen.priceServices)).toBeCloseTo(expectServices, 2);
+    const expectTotal = Math.round((expectScreenMp + expectServices) / 10) * 10;
+    expect(Number(screen.priceTotal)).toBe(expectTotal);
+  });
+
+  it('does NOT add an out-of-hours uplift for Business Hours', async () => {
+    const businessHours = await prisma.serviceHoursOption.findFirst({ where: { name: 'Business Hours' } });
+    const created = await app.inject({
+      method: 'POST', url: '/quotes', headers: auth(),
+      payload: { jobReference: `${JOB_PREFIX}lcdbh-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const quoteId = created.json().id as string;
+    const lcd = await app.inject({
+      method: 'POST', url: `/quotes/${quoteId}/lcd-screens`, headers: auth(),
+      payload: {
+        screenName: 'LCD BH', serviceHoursId: businessHours ? Number(businessHours.id) : undefined,
+        items: [{ itemType: 'install', description: 'Installation, Per hour', qty: 1, unitCost: 95 }],
+      },
+    });
+    expect(lcd.statusCode).toBe(201);
+    const items = (lcd.json() as { items: Array<{ description: string | null }> }).items;
+    expect(items.some((i) => i.description?.startsWith('Out of Hours uplift'))).toBe(false);
+  });
+});
+
 describe('quote wizard backend', () => {
   it('prices an LED screen from a real product and rolls it into the quote total', async () => {
     // a product with the specs needed to price (cabinet dims, pitch, cost/sqm)

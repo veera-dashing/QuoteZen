@@ -42,6 +42,10 @@ const SETTINGS: Array<{ key: string; label: string; value: number; unit: string 
   { key: 'packaging_pct', label: 'Packaging %', value: 0, unit: 'fraction' },
   { key: 'receiver_card_cost', label: 'Receiver Card Cost (per cabinet)', value: 0, unit: '$' },
   { key: 'margin_floor', label: 'Margin Floor', value: 0.2, unit: 'fraction' },
+  // LCD-1 F31: out-of-hours labour uplift applied to install/labour cost when Service Hours ≠
+  // "Business Hours". The workbook derives it from install-hours (SUM(K28:K29)); that hours math is
+  // not fully recoverable here, so a config-driven % on the install/labour cost subtotal is used.
+  { key: 'out_of_hours_uplift_pct', label: 'Out-of-Hours Labour Uplift %', value: 0.25, unit: 'fraction' },
 ];
 
 const SEAFREIGHT: Array<{ label: string; value: number; currency?: string }> = [
