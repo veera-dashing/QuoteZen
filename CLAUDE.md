@@ -313,6 +313,29 @@ Phase-2 AI, which stay deferred), orchestrated as one subagent per feature. Full
 --to-schema-datamodel … --script` → `prisma migrate deploy`, since the RDS user has no shadow-DB
 permission) and `prisma migrate status` is clean.
 
+### Block 8 — full LED/LCD screen inputs from the source workbook (`(LED 1)` / `(LCD 1)`)
+Brought the per-screen input flow up to the `2026-XXX Quote Base V1.3` questionnaires (extracted spec in
+the workbook's `(LED 1)`/`(LCD 1)` sheets). Most fields were already modelled (the DB was built from this
+workbook); this exposed the rest in the wizard + added the input-time rules. 146 tests green.
+- ✅ **S0 — schema + backend** — migration `screen_input_fields`: `quote_led_screens` gains
+  `orientation`, `aspect_ratio_id` (FK screen_ratios), `back_cover`, `frame_note`,
+  `service_description_suffix`; `quote_lcd_screens` gains `orientation`. `ORIENTATIONS` enum;
+  `ledScreenSchema`/`lcdScreenSchema` + `addLedScreen`/`duplicateLedScreen`/`addLcdScreen` persist them.
+- ✅ **S1 — LED full input form** — Orientation + Aspect-Ratio selectors with the workbook auto-dimension
+  calc (long axis follows orientation, other axis derived from `ratioLabel`, editable); **component
+  pickers** (controller / mediaplayer / LED-peripheral / mediaplayer-peripheral → catalog → qty, mapped to
+  `ledComponentSchema`); Back Cover + frame/service notes. Threaded into both add paths; LED rules (GOB<2.5,
+  outdoor deps, controller↔pixels, cut-cabinet, volumetric freight) already enforced by the validation/
+  config/calc engines.
+- ✅ **S2 — LCD full-fidelity form + pricing** — `LcdStep` reproduces the LCD-1 sheet: orientation/service-
+  hours/warranty/install selectors + 6 sections (Display · Mediaplayer & Peripherals · Bracket & Shroud ·
+  Configuration/Installation · Seen Labour · Location Fees) with category-filtered catalog pickers, manual
+  rows + templates (parking $50, travel $75, induction, per-hour), per-section subtotals + live total.
+  `addLcdScreen` resolves catalog cost server-side (snapshot), applies the fixed `lcd_margin` gross-up per
+  line (Σ line sells == `priceTotal`, rounded to $10), and adds an **out-of-hours uplift** line when service
+  hours ≠ "Business Hours" (`out_of_hours_uplift_pct` setting, default 25% — documented assumption since the
+  sheet's exact hours-math isn't recoverable); persists screen/bracket/services subtotals; audited.
+
 **Still backlogged (deferred by decision / needs infra):** Google OAuth (P1-02) + Zoho (P1-19a/b/c) and
 all Phase-2 AI (P2-*) — deferred by decision; real S3 + AV scanning for uploads (the prototype uses
 local disk); full Terraform/Docker/CD (CI is lightweight only).
