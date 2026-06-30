@@ -595,6 +595,17 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
     }
   };
 
+  // Selecting a Configure / Good-Better-Best option fills the mandatory Product form below
+  // (product + rotation) — it does NOT add the screen yet. Width/height stay the entered opening;
+  // the rest of the form then attaches to this product before finalising.
+  const selectProduct = (chosenProductId: string, rotated: boolean) => {
+    setProductId(chosenProductId);
+    setRotate(rotated);
+    setErr(null);
+    setOptions(null);
+    setTiers(null);
+  };
+
   // Required-field gating (P1-12.3): the essentials before "+ Add & price".
   const missing: string[] = [];
   if (!productId) missing.push('LED product');
@@ -686,8 +697,8 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
                         )}
                       </tbody>
                     </table>
-                    <button className="primary" onClick={() => addScreen(t.productId, t.rotated)} disabled={busy} style={{ width: '100%' }}>
-                      Use this option
+                    <button className="primary" onClick={() => selectProduct(t.productId, t.rotated)} disabled={busy} style={{ width: '100%' }}>
+                      Select this option
                     </button>
                   </div>
                 ))}
@@ -742,8 +753,8 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
                       <td className="cell-num">{o.cabinetCount}</td>
                       <td>{o.cutCabinetSuggested ? '⚠️' : '—'}</td>
                       <td className="actions">
-                        <button className="primary" onClick={() => addScreen(o.productId, o.rotated)} disabled={busy}>
-                          Use
+                        <button className="primary" onClick={() => selectProduct(o.productId, o.rotated)} disabled={busy}>
+                          Select
                         </button>
                       </td>
                     </tr>
@@ -756,8 +767,8 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
       )}
 
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>…or add a specific product</h3>
-        <p className="muted">Width, height and rotation come from “Configure from opening” above; pick the product and any options below.</p>
+        <h3 style={{ marginTop: 0 }}>Product <span className="muted" style={{ fontWeight: 400, fontSize: 13 }}>· required</span></h3>
+        <p className="muted">The product you selected from the options above appears here — or choose one directly. Width, height and rotation come from “Configure from opening” above; the rest of the form below attaches to this product to build the screen.</p>
         <div className="grid3">
           <div>
             <label style={!productId ? { color: 'var(--danger, #dc2626)' } : undefined}>Product *</label>
