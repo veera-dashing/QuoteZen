@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { api, ApiError, downloadFile, getRole } from '@/lib/api';
+import { api, ApiError, downloadFile, getRole, uploadFile } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
 
 interface Opt { id: string; name?: string; model?: string; sell?: string | null; category?: string; code?: string }
@@ -18,6 +18,7 @@ interface Quote {
   viewers?: Array<{ user: { id: string; name: string; email: string } }>;
 }
 interface Audit { id: string; action: string; fieldName: string | null; oldValue: string | null; newValue: string | null; changedAt: string; user?: { name: string } }
+interface QuoteDoc { id: string; originalName: string; mimeType: string; sizeBytes: number; version: number; uploadedBy: { id: string; name: string } | null; createdAt: string }
 
 const STEPS = ['Details', 'LED screens', 'LCD screens', 'Licences', 'Review'] as const;
 
@@ -782,6 +783,14 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const [termsSaved, setTermsSaved] = useState(false);
   const [termsError, setTermsError] = useState<string | null>(null);
 
+  // Per-job documents + re-run (P1-19e).
+  const [docs, setDocs] = useState<QuoteDoc[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [docError, setDocError] = useState<string | null>(null);
+  const [rerunning, setRerunning] = useState(false);
+  const [rerunNote, setRerunNote] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const loadTerms = useCallback(() => {
     api<Array<{ kind: 'assumption' | 'exclusion' | 'term'; text: string }>>(`/quotes/${quote.id}/terms`)
       .then((rows) => {
@@ -892,13 +901,67 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const loadValidation = useCallback(() => {
     api<QuoteValidation>(`/quotes/${quote.id}/validate`).then(setValidation).catch(() => setValidation(null));
   }, [quote.id]);
+  const loadDocs = useCallback(() => {
+    api<QuoteDoc[]>(`/quotes/${quote.id}/documents`).then(setDocs).catch(() => setDocs([]));
+  }, [quote.id]);
 
   useEffect(() => {
     loadAudit();
     loadVersions();
     loadValidation();
     loadTerms();
-  }, [loadAudit, loadVersions, loadValidation, loadTerms]);
+    loadDocs();
+  }, [loadAudit, loadVersions, loadValidation, loadTerms, loadDocs]);
+
+  const uploadDoc = async (file: File) => {
+    setUploading(true);
+    setDocError(null);
+    try {
+      await uploadFile<QuoteDoc>(`/quotes/${quote.id}/documents`, file);
+      loadDocs();
+      loadAudit();
+    } catch (e) {
+      setDocError(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const deleteDoc = async (docId: string) => {
+    if (!window.confirm('Delete this document? This cannot be undone.')) return;
+    setDocError(null);
+    try {
+      await api(`/quotes/${quote.id}/documents/${docId}`, { method: 'DELETE' });
+      loadDocs();
+      loadAudit();
+    } catch (e) {
+      setDocError(e instanceof Error ? e.message : 'Delete failed');
+    }
+  };
+
+  const rerun = async () => {
+    setRerunning(true);
+    setRerunNote(null);
+    try {
+      const v = await api<Version>(`/quotes/${quote.id}/rerun`, { method: 'POST' });
+      setRerunNote(`Re-ran — saved v${v.revisionNo}${v.label ? `: ${v.label}` : ''}`);
+      await onChange();
+      loadVersions();
+      loadAudit();
+      loadValidation();
+    } catch (e) {
+      setRerunNote(e instanceof Error ? e.message : 'Re-run failed');
+    } finally {
+      setRerunning(false);
+    }
+  };
+
+  const fmtBytes = (n: number): string => {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   const saveVersion = async () => {
     await api(`/quotes/${quote.id}/versions`, { method: 'POST', body: JSON.stringify({ label: `Saved ${new Date().toLocaleString()}` }) });
@@ -1177,6 +1240,73 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
           <pre style={{ marginTop: 14, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, overflowX: 'auto', fontSize: 12 }}>
             {JSON.stringify(summary, null, 2)}
           </pre>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="topbar">
+          <h3 style={{ margin: 0 }}>Files &amp; re-run</h3>
+          {canWrite && (
+            <button className="primary" onClick={rerun} disabled={rerunning}>
+              {rerunning ? 'Re-running…' : '↻ Re-run'}
+            </button>
+          )}
+        </div>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Attach supporting files (briefs, drawings, emails…) to this job. Re-run recomputes the quote
+          from its current inputs and saves a new version with a change summary (P1-19e).
+        </p>
+        {canWrite && (
+          <div className="row-actions" style={{ alignItems: 'center' }}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              disabled={uploading}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void uploadDoc(f);
+              }}
+            />
+            {uploading && <span className="muted">Uploading…</span>}
+          </div>
+        )}
+        {docError && <div className="error" style={{ marginTop: 10 }}>{docError}</div>}
+        {rerunNote && <div className="muted" style={{ marginTop: 10 }}>{rerunNote}</div>}
+        {docs.length === 0 ? (
+          <p className="muted" style={{ marginTop: 12 }}>No files uploaded yet.</p>
+        ) : (
+          <div className="table-wrap" style={{ marginTop: 12 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th><th className="cell-num">Version</th><th className="cell-num">Size</th>
+                  <th>Uploaded by</th><th>When</th><th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {docs.map((d) => (
+                  <tr key={d.id}>
+                    <td>{d.originalName}</td>
+                    <td className="cell-num">v{d.version}</td>
+                    <td className="cell-num">{fmtBytes(d.sizeBytes)}</td>
+                    <td className="muted">{d.uploadedBy?.name ?? '—'}</td>
+                    <td className="muted">{new Date(d.createdAt).toLocaleString()}</td>
+                    <td className="actions">
+                      <button
+                        className="ghost"
+                        onClick={() => downloadFile(`/quotes/${quote.id}/documents/${d.id}/download`, d.originalName)}
+                      >
+                        ⬇ Download
+                      </button>
+                      {canWrite && (
+                        <button className="danger" onClick={() => deleteDoc(d.id)}>Delete</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

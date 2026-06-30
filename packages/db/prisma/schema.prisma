@@ -90,6 +90,7 @@ model User {
   createdQuotes Quote[]         @relation("QuoteCreatedBy")
   updatedQuotes Quote[]         @relation("QuoteUpdatedBy")
   overrides     QuoteOverride[] @relation("QuoteOverrideCreatedBy")
+  documents     QuoteDocument[] @relation("QuoteDocumentUploadedBy")
 
   @@map("users")
 }
@@ -684,10 +685,34 @@ model Quote {
   auditLogs          QuoteAuditLog[]
   revisions          QuoteRevision[]
   overrides          QuoteOverride[]
+  documents          QuoteDocument[]
 
   @@index([clientId])
   @@index([status])
   @@map("quotes")
+}
+
+/**
+ * Per-job uploaded file (P1-19e). Bytes live on local disk under `storedName` (a generated,
+ * collision-free name); this row is the metadata + version record. Re-uploading the same
+ * `originalName` on a quote increments `version` — earlier versions are preserved.
+ */
+model QuoteDocument {
+  id           BigInt   @id @default(autoincrement())
+  quoteId      BigInt   @map("quote_id")
+  originalName String   @map("original_name")
+  storedName   String   @map("stored_name")
+  mimeType     String   @map("mime_type")
+  sizeBytes    Int      @map("size_bytes")
+  version      Int      @default(1)
+  uploadedById BigInt   @map("uploaded_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  quote      Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  uploadedBy User  @relation("QuoteDocumentUploadedBy", fields: [uploadedById], references: [id])
+
+  @@index([quoteId])
+  @@map("quote_documents")
 }
 
 /**

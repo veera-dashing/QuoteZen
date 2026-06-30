@@ -1,4 +1,12 @@
+import { resolve } from 'node:path';
 import { z } from 'zod';
+
+/**
+ * Default upload directory: `<repoRoot>/.uploads`. The API process runs from `apps/api`, so the repo
+ * root is two levels up. Stored OUTSIDE any webroot (this is a backend) and gitignored — files are
+ * never executed or committed. Override with the UPLOAD_DIR env var.
+ */
+const DEFAULT_UPLOAD_DIR = resolve(process.cwd(), '../../.uploads');
 
 /** Validated runtime configuration. Fails fast at boot if the environment is misconfigured. */
 const configSchema = z.object({
@@ -7,6 +15,8 @@ const configSchema = z.object({
   DATABASE_URL: z.string().min(1),
   JWT_SECRET: z.string().min(8),
   JWT_EXPIRES_IN: z.string().default('12h'),
+  /** Per-job document storage (P1-19e). Absolute path; created on boot if missing. */
+  UPLOAD_DIR: z.string().min(1).default(DEFAULT_UPLOAD_DIR),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

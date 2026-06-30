@@ -1,7 +1,9 @@
 import './lib/json.js'; // installs BigInt JSON serialisation (side-effect import)
+import { mkdir } from 'node:fs/promises';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import { ZodError } from 'zod';
 import type { AppConfig } from './config.js';
 import { AppError } from './errors.js';
@@ -21,6 +23,12 @@ export const buildApp = async (config: AppConfig): Promise<FastifyInstance> => {
   });
 
   await app.register(cors, { origin: true });
+
+  // Per-job document uploads (P1-19e). 25 MB cap per file; the route validates mime + size itself.
+  await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+
+  // Ensure the upload directory exists before any request can write to it.
+  await mkdir(config.UPLOAD_DIR, { recursive: true });
 
   // Accept an empty body on application/json requests (e.g. POST /recompute with no payload),
   // instead of Fastify's default 400 "Body cannot be empty".
@@ -68,7 +76,7 @@ export const buildApp = async (config: AppConfig): Promise<FastifyInstance> => {
   await app.register(healthRoutes);
   await app.register(authRoutes);
   await app.register(catalogRoutes);
-  await app.register(quoteRoutes);
+  await app.register(quoteRoutes, { config });
   await app.register(adminRoutes);
   await app.register(userRoutes);
   await app.register(ruleRoutes);

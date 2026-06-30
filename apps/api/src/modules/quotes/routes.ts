@@ -1,5 +1,9 @@
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
+import type { AppConfig } from '../../config.js';
+import { AppError } from '../../errors.js';
 import {
   changeStatusSchema,
   createQuoteSchema,
@@ -61,8 +65,10 @@ import {
   diffVersions,
   getVersionSnapshot,
   listVersions,
+  rerunQuote,
   rollbackToVersion,
 } from './versioning.js';
+import { deleteDocument, getDocumentFile, listDocuments, saveDocument } from './documents.js';
 
 const revParam = z.object({ id: z.coerce.bigint(), rev: z.coerce.number().int().positive() });
 const diffQuery = z.object({ a: z.coerce.number().int().positive(), b: z.coerce.number().int().positive() });
@@ -75,7 +81,11 @@ const configureSchema = z.object({
 
 const idParam = z.object({ id: z.coerce.bigint() });
 
-export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
+export const quoteRoutes = async (
+  app: FastifyInstance,
+  opts: { config: AppConfig },
+): Promise<void> => {
+  const uploadDir = opts.config.UPLOAD_DIR;
   const auth = { preHandler: [app.authenticate] };
   // Mutations require a writer role; `viewer` is read-only (P1-19g.1 RBAC).
   const write = { preHandler: [app.requireRole('admin', 'sales')] };
@@ -341,5 +351,56 @@ export const quoteRoutes = async (app: FastifyInstance): Promise<void> => {
     const input = parse(quoteLicenceSchema, request.body);
     const licence = await addLicence(userId(request), id, input);
     return reply.code(201).send(licence);
+  });
+
+  // ── Per-job documents + deterministic re-run (P1-19e) ──
+  // Upload a file (multipart). Writers only; ownership enforced. Stored on local disk under a
+  // generated name; mime/size validated; re-uploading the same name bumps the version.
+  app.post('/quotes/:id/documents', write, async (request, reply) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const file = await request.file();
+    if (!file) throw new AppError('bad_request', 'No file provided in the multipart request');
+    const doc = await saveDocument(actor(request), id, file, uploadDir);
+    return reply.code(201).send(doc);
+  });
+
+  app.get('/quotes/:id/documents', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return listDocuments(id);
+  });
+
+  // Download a stored document. Auth + ownership is the access gate (prototype signed-URL equivalent).
+  app.get('/quotes/:id/documents/:docId/download', auth, async (request, reply) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { docId } = parse(z.object({ docId: z.coerce.bigint() }), request.params);
+    const doc = await getDocumentFile(id, docId, uploadDir);
+    try {
+      await stat(doc.path);
+    } catch {
+      throw new AppError('not_found', 'Stored file is missing on disk');
+    }
+    return reply
+      .header('content-type', doc.mimeType)
+      .header('content-disposition', `attachment; filename="${doc.originalName.replace(/"/g, '')}"`)
+      .send(createReadStream(doc.path));
+  });
+
+  app.delete('/quotes/:id/documents/:docId', write, async (request, reply) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { docId } = parse(z.object({ docId: z.coerce.bigint() }), request.params);
+    await deleteDocument(actor(request), id, docId, uploadDir);
+    return reply.code(204).send();
+  });
+
+  // Deterministic re-run (P1-19e.2): recompute + capture a new version with a change summary.
+  app.post('/quotes/:id/rerun', write, async (request, reply) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const version = await rerunQuote(actor(request), id);
+    return reply.code(201).send(version);
   });
 };

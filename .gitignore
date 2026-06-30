@@ -20,6 +20,9 @@ coverage/
 # Prisma
 packages/db/prisma/*.db
 
+# Uploaded job documents (P1-19e) — stored on local disk, never committed
+.uploads/
+
 # Editor / OS
 .DS_Store
 .idea/

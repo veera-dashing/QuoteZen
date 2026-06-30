@@ -83,6 +83,20 @@ export const createVersion = async (
   });
 };
 
+/**
+ * Deterministic "re-run after new info" (P1-19e.2): recompute the quote from its current persisted
+ * state, then capture a new immutable version whose label is a short before→after change summary.
+ * AI pre-fill is explicitly out of scope — this is the deterministic recompute path.
+ */
+export const rerunQuote = async (actor: Actor, quoteId: bigint) => {
+  const before = await getQuote(quoteId);
+  const oldTotal = before.grandTotal.toString();
+  const recomputed = await recomputeQuote(actor.id, quoteId);
+  const newTotal = recomputed.grandTotal.toString();
+  const label = `Re-run — grand total ${oldTotal} -> ${newTotal}`;
+  return createVersion(actor, quoteId, label);
+};
+
 export const listVersions = async (quoteId: bigint) => {
   await getQuote(quoteId);
   return prisma.quoteRevision.findMany({

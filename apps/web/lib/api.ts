@@ -86,6 +86,32 @@ export async function api<T = unknown>(
   return body as T;
 }
 
+/**
+ * Upload a single file via multipart/form-data to an authenticated endpoint (P1-19e).
+ * The browser sets the multipart Content-Type (with boundary) automatically — do NOT set it here.
+ */
+export async function uploadFile<T = unknown>(path: string, file: File): Promise<T> {
+  const token = getToken();
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (res.status === 401 && typeof window !== 'undefined') {
+    clearToken();
+    if (!window.location.pathname.startsWith('/login')) window.location.href = '/login';
+    throw new ApiError(401, 'unauthorized', 'Session expired');
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const err = body?.error ?? {};
+    throw new ApiError(res.status, err.code ?? 'error', err.message ?? 'Upload failed', err.details);
+  }
+  return body as T;
+}
+
 /** Fetch an authenticated binary endpoint and trigger a browser download. */
 export const downloadFile = async (path: string, filename: string): Promise<void> => {
   const token = getToken();
