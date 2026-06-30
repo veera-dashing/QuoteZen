@@ -367,6 +367,33 @@ Built the four remaining **deterministic** gaps (AI/Zoho stay deferred). 160 tes
   `ratioGuidance` (preferred order 16:9,2:1,3:1,5:4,1:1,9:16 — non-blocking). Configure table shows a
   colour-coded Sizing column + ⚠ ratio-guidance flag.
 
+### Block 10 — workshop manual-process refinements (PI, Select Screens, manufacturer priority, discount)
+From the `Workshop 1` manual process + estimator MVP notes. Decisions (confirmed): size-tolerance bands,
+quote-level PI on the first screen, a new Manufacturers table, override+floor-enforced client discount.
+173 tests green (9 shared + 82 calc + 82 api). Built as 4 sequential subagents (U0→U2→U3→U1):
+- ✅ **U0 — foundation** — migrations: `manufacturers` (name/priority/leadTimeDays) + `led_products.
+  manufacturer_id` (seeded LEDFul p1/45d, ZonePro p2/60d, Muxwave p3/60d; 177 products backfilled);
+  `clients.discount_pct` + `quotes.discount_pct`/`site_address`/`project_notes`; `settings.value_text`
+  (for non-numeric settings). `default_client_discount_pct` applied on client create; `size_tolerance_bands`
+  seeded `5,10,25`. `PATCH /quotes/:id/led-screens/:screenId` (`updateLedScreen` → shared
+  `computeLedScreenPricing` re-price) powers the LED two-form. Manufacturers admin CRUD.
+- ✅ **U2 — manufacturer ordering + lead time + size bands** — `configureScreen` sorts by
+  `manufacturerPriority` first (lower=preferred), best-fit within; `ConfigOption` gains
+  `manufacturerName`/`leadTimeDays`. `configureForQuote` reads `size_tolerance_bands`, annotates each
+  option's `toleranceBand` (smallest band ≥ |sizeDeltaPct|) and **excludes over-band options** (counted in
+  `reasons`). Options + good/better/best tiers carry manufacturer/lead-time/band.
+- ✅ **U3 — client discount pricing** — `resolveDiscount` precedence quote→client→`default_client_discount_pct`;
+  applied to the one-off (equipment+services) sell base in `computeQuoteTotals` (recurring excluded);
+  `computeMargin` discounts the sell so the **below-floor finalisation guardrail auto-fires** (non-admin 403,
+  admin override audited) — no guardrail duplication. `/price` returns `discount {pct,source,amount}` +
+  discount-aware margin (admin-gated); `/rules/client/:id/effective` shows client vs system discount.
+- ✅ **U1 — wizard restructure** — `STEPS = Details · Select Screens · Licences · Review`. Details has a
+  **Project information** block (requested shipping date, site address, project notes, quote-level discount
+  override %) on the optimistic-lock PATCH. **Select Screens** merges LED+LCD behind an LED/LCD type toggle +
+  one combined type-tagged screens list. **LED two-form**: Form 1 finalises panel+geometry+components; Form 2
+  is a per-screen expandable "Options & services" editor (trim/frame/gob/.../back cover/notes) saved via the
+  U0 PATCH (re-prices). Options show manufacturer (priority order) + lead time + tolerance band.
+
 **Still backlogged (deferred by decision / needs infra):** the workshop's AI/Zoho capabilities — Opportunity
 Intake (Zoho sync + AI doc/metadata extraction, Cap 1), Opportunity Analysis (AI gap/risk/clarification
 detection, Cap 2), Knowledge Engine (vector similarity, Cap 3), Learning Engine (close-the-loop, Cap 8),
