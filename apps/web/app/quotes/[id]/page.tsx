@@ -257,6 +257,22 @@ interface ConfigOption {
   cutCabinetSuggested: boolean;
 }
 
+// The optional LED option/service lookups: each is its own admin CRUD table, served by
+// GET /admin/<slug>?take=200 → { rows }, all using `name` as the human title field.
+const LED_OPTION_TABLES = [
+  { key: 'frameId', slug: 'frames', label: 'Frame' },
+  { key: 'trimId', slug: 'trim-options', label: 'Trim' },
+  { key: 'hangingBarId', slug: 'hanging-bars', label: 'Hanging bar' },
+  { key: 'engineeringId', slug: 'engineering-options', label: 'Engineering' },
+  { key: 'installMethodId', slug: 'install-methods', label: 'Install method' },
+  { key: 'freightOptionId', slug: 'freight-options', label: 'Freight option' },
+  { key: 'warrantyId', slug: 'warranties', label: 'Warranty' },
+  { key: 'serviceHoursId', slug: 'service-hours', label: 'Service hours' },
+  { key: 'accessEquipmentId', slug: 'access-equipment', label: 'Access equipment' },
+  { key: 'gobId', slug: 'gob-options', label: 'GOB' },
+] as const;
+type LedOptionKey = (typeof LED_OPTION_TABLES)[number]['key'];
+
 function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
   const [products, setProducts] = useState<Opt[]>([]);
   const [productId, setProductId] = useState('');
@@ -268,10 +284,36 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
   const [err, setErr] = useState<string | null>(null);
   const [options, setOptions] = useState<ConfigOption[] | null>(null);
   const [reasons, setReasons] = useState<string[]>([]);
+  // Optional options/services: catalog rows per table + the chosen id per field.
+  const [optionRows, setOptionRows] = useState<Record<LedOptionKey, Opt[]>>(
+    () => Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, [] as Opt[]])) as unknown as Record<LedOptionKey, Opt[]>,
+  );
+  const [selectedOptions, setSelectedOptions] = useState<Record<LedOptionKey, string>>(
+    () => Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, ''])) as unknown as Record<LedOptionKey, string>,
+  );
 
   useEffect(() => {
     api<{ rows: Opt[] }>('/admin/led-products?take=300').then((r) => setProducts(r.rows));
+    Promise.all(
+      LED_OPTION_TABLES.map((t) =>
+        api<{ rows: Opt[] }>(`/admin/${t.slug}?take=200`)
+          .then((r) => [t.key, r.rows] as const)
+          .catch(() => [t.key, [] as Opt[]] as const),
+      ),
+    ).then((entries) => {
+      setOptionRows(Object.fromEntries(entries) as unknown as Record<LedOptionKey, Opt[]>);
+    });
   }, []);
+
+  // Only the option ids that are actually set, ready to merge into a POST body.
+  const selectedOptionIds = (): Record<string, number> => {
+    const out: Record<string, number> = {};
+    for (const t of LED_OPTION_TABLES) {
+      const v = selectedOptions[t.key];
+      if (v) out[t.key] = Number(v);
+    }
+    return out;
+  };
 
   const configure = async () => {
     setBusy(true);
@@ -302,6 +344,8 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
           desiredWidthMm: Number(w),
           desiredHeightMm: Number(h),
           rotateCabinets: rotated ?? rotate,
+          // Chosen options/services (only the ids that are set are sent).
+          ...selectedOptionIds(),
         }),
       });
       setName('');
@@ -318,6 +362,13 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
     await api(`/quotes/${quote.id}/led-screens/${sid}`, { method: 'DELETE' });
     await onChange();
   };
+
+  // Required-field gating (P1-12.3): the essentials before "+ Add & price".
+  const missing: string[] = [];
+  if (!productId) missing.push('LED product');
+  if (!(Number(w) > 0)) missing.push('width');
+  if (!(Number(h) > 0)) missing.push('height');
+  const canAddSpecific = missing.length === 0;
 
   return (
     <div>
@@ -380,9 +431,10 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
 
       <div className="card">
         <h3 style={{ marginTop: 0 }}>…or add a specific product</h3>
+        <p className="muted">Width, height and rotation come from “Configure from opening” above; pick the product and any options below.</p>
         <div className="grid3">
           <div>
-            <label>Product</label>
+            <label style={!productId ? { color: 'var(--danger, #dc2626)' } : undefined}>Product *</label>
             <SearchSelect
               value={productId}
               onChange={setProductId}
@@ -391,9 +443,40 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
               options={products.map((p) => ({ value: p.id, label: p.model ?? '' }))}
             />
           </div>
+          <div>
+            <label style={Number(w) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Width (mm) *</label>
+            <input type="number" value={w} onChange={(e) => setW(e.target.value)} />
+          </div>
+          <div>
+            <label style={Number(h) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Height (mm) *</label>
+            <input type="number" value={h} onChange={(e) => setH(e.target.value)} />
+          </div>
         </div>
+
+        <h4 style={{ margin: '16px 0 4px' }}>Options &amp; services</h4>
+        <p className="muted" style={{ marginTop: 0 }}>All optional — selections are priced and persisted with the screen.</p>
+        <div className="grid3">
+          {LED_OPTION_TABLES.map((t) => (
+            <div key={t.key}>
+              <label>{t.label}</label>
+              <SearchSelect
+                value={selectedOptions[t.key]}
+                onChange={(v) => setSelectedOptions((prev) => ({ ...prev, [t.key]: v }))}
+                allowEmpty
+                placeholder={`Select ${t.label.toLowerCase()}…`}
+                options={(optionRows[t.key] ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
+              />
+            </div>
+          ))}
+        </div>
+
+        {!canAddSpecific && (
+          <p className="muted" style={{ marginTop: 12 }}>
+            ⚠️ Required before pricing: {missing.join(', ')}.
+          </p>
+        )}
         <div className="step-actions">
-          <button className="primary" onClick={() => addScreen()} disabled={busy || !productId}>
+          <button className="primary" onClick={() => addScreen()} disabled={busy || !canAddSpecific}>
             {busy ? 'Pricing…' : '+ Add & price'}
           </button>
         </div>
