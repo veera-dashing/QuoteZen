@@ -6,7 +6,12 @@ import { api, ApiError, downloadFile, getRole, uploadFile } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
 
 interface Opt { id: string; name?: string; model?: string; sell?: string | null; category?: string; code?: string }
-interface LedScreen { id: string; screenName: string | null; qty: number; resolutionWpx: number | null; resolutionHpx: number | null; priceTotal: string | null }
+interface LedScreen {
+  id: string; screenName: string | null; qty: number;
+  resolutionWpx: number | null; resolutionHpx: number | null; priceTotal: string | null;
+  orientation?: string | null;
+  aspectRatio?: { ratioLabel: string } | null;
+}
 interface LcdScreen { id: string; screenName: string | null; priceTotal: string | null }
 interface Licence { id: string; screenType: string; tier: string; qty: number; isInteractive: boolean }
 interface Quote {
@@ -305,6 +310,20 @@ const LED_OPTION_TABLES = [
 ] as const;
 type LedOptionKey = (typeof LED_OPTION_TABLES)[number]['key'];
 
+// The four LED component pickers. Each maps a ledComponentSchema `componentType` to its catalog
+// admin table (served by GET /admin/<slug>?take=200 → { rows }) and to the single id field the
+// schema expects set for that type (exactly one of controllerId/ledPeripheralId/mediaplayerId/peripheralId).
+const LED_COMPONENT_TABLES = [
+  { componentType: 'controller', slug: 'controllers', idField: 'controllerId', label: 'Controller' },
+  { componentType: 'led_peripheral', slug: 'led-peripherals', idField: 'ledPeripheralId', label: 'LED peripheral' },
+  { componentType: 'mediaplayer', slug: 'mediaplayers', idField: 'mediaplayerId', label: 'Mediaplayer' },
+  { componentType: 'mediaplayer_peripheral', slug: 'peripherals', idField: 'peripheralId', label: 'Mediaplayer peripheral' },
+] as const;
+type LedComponentType = (typeof LED_COMPONENT_TABLES)[number]['componentType'];
+type LedComponentIdField = (typeof LED_COMPONENT_TABLES)[number]['idField'];
+// A chosen component row in local state: its type, the selected catalog id, and a qty.
+interface ComponentRow { componentType: LedComponentType; itemId: string; qty: number }
+
 function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
   const [products, setProducts] = useState<Opt[]>([]);
   const [productId, setProductId] = useState('');
@@ -324,6 +343,22 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
     () => Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, ''])) as unknown as Record<LedOptionKey, string>,
   );
 
+  // S1: orientation + aspect ratio (with auto-dimension calc), components, back cover, notes.
+  const [orientation, setOrientation] = useState('');
+  const [aspectRatioId, setAspectRatioId] = useState('');
+  const [ratios, setRatios] = useState<Array<{ id: string; ratioLabel: string }>>([]);
+  const [backCover, setBackCover] = useState(false);
+  const [frameNote, setFrameNote] = useState('');
+  const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState('');
+  // Component pickers: catalog rows per type + the user's chosen component rows + the add-row draft.
+  const [componentRows, setComponentRows] = useState<Record<LedComponentType, Opt[]>>(
+    () => Object.fromEntries(LED_COMPONENT_TABLES.map((t) => [t.componentType, [] as Opt[]])) as unknown as Record<LedComponentType, Opt[]>,
+  );
+  const [components, setComponents] = useState<ComponentRow[]>([]);
+  const [draftType, setDraftType] = useState<LedComponentType>('controller');
+  const [draftItem, setDraftItem] = useState('');
+  const [draftQty, setDraftQty] = useState('1');
+
   useEffect(() => {
     // activeOnly=true hides deprecated catalog rows from NEW selections (P1-11.4); existing quotes
     // still resolve their stored FK regardless of deprecated state.
@@ -337,7 +372,59 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
     ).then((entries) => {
       setOptionRows(Object.fromEntries(entries) as unknown as Record<LedOptionKey, Opt[]>);
     });
+    // Aspect ratios for the orientation/auto-dimension rule.
+    api<{ rows: Array<{ id: string; ratioLabel: string }> }>('/admin/screen-ratios?take=200&activeOnly=true')
+      .then((r) => setRatios(r.rows))
+      .catch(() => setRatios([]));
+    // The four component catalogs (controller / led-peripheral / mediaplayer / mediaplayer-peripheral).
+    Promise.all(
+      LED_COMPONENT_TABLES.map((t) =>
+        api<{ rows: Opt[] }>(`/admin/${t.slug}?take=200&activeOnly=true`)
+          .then((r) => [t.componentType, r.rows] as const)
+          .catch(() => [t.componentType, [] as Opt[]] as const),
+      ),
+    ).then((entries) => {
+      setComponentRows(Object.fromEntries(entries) as unknown as Record<LedComponentType, Opt[]>);
+    });
   }, []);
+
+  // Parse "16:9" → { w: 16, h: 9 }; null when unparseable.
+  const parseRatio = (label: string | undefined): { w: number; h: number } | null => {
+    if (!label) return null;
+    const m = label.match(/(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)/);
+    if (!m) return null;
+    const w = Number(m[1]);
+    const h = Number(m[2]);
+    if (!(w > 0) || !(h > 0)) return null;
+    return { w, h };
+  };
+
+  // Workbook rule (E11/E12): orientation + ratio + one dimension → fill the other so the longer axis
+  // matches orientation (Landscape → width is the long axis; Portrait → height is the long axis).
+  // Editing one dimension recomputes the other; both stay editable (the user can override).
+  const recalcDim = (changed: 'w' | 'h', value: string, ori = orientation, ratioId = aspectRatioId) => {
+    const ratio = parseRatio(ratios.find((r) => r.id === ratioId)?.ratioLabel);
+    if (changed === 'w') setW(value);
+    else setH(value);
+    if (!ratio || !ori) return;
+    const minSide = Math.min(ratio.w, ratio.h);
+    const maxSide = Math.max(ratio.w, ratio.h);
+    const n = Number(value);
+    if (!(n > 0)) return;
+    if (ori === 'Landscape') {
+      // width is the long axis → height = width * (short/long)
+      if (changed === 'w') setH(String(Math.round(n * (minSide / maxSide))));
+      else setW(String(Math.round(n * (maxSide / minSide))));
+    } else {
+      // Portrait: height is the long axis → width = height * (short/long)
+      if (changed === 'h') setW(String(Math.round(n * (minSide / maxSide))));
+      else setH(String(Math.round(n * (maxSide / minSide))));
+    }
+  };
+
+  // Re-run the auto-calc from the current width when orientation/ratio changes.
+  const onOrientationChange = (v: string) => { setOrientation(v); recalcDim('w', w, v, aspectRatioId); };
+  const onRatioChange = (v: string) => { setAspectRatioId(v); recalcDim('w', w, orientation, v); };
 
   // Only the option ids that are actually set, ready to merge into a POST body.
   const selectedOptionIds = (): Record<string, number> => {
@@ -366,6 +453,23 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
     }
   };
 
+  // Add a component row from the draft pickers (one type + one catalog item + qty).
+  const addComponent = () => {
+    if (!draftItem) return;
+    const q = Number(draftQty);
+    setComponents((prev) => [...prev, { componentType: draftType, itemId: draftItem, qty: q >= 1 ? q : 1 }]);
+    setDraftItem('');
+    setDraftQty('1');
+  };
+  const removeComponent = (idx: number) => setComponents((prev) => prev.filter((_, i) => i !== idx));
+
+  // Map a ComponentRow → the ledComponentSchema shape (set exactly the one id field for its type).
+  const componentPayload = () =>
+    components.map((c) => {
+      const def = LED_COMPONENT_TABLES.find((t) => t.componentType === c.componentType)!;
+      return { componentType: c.componentType, [def.idField as LedComponentIdField]: Number(c.itemId), qty: c.qty };
+    });
+
   const addScreen = async (chosenProductId?: string, rotated?: boolean) => {
     setBusy(true);
     setErr(null);
@@ -378,6 +482,13 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
           desiredWidthMm: Number(w),
           desiredHeightMm: Number(h),
           rotateCabinets: rotated ?? rotate,
+          // S1 inputs (only sent when set).
+          ...(orientation ? { orientation } : {}),
+          ...(aspectRatioId ? { aspectRatioId: Number(aspectRatioId) } : {}),
+          backCover,
+          ...(frameNote ? { frameNote } : {}),
+          ...(serviceDescriptionSuffix ? { serviceDescriptionSuffix } : {}),
+          components: componentPayload(),
           // Chosen options/services (only the ids that are set are sent).
           ...selectedOptionIds(),
         }),
@@ -499,13 +610,36 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
           </div>
           <div>
             <label style={Number(w) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Width (mm) *</label>
-            <input type="number" value={w} onChange={(e) => setW(e.target.value)} />
+            <input type="number" value={w} onChange={(e) => recalcDim('w', e.target.value)} />
           </div>
           <div>
             <label style={Number(h) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Height (mm) *</label>
-            <input type="number" value={h} onChange={(e) => setH(e.target.value)} />
+            <input type="number" value={h} onChange={(e) => recalcDim('h', e.target.value)} />
+          </div>
+          <div>
+            <label>Orientation</label>
+            <SearchSelect
+              value={orientation}
+              onChange={onOrientationChange}
+              allowEmpty
+              placeholder="Select orientation…"
+              options={[{ value: 'Landscape', label: 'Landscape' }, { value: 'Portrait', label: 'Portrait' }]}
+            />
+          </div>
+          <div>
+            <label>Aspect ratio</label>
+            <SearchSelect
+              value={aspectRatioId}
+              onChange={onRatioChange}
+              allowEmpty
+              placeholder="Select aspect ratio…"
+              options={ratios.map((r) => ({ value: r.id, label: r.ratioLabel }))}
+            />
           </div>
         </div>
+        <p className="muted" style={{ marginTop: 4 }}>
+          Pick orientation + an aspect ratio and one dimension auto-fills the other (still editable).
+        </p>
 
         <h4 style={{ margin: '16px 0 4px' }}>Options &amp; services</h4>
         <p className="muted" style={{ marginTop: 0 }}>All optional — selections are priced and persisted with the screen.</p>
@@ -522,6 +656,71 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
               />
             </div>
           ))}
+        </div>
+
+        <h4 style={{ margin: '16px 0 4px' }}>Components</h4>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Attach controllers, mediaplayers and peripherals — add as many as needed; each is priced with the screen.
+        </p>
+        <div className="grid3">
+          <div>
+            <label>Type</label>
+            <SearchSelect
+              value={draftType}
+              onChange={(v) => { setDraftType(v as LedComponentType); setDraftItem(''); }}
+              options={LED_COMPONENT_TABLES.map((t) => ({ value: t.componentType, label: t.label }))}
+            />
+          </div>
+          <div>
+            <label>Item</label>
+            <SearchSelect
+              value={draftItem}
+              onChange={setDraftItem}
+              allowEmpty
+              placeholder="Search items…"
+              options={(componentRows[draftType] ?? []).map((o) => ({ value: o.id, label: o.model ?? o.name ?? '' }))}
+            />
+          </div>
+          <div>
+            <label>Qty</label>
+            <input type="number" min={1} value={draftQty} onChange={(e) => setDraftQty(e.target.value)} />
+          </div>
+        </div>
+        <div className="step-actions">
+          <button className="ghost" onClick={addComponent} disabled={!draftItem}>+ Add component</button>
+        </div>
+        {components.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            {components.map((c, i) => {
+              const def = LED_COMPONENT_TABLES.find((t) => t.componentType === c.componentType)!;
+              const item = (componentRows[c.componentType] ?? []).find((o) => o.id === c.itemId);
+              return (
+                <div className="list-row" key={i}>
+                  <span>
+                    <span className="pill" style={{ marginRight: 6 }}>{def.label}</span>
+                    {item?.model ?? item?.name ?? c.itemId} <span className="muted">× {c.qty}</span>
+                  </span>
+                  <button className="danger" onClick={() => removeComponent(i)}>Remove</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <h4 style={{ margin: '16px 0 4px' }}>Housing &amp; descriptions</h4>
+        <div className="grid3">
+          <div>
+            <label>Back cover</label>
+            <input type="checkbox" checked={backCover} onChange={(e) => setBackCover(e.target.checked)} style={{ width: 'auto' }} />
+          </div>
+          <div>
+            <label>Frame / housing description</label>
+            <input value={frameNote} onChange={(e) => setFrameNote(e.target.value)} placeholder="optional" />
+          </div>
+          <div>
+            <label>Service description suffix</label>
+            <input value={serviceDescriptionSuffix} onChange={(e) => setServiceDescriptionSuffix(e.target.value)} placeholder="optional" />
+          </div>
         </div>
 
         {!canAddSpecific && (
@@ -544,7 +743,11 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
             <div>
               <b>{s.screenName || 'LED screen'}</b>{' '}
               <span className="muted">
-                {s.resolutionWpx && s.resolutionHpx ? `${s.resolutionWpx}×${s.resolutionHpx}px` : ''}
+                {[
+                  s.resolutionWpx && s.resolutionHpx ? `${s.resolutionWpx}×${s.resolutionHpx}px` : '',
+                  s.orientation ?? '',
+                  s.aspectRatio?.ratioLabel ?? '',
+                ].filter(Boolean).join(' · ')}
               </span>
             </div>
             <div className="row-actions">
