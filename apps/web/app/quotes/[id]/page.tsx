@@ -646,6 +646,10 @@ interface Version {
   createdBy?: { name: string };
 }
 
+// One field-level difference between two version snapshots. `from`/`to` is null when the
+// path exists in only one snapshot (a field/screen added or removed structurally).
+interface DiffEntry { path: string; from: unknown | null; to: unknown | null }
+
 interface ValidationFinding { rule: string; severity: 'error' | 'warning' | 'cannot_evaluate'; message: string }
 interface QuoteValidation {
   canFinalise: boolean;
@@ -671,6 +675,13 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const [bom, setBom] = useState<BomScreen[] | null>(null);
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
   const [versions, setVersions] = useState<Version[]>([]);
+  // Version diff (P1-04.2/.4): A = from, B = to.
+  const [diffA, setDiffA] = useState<number | null>(null);
+  const [diffB, setDiffB] = useState<number | null>(null);
+  const [diff, setDiff] = useState<DiffEntry[] | null>(null);
+  const [diffPair, setDiffPair] = useState<{ a: number; b: number } | null>(null);
+  const [diffBusy, setDiffBusy] = useState(false);
+  const [diffError, setDiffError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [validation, setValidation] = useState<QuoteValidation | null>(null);
   const [price, setPrice] = useState<PriceResult | null>(null);
@@ -696,7 +707,21 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
     api<Audit[]>(`/quotes/${quote.id}/audit`).then(setAudit);
   }, [quote.id]);
   const loadVersions = useCallback(() => {
-    api<Version[]>(`/quotes/${quote.id}/versions`).then(setVersions);
+    api<Version[]>(`/quotes/${quote.id}/versions`).then((vs) => {
+      setVersions(vs);
+      // Default the comparison to (previous → latest) when ≥2 versions exist, only if
+      // the user hasn't picked a pair yet.
+      setDiffA((cur) => {
+        if (cur != null || vs.length < 2) return cur;
+        const nums = vs.map((v) => v.revisionNo).sort((x, y) => x - y);
+        return nums[nums.length - 2] ?? null;
+      });
+      setDiffB((cur) => {
+        if (cur != null || vs.length < 2) return cur;
+        const nums = vs.map((v) => v.revisionNo).sort((x, y) => x - y);
+        return nums[nums.length - 1] ?? null;
+      });
+    });
   }, [quote.id]);
   const loadValidation = useCallback(() => {
     api<QuoteValidation>(`/quotes/${quote.id}/validate`).then(setValidation).catch(() => setValidation(null));
@@ -719,6 +744,22 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
     await onChange();
     loadVersions();
     loadAudit();
+  };
+
+  const compareVersions = async () => {
+    if (diffA == null || diffB == null || diffA === diffB) return;
+    setDiffBusy(true);
+    setDiffError(null);
+    setDiff(null);
+    try {
+      const rows = await api<DiffEntry[]>(`/quotes/${quote.id}/versions/diff?a=${diffA}&b=${diffB}`);
+      setDiff(rows);
+      setDiffPair({ a: diffA, b: diffB });
+    } catch (e) {
+      setDiffError(e instanceof Error ? e.message : 'Compare failed');
+    } finally {
+      setDiffBusy(false);
+    }
   };
 
   const recompute = async () => {
@@ -747,6 +788,17 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   };
 
   const cur = quote.currency?.code ?? '';
+
+  // Compact, readable string for a snapshot value; null/undefined → "—" (rendered muted).
+  const fmtVal = (v: unknown): string => {
+    if (v === null || v === undefined) return '—';
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  };
+  const vlabel = (v: Version) => `v${v.revisionNo} — ${v.label ?? new Date(v.createdAt).toLocaleString()}`;
+  const versionOpts = versions.map((v) => ({ value: String(v.revisionNo), label: vlabel(v) }));
+  const canCompare = versions.length >= 2 && diffA != null && diffB != null && diffA !== diffB;
+
   return (
     <div>
       <div className="card">
@@ -1010,6 +1062,87 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Compare versions</h3>
+        {versions.length < 2 && (
+          <p className="muted">Save at least two versions to compare them.</p>
+        )}
+        {versions.length >= 2 && (
+          <>
+            <div className="grid3" style={{ alignItems: 'end' }}>
+              <div>
+                <label>Version A (from)</label>
+                <SearchSelect
+                  value={diffA == null ? '' : String(diffA)}
+                  onChange={(v) => setDiffA(v ? Number(v) : null)}
+                  placeholder="Select version…"
+                  options={versionOpts}
+                />
+              </div>
+              <div>
+                <label>Version B (to)</label>
+                <SearchSelect
+                  value={diffB == null ? '' : String(diffB)}
+                  onChange={(v) => setDiffB(v ? Number(v) : null)}
+                  placeholder="Select version…"
+                  options={versionOpts}
+                />
+              </div>
+              <div>
+                <button className="primary" onClick={compareVersions} disabled={!canCompare || diffBusy}>
+                  {diffBusy ? 'Comparing…' : 'Compare'}
+                </button>
+              </div>
+            </div>
+            {diffA != null && diffB != null && diffA === diffB && (
+              <p className="muted" style={{ marginTop: 8 }}>Pick two different versions to compare.</p>
+            )}
+            {diffError && <div className="error" style={{ marginTop: 10 }}>{diffError}</div>}
+            {diff && diffPair && (
+              <div style={{ marginTop: 14 }}>
+                <p className="muted" style={{ marginTop: 0 }}>
+                  {diff.length === 0
+                    ? `No differences between v${diffPair.a} and v${diffPair.b}.`
+                    : `${diff.length} difference${diff.length === 1 ? '' : 's'} between v${diffPair.a} and v${diffPair.b}.`}
+                </p>
+                {diff.length > 0 && (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Field (path)</th>
+                          <th>From (v{diffPair.a})</th>
+                          <th>To (v{diffPair.b})</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {diff.map((d, i) => {
+                          const added = (d.from === null || d.from === undefined) && !(d.to === null || d.to === undefined);
+                          const removed = !(d.from === null || d.from === undefined) && (d.to === null || d.to === undefined);
+                          // Subtle row tint: added = green, removed = red, changed = default.
+                          const bg = added
+                            ? 'color-mix(in srgb, var(--ok, #16a34a) 12%, transparent)'
+                            : removed
+                            ? 'color-mix(in srgb, var(--danger, #dc2626) 12%, transparent)'
+                            : undefined;
+                          return (
+                            <tr key={`${d.path}-${i}`} style={bg ? { background: bg } : undefined}>
+                              <td><code style={{ fontSize: 12 }}>{d.path}</code></td>
+                              <td className={d.from === null || d.from === undefined ? 'muted' : undefined}>{fmtVal(d.from)}</td>
+                              <td className={d.to === null || d.to === undefined ? 'muted' : undefined}>{fmtVal(d.to)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
 
