@@ -10,6 +10,7 @@ import { adminRoutes } from './modules/admin/routes.js';
 import { userRoutes } from './modules/admin/users.js';
 import { authRoutes } from './modules/auth/routes.js';
 import { catalogRoutes } from './modules/catalog/routes.js';
+import { healthRoutes } from './modules/health/routes.js';
 import { quoteRoutes } from './modules/quotes/routes.js';
 import { ruleRoutes } from './modules/rules/routes.js';
 
@@ -64,8 +65,7 @@ export const buildApp = async (config: AppConfig): Promise<FastifyInstance> => {
       .send({ error: { code: 'internal_error', message: 'Internal server error' } });
   });
 
-  app.get('/health', async () => ({ status: 'ok' }));
-
+  await app.register(healthRoutes);
   await app.register(authRoutes);
   await app.register(catalogRoutes);
   await app.register(quoteRoutes);

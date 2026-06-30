@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    name: Lint, typecheck, test & migration check
+    runs-on: ubuntu-latest
+
+    # Postgres for tests + Prisma. CI-only, non-sensitive credentials (match
+    # the local dev container in CLAUDE.md). No real secrets in this file.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: quotezen
+          POSTGRES_PASSWORD: quotezen
+          POSTGRES_DB: quotezen
+        ports:
+          - 5432:5432
+        # Wait until Postgres is ready before the job's steps run.
+        options: >-
+          --health-cmd "pg_isready -U quotezen"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Points at the postgres service container above (CI-only creds).
+      DATABASE_URL: postgresql://quotezen:quotezen@localhost:5432/quotezen
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Prisma client codegen — packages import the generated client, so this
+      # must run before typecheck/build.
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Apply migrations to the service DB so the schema exists for tests.
+      - name: Apply migrations
+        run: pnpm --filter @quotezen/db migrate:deploy
+
+      - name: Seed reference data
+        run: pnpm db:seed
+
+      - name: Test
+        run: pnpm test
+
+      # Migration check: schema is valid and migrations have no drift from it.
+      - name: Validate Prisma schema
+        run: pnpm --filter @quotezen/db exec prisma validate
+
+      - name: Check migrations match schema (no drift)
+        run: >-
+          pnpm --filter @quotezen/db exec prisma migrate diff
+          --from-migrations prisma/migrations
+          --to-schema-datamodel prisma/schema.prisma
+          --exit-code

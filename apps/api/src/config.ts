@@ -19,3 +19,20 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
   }
   return parsed.data;
 };
+
+/**
+ * Fail-closed boot validation (P1-01.4): parse + validate required env BEFORE the server starts
+ * listening. On any missing/malformed config, print a clear fatal error and exit non-zero rather
+ * than starting in a broken state. Never prints the offending values (only the field names/reasons),
+ * so secrets are not leaked to logs.
+ */
+export const assertConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
+  try {
+    return loadConfig(env);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Boot happens before the Fastify logger exists; write to stderr directly.
+    process.stderr.write(`FATAL: refusing to start — ${message}\n`);
+    process.exit(1);
+  }
+};
