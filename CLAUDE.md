@@ -248,8 +248,74 @@ versioning/governance. Google OAuth + Zoho + all AI (Phase 2) deferred by decisi
 - ✅ **Licence-step dropdowns → SearchSelect** — the screen-type / volume-tier native `<select>`s now
   use the searchable combobox, matching the rest of the wizard.
 
-**Still backlogged (later passes):** file upload + re-run (P1-19e, needs object storage + AV scan),
-bulk-import wizard UI (P1-06.4), Google OAuth + Zoho, and all Phase 2 AI.
+### Block 7 — Phase-1 deterministic completion (multi-agent build, branch `feat/versioning-governance`)
+Delivered the remaining Phase-1 deterministic gaps (everything except Google OAuth, Zoho, and all
+Phase-2 AI, which stay deferred), orchestrated as one subagent per feature. Full repo green after:
+**142 tests** (9 shared + 71 calc + 62 api), typecheck + build clean.
+- ✅ **Health/readiness + fail-closed boot (P1-01.3/.4)** — `GET /health` (liveness, no DB) + `GET /ready`
+  (DB check → 503, generic body); `assertConfig()` exits 1 at boot naming any missing/invalid env.
+- ✅ **Lightweight CI (P1-01.1 subset)** — `.github/workflows/ci.yml`: install → db:generate → lint →
+  typecheck → migrate:deploy → seed → test → prisma validate + migrate-diff drift check, on PR + push
+  to main, with a `postgres:16` service container (no secrets). No deploy/Terraform/Docker.
+- ✅ **Controller auto-selection (P1-09.3/.4)** — calc `selectController`: pixel-threshold → smallest
+  sufficient controller (`max_pixels`, inclusive), multi-controller count + flag on over-capacity,
+  never throws. 14 tests.
+- ✅ **Validation/conflict engine wired (P1-15)** — `GET /quotes/:id/validate` maps screens to calc
+  `validateScreen` → per-screen findings (error/warning/cannot_evaluate) + `canFinalise`; `changeStatus`
+  blocks finalisation on errors for non-admins (409), admin override audited (`validation_guardrail`),
+  alongside the margin guardrail. Wizard **Validation card** + Approve/Issue gating.
+- ✅ **Itemised price view (P1-16.8/.10)** — Review "Itemised price" card over `POST /quotes/:id/price`;
+  Cost column admin-only (masked note otherwise), margin + floor with below-floor flag, viewer-gated.
+- ✅ **Fuller per-screen input form (P1-12.2/.3)** — LED step "Options & services": 10 searchable
+  lookups (frame/trim/hanging-bar/engineering/install/freight/warranty/service-hours/access/GOB) threaded
+  into both add paths; required-field gating (product + W + H) with inline hints.
+- ✅ **Version diff UI (P1-04.2/.4)** — "Compare versions" card: pick A/B, `GET /versions/diff`,
+  added/removed/changed row tinting, structurally-different handled.
+- ✅ **Screen management (P1-14)** — `sort_order` migration; duplicate (deep-copy + components +
+  breakdown), reorder, per-screen qty (`PATCH …/qty`, rejects 0/neg) multiplied into the rollup;
+  ▲/▼/Qty/Duplicate UI. (LCD qty stays on item rows.)
+- ✅ **Rule-set snapshot + missing-rate hard stop (P1-04.1/.07.5/.16.9)** — versions embed the rule-set
+  in force (`snapshot.ruleSet`: markups/freight/addOns/rates/marginFloor); pricing hard-stops (400)
+  naming a missing rate (selected freight option w/o rate; absent USD FX) — never defaults silently.
+- ✅ **Editable, versioned proposal text (P1-18.2)** — `quote_term_kind` migration; `GET/PUT
+  /quotes/:id/terms`; PDF renders stored terms grouped by kind with per-group default fallback;
+  Review "Proposal text" editor (viewer read-only). Captured in snapshots automatically.
+- ✅ **Editable fields & overrides (P1-17)** — `quote_overrides` table; `setOverride`/`clearOverride`
+  (audited); **pinned recalc** (overridden screen sell pins → downstream totals recompute);
+  `computeMargin` reflects overrides so the below-floor guardrail triggers (non-admin 403, admin
+  audited); orphan cleanup; 🚩 badge + original/who/why hover + Clear in the itemised price card.
+- ✅ **Soft-delete/archive + auto-save (P1-05.1)** — `quote_archive` migration; `POST /quotes/:id/
+  archive`+`restore` (never hard-delete, audited); list excludes archived by default (`?archived=true`);
+  active/archived toggle + per-row Archive/Restore; debounced Details auto-save (token refresh, pauses
+  on conflict).
+- ✅ **File upload + deterministic re-run (P1-19e)** — `@fastify/multipart`; **local-disk** storage
+  (`UPLOAD_DIR`, default `<repo>/.uploads`, gitignored; AV scan deferred w/ TODO hook); `quote_documents`
+  migration; upload/list/download/delete (filename sanitised, mime+ext allowlist, size guard, versioned);
+  `POST /quotes/:id/rerun` = recompute + new version labelled with the total change. Files & re-run card.
+- ✅ **Quote management dashboard (P1-19d)** — `GET /quotes` gains status/clientId/q/from/to filters
+  (composed with per-user scope + archive); Drafts/Finished/All/Archived tabs + search/client/date
+  controls; shared `computeQuoteTotals` powers a non-mutating `GET /quotes/:id/recompute-preview`
+  (reopen drift: current vs recomputed).
+- ✅ **Bulk CSV import/export (P1-06.4/.5)** — `GET /admin/:resource/export` (admin-only, BR-081) →
+  CSV; `POST …/import/preview` (dry-run report) + `POST …/import` (all-or-nothing upsert in one tx:
+  422 on invalid, 409 on dup-key, rollback leaves table unchanged), reusing the registry Zod coercion
+  (csv-parse/csv-stringify). Admin import wizard UI.
+- ✅ **Admin audit + export gating + margins editor (P1-06.6/.07.2/.07.6)** — `admin_audit_log` migration
+  (append-only); every admin CRUD + export writes a diff'd audit row in-transaction; `GET/PATCH
+  /admin/margins` edits the 13 commercial multipliers in one view (bulk tx, audited) + `/admin/margins`
+  page; reference-data audit viewer.
+- ✅ **Deprecate-not-delete (P1-08.4/.11.4)** — `deprecated` flag on 23 catalog/lookup models; flipped
+  `quote_*→catalog` FKs to `onDelete: Restrict` (prevents silent snapshot-FK nulling); admin DELETE
+  catches P2003 → deprecates instead (audited), unreferenced rows still hard-delete; `?activeOnly=true`
+  + config engine + wizard exclude deprecated from NEW quotes while existing quotes retain their rows.
+
+**Migration note:** all the above were authored RDS-safe (`prisma migrate diff --from-url $DATABASE_URL
+--to-schema-datamodel … --script` → `prisma migrate deploy`, since the RDS user has no shadow-DB
+permission) and `prisma migrate status` is clean.
+
+**Still backlogged (deferred by decision / needs infra):** Google OAuth (P1-02) + Zoho (P1-19a/b/c) and
+all Phase-2 AI (P2-*) — deferred by decision; real S3 + AV scanning for uploads (the prototype uses
+local disk); full Terraform/Docker/CD (CI is lightweight only).
 
 **Local Postgres for dev/tests:**
 ```bash
