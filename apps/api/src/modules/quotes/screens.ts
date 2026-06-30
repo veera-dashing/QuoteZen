@@ -19,7 +19,7 @@ import { applyMargin, applyMarkup, round } from '@quotezen/shared';
 import type { LcdScreenInput, LedScreenInput } from '@quotezen/shared';
 import { AppError, notFound } from '../../errors.js';
 import { recordAudit } from '../../services/audit.js';
-import { loadPricingConfig } from '../../lib/pricing-config.js';
+import { loadPricingContext } from '../../lib/pricing-config.js';
 import { getQuote } from './service.js';
 
 const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toString() : '0');
@@ -74,7 +74,7 @@ export const configureForQuote = async (
 
 export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedScreenInput) => {
   const quote = await getQuote(quoteId); // 404s if the quote is missing
-  const config = await loadPricingConfig();
+  const { config, dbRateCodes } = await loadPricingContext();
   const qty = input.qty ?? 1;
 
   const product = input.ledProductId
@@ -106,6 +106,12 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
       powerMaxWPerSqm: product.powerMaxW ? Number(product.powerMaxW) : undefined,
     });
     if (product.costPerSqmUsd) {
+      // FX hard-stop (P1-07.5): the LED supply cost is quoted in USD and converted to AUD. The USD
+      // rate must come from the live exchange_rates table — never silently fall back to a stale
+      // workbook number. If the DB has no USD rate, stop and name the currency.
+      if (!dbRateCodes.has('USD')) {
+        throw new AppError('bad_request', 'No exchange rate configured for USD — set the USD rate before pricing this screen');
+      }
       const supply = ledSupply({ areaSqm: spec.areaSqm, costPerSqmUsd: Number(product.costPerSqmUsd) }, config);
       lines.push({
         label: `LED supply — ${product.model}`,
@@ -218,7 +224,13 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
       const actualKg = area * Number(product.kgPerSqm);
       freightKg = round(freightWeightKg(actualKg, vol)).toNumber(); // MAX(volumetric, actual)
     }
-    const freightCostAud = freightOpt?.rate && freightKg ? freightKg * Number(freightOpt.rate) : 0;
+    // Freight hard-stop (P1-16.9): if a freight option was explicitly selected it MUST carry a rate —
+    // a missing/zero rate is a misconfiguration, not a free shipment. Name the option and stop rather
+    // than silently pricing freight at 0.
+    if (freightOpt && !(Number(freightOpt.rate) > 0)) {
+      throw new AppError('bad_request', `Freight option "${freightOpt.name}" has no rate configured`);
+    }
+    const freightCostAud = freightOpt && freightKg ? freightKg * Number(freightOpt.rate) : 0;
     labourHours = estimateInstallHours({
       areaSqm: area,
       frameInstallHours: frame ? Number(frame.installHours) : 0,

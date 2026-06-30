@@ -1,18 +1,48 @@
 import { prisma } from '@quotezen/db';
 import type { Prisma } from '@quotezen/db';
+import type { PricingConfig } from '@quotezen/calc';
 import { recordAudit } from '../../services/audit.js';
-import { getQuote, recomputeQuote, type Actor } from './service.js';
+import { getQuote, getMarginFloor, recomputeQuote, type Actor } from './service.js';
+import { loadPricingConfig } from '../../lib/pricing-config.js';
 import type { QuoteWithChildren } from './repository.js';
 
 /**
  * Versioning & snapshots (P1-04). A version is an immutable JSON snapshot of the full quote (header +
  * screens + components + computed outputs) at save time. Rollback restores a prior snapshot as a NEW
  * version — history is never destroyed.
+ *
+ * P1-04.1: the snapshot also embeds the **rule-set in force** at capture time (markups, freight, add-on
+ * and FX rates + the margin floor) under a top-level `ruleSet` key, so editing a margin/FX rate later
+ * can never silently change what a saved version represents. It is a sibling of the quote-tree keys —
+ * rollback ignores it (it only restores the screen tree); diff naturally surfaces `ruleSet.*` changes.
  */
 
+/** The rule values that priced a quote, captured into a version snapshot for auditability. */
+export interface SnapshotRuleSet {
+  markups: PricingConfig['markups'];
+  freight: PricingConfig['freight'];
+  addOns: PricingConfig['addOns'];
+  rates: PricingConfig['rates'];
+  marginFloor: number;
+  capturedAt: string;
+}
+
 /** JSON-safe snapshot of the live quote (BigInt/Decimal already stringify via the global json patch). */
-const toSnapshot = (quote: QuoteWithChildren): Prisma.InputJsonValue =>
-  JSON.parse(JSON.stringify(quote)) as Prisma.InputJsonValue;
+const toSnapshot = (quote: QuoteWithChildren, ruleSet: SnapshotRuleSet): Prisma.InputJsonValue =>
+  JSON.parse(JSON.stringify({ ...quote, ruleSet })) as Prisma.InputJsonValue;
+
+/** Capture the live pricing rules + margin floor as an immutable record on a version. */
+export const captureRuleSet = async (capturedAt: Date = new Date()): Promise<SnapshotRuleSet> => {
+  const [config, marginFloor] = await Promise.all([loadPricingConfig(), getMarginFloor()]);
+  return {
+    markups: config.markups,
+    freight: config.freight,
+    addOns: config.addOns,
+    rates: config.rates,
+    marginFloor,
+    capturedAt: capturedAt.toISOString(),
+  };
+};
 
 export const createVersion = async (
   actor: Actor,
@@ -21,6 +51,7 @@ export const createVersion = async (
   restoredFrom?: number,
 ) => {
   const quote = await getQuote(quoteId);
+  const ruleSet = await captureRuleSet();
   return prisma.$transaction(async (tx) => {
     const last = await tx.quoteRevision.findFirst({
       where: { quoteId },
@@ -33,7 +64,7 @@ export const createVersion = async (
         quoteId,
         revisionNo,
         label: label ?? null,
-        snapshot: toSnapshot(quote),
+        snapshot: toSnapshot(quote, ruleSet),
         grandTotal: quote.grandTotal,
         restoredFrom: restoredFrom ?? null,
         createdById: actor.id,

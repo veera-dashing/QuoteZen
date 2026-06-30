@@ -215,6 +215,76 @@ describe('per-screen qty rollup + management (P1-14)', () => {
   });
 });
 
+describe('missing-rate hard stops (P1-16.9 / P1-07.5) + rule-set snapshot (P1-04.1)', () => {
+  it('hard-stops when a SELECTED freight option has no rate (never silently $0 freight)', async () => {
+    const product = await prisma.ledProduct.findFirst({
+      where: { minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchH: { not: null }, costPerSqmUsd: { not: null } },
+    });
+    // a freight option with NO rate configured (misconfiguration)
+    const badFreight = await prisma.freightOption.create({
+      data: { name: `TEST no-rate freight ${process.pid}-${Math.floor(Math.random() * 1e9)}`, rate: null },
+    });
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/quotes',
+        headers: auth(),
+        payload: { jobReference: `${JOB_PREFIX}freight-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+      });
+      const id = created.json().id as string;
+      const res = await app.inject({
+        method: 'POST',
+        url: `/quotes/${id}/led-screens`,
+        headers: auth(),
+        payload: {
+          ledProductId: Number(product!.id),
+          desiredWidthMm: 1120,
+          desiredHeightMm: 1920,
+          rotateCabinets: true,
+          freightOptionId: Number(badFreight.id),
+        },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('bad_request');
+      expect(res.json().error.message).toMatch(/has no rate configured/);
+    } finally {
+      await prisma.freightOption.delete({ where: { id: badFreight.id } });
+    }
+  });
+
+  it('records the rule-set in force (markups/freight/addOns/rates/marginFloor) into a version snapshot', async () => {
+    const product = await prisma.ledProduct.findFirst({
+      where: { minCabinetWMm: { not: null }, pixelPitchH: { not: null }, costPerSqmUsd: { not: null } },
+    });
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: auth(),
+      payload: { jobReference: `${JOB_PREFIX}ruleset-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const id = created.json().id as string;
+    await app.inject({
+      method: 'POST',
+      url: `/quotes/${id}/led-screens`,
+      headers: auth(),
+      payload: { ledProductId: Number(product!.id), desiredWidthMm: 1120, desiredHeightMm: 1920, rotateCabinets: true },
+    });
+    const v1 = await app.inject({ method: 'POST', url: `/quotes/${id}/versions`, headers: auth(), payload: { label: 'rules' } });
+    expect(v1.statusCode).toBe(201);
+
+    const snap = await app.inject({ method: 'GET', url: `/quotes/${id}/versions/1`, headers: auth() });
+    expect(snap.statusCode).toBe(200);
+    const ruleSet = (snap.json() as { snapshot: { ruleSet?: Record<string, unknown> } }).snapshot.ruleSet;
+    expect(ruleSet).toBeTruthy();
+    expect((ruleSet!.markups as { ledMargin: number }).ledMargin).toBeGreaterThan(0);
+    expect((ruleSet!.rates as { AUD: number }).AUD).toBe(1);
+    expect(ruleSet!.freight).toBeTruthy();
+    expect(ruleSet!.addOns).toBeTruthy();
+    expect(typeof ruleSet!.marginFloor).toBe('number');
+    expect(typeof ruleSet!.capturedAt).toBe('string');
+  });
+});
+
 describe('quote wizard backend', () => {
   it('prices an LED screen from a real product and rolls it into the quote total', async () => {
     // a product with the specs needed to price (cabinet dims, pitch, cost/sqm)
