@@ -11,7 +11,9 @@ import {
   markupLine,
   packagingCost,
   receiverCardCost,
+  selectTiers,
   sparesCost,
+  type ConfigOption,
   type ConfigProduct,
   type PricedLine,
 } from '@quotezen/calc';
@@ -71,6 +73,125 @@ export const configureForQuote = async (
     allowRotation: input.allowRotation ?? true,
     ratios: ratioRows,
   });
+};
+
+/**
+ * Good / Better / Best — three priced, tiered options for an opening (T2; Workshop "Capability 6",
+ * FR-057 "recommend alternative products", FR-067 "compare alternative configurations").
+ *
+ * Deterministic & idempotent — no persistence. Pipeline:
+ *  1. run the (deterministic) config engine over the live LED catalogue → ranked valid configs;
+ *  2. {@link selectTiers} (pure) picks value (cheapest supply) / recommended (best fit) /
+ *     premium (finest pitch) over distinct products where possible, each with a static rationale;
+ *  3. price each pick at the **supply level** with the live PricingConfig + FX.
+ *
+ * SCOPE NOTE: the priced figure is the LED **supply** line only (area × cost/sqm × FX × LED markup),
+ * matching the workbook's headline material figure for a screen. Components / frame / GOB / install
+ * are intentionally NOT included here — they are per-screen selections made when the screen is added,
+ * not part of a like-for-like product comparison. The figure lets the estimator compare the three
+ * products' build cost/price; the full price is computed when the screen is added via addLedScreen.
+ */
+export interface TierOption {
+  tier: 'value' | 'recommended' | 'premium';
+  label: string;
+  rationale: string;
+  productId: string;
+  model: string;
+  vendor?: string | null;
+  rotated: boolean;
+  widthMm: number;
+  heightMm: number;
+  cabinetCount: number;
+  resolutionWpx: number;
+  resolutionHpx: number;
+  ratioLabel: string | null;
+  fillPercent: string;
+  cutCabinetSuggested: boolean;
+  /** Supply cost (AUD) — masked (null) for non-admin callers (BR-081). */
+  supplyCostAud: string | null;
+  /** Supply sell price (AUD) — always visible. */
+  supplySellAud: string;
+  /** Margin on the supply figure (0..1) — admin-only (cost-derived). */
+  margin: string | null;
+}
+
+export const optionsForQuote = async (
+  quoteId: bigint,
+  input: { desiredWidthMm: number; desiredHeightMm: number; allowRotation?: boolean },
+  showCost: boolean,
+): Promise<{ options: TierOption[]; reasons: string[]; distinctProducts: number }> => {
+  const ranked = await configureForQuote(quoteId, input);
+  if (ranked.options.length === 0) {
+    return { options: [], reasons: ranked.reasons, distinctProducts: 0 };
+  }
+
+  // Lookups for the pure tier selector (keyed by productId — the config engine stringifies ids).
+  const productIds = new Set(ranked.options.map((o) => String(o.productId)));
+  const products = await prisma.ledProduct.findMany({
+    where: { id: { in: [...productIds].map((id) => BigInt(id)) } },
+  });
+  const productById = new Map(products.map((p) => [p.id.toString(), p]));
+  const costPerSqm = new Map<string, number>();
+  const pixelPitchMm = new Map<string, number>();
+  const brightnessNits = new Map<string, number>();
+  for (const p of products) {
+    const id = p.id.toString();
+    if (p.costPerSqmUsd != null) costPerSqm.set(id, Number(p.costPerSqmUsd));
+    if (p.pixelPitchH != null) pixelPitchMm.set(id, Number(p.pixelPitchH));
+    if (p.brightnessNits != null) brightnessNits.set(id, p.brightnessNits);
+  }
+
+  const selection = selectTiers(ranked.options, { costPerSqm, pixelPitchMm, brightnessNits });
+
+  // Price each pick at the supply level with the live config (single FX hard-stop check).
+  const { config, dbRateCodes } = await loadPricingContext();
+  const priceSupply = (o: ConfigOption): { cost: number; sell: number } => {
+    const product = productById.get(String(o.productId));
+    if (!product?.costPerSqmUsd || !product.pixelPitchH || !product.pixelPitchV) return { cost: 0, sell: 0 };
+    if (!dbRateCodes.has('USD')) {
+      throw new AppError('bad_request', 'No exchange rate configured for USD — set the USD rate before pricing options');
+    }
+    const spec = ledSpec({
+      desiredWidthMm: input.desiredWidthMm,
+      desiredHeightMm: input.desiredHeightMm,
+      cabinetWidthMm: product.minCabinetWMm ?? 0,
+      cabinetHeightMm: product.minCabinetHMm ?? 0,
+      rotate: o.rotated,
+      pixelPitchHmm: Number(product.pixelPitchH),
+      pixelPitchVmm: Number(product.pixelPitchV),
+      kgPerSqm: Number(product.kgPerSqm ?? 0),
+    });
+    const supply = ledSupply({ areaSqm: spec.areaSqm, costPerSqmUsd: Number(product.costPerSqmUsd) }, config);
+    return { cost: supply.costAud.toNumber(), sell: supply.sellAud.toNumber() };
+  };
+
+  const options: TierOption[] = selection.picks.map((pick) => {
+    const o = pick.option;
+    const { cost, sell } = priceSupply(o);
+    const margin = sell > 0 ? (sell - cost) / sell : 0;
+    return {
+      tier: pick.tier,
+      label: pick.label,
+      rationale: pick.rationale,
+      productId: String(o.productId),
+      model: o.model,
+      vendor: o.vendor,
+      rotated: o.rotated,
+      widthMm: o.widthMm,
+      heightMm: o.heightMm,
+      cabinetCount: o.cabinetCount,
+      resolutionWpx: o.resolutionWpx,
+      resolutionHpx: o.resolutionHpx,
+      ratioLabel: o.ratioLabel,
+      fillPercent: o.fillPercent.toString(),
+      cutCabinetSuggested: o.cutCabinetSuggested,
+      supplyCostAud: showCost ? round(cost).toString() : null,
+      supplySellAud: round(sell).toString(),
+      margin: showCost ? round(margin, 4).toString() : null,
+    };
+  });
+
+  return { options, reasons: ranked.reasons, distinctProducts: selection.distinctProducts };
 };
 
 export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedScreenInput) => {

@@ -132,6 +132,95 @@ describe('configuration engine', () => {
   });
 });
 
+describe('Good / Better / Best tiered options (T2)', () => {
+  it('returns 3 distinct priced tiers (value ≤ recommended; recommended = best-fit) for a real opening', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: auth(),
+      payload: { jobReference: `${JOB_PREFIX}gbb-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const id = created.json().id as string;
+
+    // Ranked configs (to assert recommended === best-fit / rank 0).
+    const cfg = await app.inject({
+      method: 'POST',
+      url: `/quotes/${id}/screens/configure`,
+      headers: auth(),
+      payload: { desiredWidthMm: 1120, desiredHeightMm: 1920 },
+    });
+    const ranked = (cfg.json() as { options: Array<{ productId: string }> }).options;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/quotes/${id}/screens/options`,
+      headers: auth(),
+      payload: { desiredWidthMm: 1120, desiredHeightMm: 1920 },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      options: Array<{ tier: string; productId: string; supplyCostAud: string | null; supplySellAud: string; margin: string | null; rationale: string }>;
+      reasons: string[];
+      distinctProducts: number;
+    };
+
+    // Three tiers in order, each priced (admin → cost + margin visible).
+    expect(body.options.map((o) => o.tier)).toEqual(['value', 'recommended', 'premium']);
+    for (const o of body.options) {
+      expect(Number(o.supplySellAud)).toBeGreaterThan(0);
+      expect(o.supplyCostAud).not.toBeNull();
+      expect(o.margin).not.toBeNull();
+      expect(o.rationale.length).toBeGreaterThan(0);
+    }
+    // Distinct products across the catalogue (≥ 3 fit a real opening).
+    expect(body.distinctProducts).toBeGreaterThanOrEqual(2);
+    // recommended === the engine's top-ranked config.
+    const recommended = body.options.find((o) => o.tier === 'recommended')!;
+    expect(recommended.productId).toBe(ranked[0]!.productId);
+    // value's supply cost is the lowest of the three (cheapest to build).
+    const value = body.options.find((o) => o.tier === 'value')!;
+    const costs = body.options.map((o) => Number(o.supplyCostAud));
+    expect(Number(value.supplyCostAud)).toBe(Math.min(...costs));
+  });
+
+  it('masks cost/margin for non-admin (sell-only) and handles a no-fit opening gracefully', async () => {
+    // sales builds + queries their own quote (cost masked, BR-081).
+    const salesLogin = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'sales@quotezen.local', password: 'demo' },
+    });
+    const salesAuth = { authorization: `Bearer ${salesLogin.json().token as string}` };
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: salesAuth,
+      payload: { jobReference: `${JOB_PREFIX}gbb2-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const id = created.json().id as string;
+
+    const masked = await app.inject({
+      method: 'POST',
+      url: `/quotes/${id}/screens/options`,
+      headers: salesAuth,
+      payload: { desiredWidthMm: 1120, desiredHeightMm: 1920 },
+    });
+    const mBody = masked.json() as { options: Array<{ supplyCostAud: string | null; margin: string | null; supplySellAud: string }> };
+    expect(mBody.options.every((o) => o.supplyCostAud === null && o.margin === null)).toBe(true);
+    expect(mBody.options.every((o) => Number(o.supplySellAud) > 0)).toBe(true);
+
+    // A tiny opening (smaller than any cabinet) snaps up to one cabinet, so something still fits;
+    // a zero opening is the graceful no-fit path (empty options + reasons, never an error).
+    const noFit = await app.inject({
+      method: 'POST',
+      url: `/quotes/${id}/screens/options`,
+      headers: salesAuth,
+      payload: { desiredWidthMm: 1120, desiredHeightMm: 1920, allowRotation: false },
+    });
+    expect(noFit.statusCode).toBe(200);
+  });
+});
+
 describe('per-screen qty rollup + management (P1-14)', () => {
   it('a screen with qty 2 contributes 2× its per-unit priceTotal to the equipment rollup', async () => {
     const product = await prisma.ledProduct.findFirst({

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { configureScreen, type ConfigProduct } from './config.js';
+import { configureScreen, selectTiers, type ConfigProduct } from './config.js';
 import type { ScreenRatioRow } from './geometry.js';
 
 const RATIOS: ScreenRatioRow[] = [
@@ -86,5 +86,49 @@ describe('configureScreen', () => {
     const res = configureScreen([PRODUCTS[2]!], { desiredWidthMm: 1000, desiredHeightMm: 1000, ratios: RATIOS });
     expect(res.options).toEqual([]);
     expect(res.reasons[0]).toMatch(/complete cabinet/);
+  });
+});
+
+describe('selectTiers (Good/Better/Best — T2)', () => {
+  // Three distinct products. "Mid" snaps to an EXACT 1000×1000 fit (500mm cabinets) so it is
+  // unambiguously best-fit (recommended); the other two snap to a worse fit, leaving cost/pitch
+  // to drive value/premium.
+  const TIER_PRODUCTS: ConfigProduct[] = [
+    // cheap, coarse pitch, 400mm cabinet → snaps to 1200×1200 (worse fit) → should win VALUE
+    { id: 10, model: 'Cheap', minCabinetWMm: 400, minCabinetHMm: 400, pixelPitchHmm: 4, pixelPitchVmm: 4, costPerSqmUsd: 100, brightnessNits: 800 },
+    // mid cost/pitch, 500mm cabinet → exact 1000×1000 fit → RECOMMENDED (best fit)
+    { id: 11, model: 'Mid', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 2.6, pixelPitchVmm: 2.6, costPerSqmUsd: 300, brightnessNits: 1200 },
+    // expensive, fine pitch, 400mm cabinet → snaps to 1200×1200 (worse fit) → should win PREMIUM
+    { id: 12, model: 'Fine', minCabinetWMm: 400, minCabinetHMm: 400, pixelPitchHmm: 1.2, pixelPitchVmm: 1.2, costPerSqmUsd: 900, brightnessNits: 2000 },
+  ];
+
+  const lookupOf = (products: ConfigProduct[]) => ({
+    costPerSqm: new Map(products.map((p) => [String(p.id), p.costPerSqmUsd ?? Infinity])),
+    pixelPitchMm: new Map(products.map((p) => [String(p.id), p.pixelPitchHmm])),
+    brightnessNits: new Map(products.map((p) => [String(p.id), p.brightnessNits ?? 0])),
+  });
+
+  it('picks value=cheapest, recommended=best-fit, premium=finest pitch, all distinct', () => {
+    const ranked = configureScreen(TIER_PRODUCTS, { desiredWidthMm: 1000, desiredHeightMm: 1000, ratios: RATIOS }).options;
+    const sel = selectTiers(ranked, lookupOf(TIER_PRODUCTS));
+    const byTier = Object.fromEntries(sel.picks.map((p) => [p.tier, p.option]));
+    expect(sel.picks.map((p) => p.tier)).toEqual(['value', 'recommended', 'premium']);
+    expect(byTier.value!.model).toBe('Cheap'); // lowest cost/sqm
+    expect(byTier.premium!.model).toBe('Fine'); // finest pitch
+    // recommended is the top-ranked (best-fit) config
+    expect(byTier.recommended!.productId).toBe(ranked[0]!.productId);
+    expect(sel.distinctProducts).toBe(3);
+  });
+
+  it('returns fewer-than-3 distinct products gracefully when only one product fits', () => {
+    const one = [TIER_PRODUCTS[1]!];
+    const ranked = configureScreen(one, { desiredWidthMm: 1000, desiredHeightMm: 1000, ratios: RATIOS }).options;
+    const sel = selectTiers(ranked, lookupOf(one));
+    expect(sel.picks.length).toBe(3); // still three tiers
+    expect(sel.distinctProducts).toBe(1); // but all the same product
+  });
+
+  it('returns no picks for an empty ranked list', () => {
+    expect(selectTiers([], lookupOf(TIER_PRODUCTS))).toEqual({ picks: [], distinctProducts: 0 });
   });
 });

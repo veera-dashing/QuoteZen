@@ -295,6 +295,17 @@ interface ConfigOption {
   cutCabinetSuggested: boolean;
 }
 
+// Good / Better / Best tiered option (T2): a ranked config + tier label/rationale + supply price.
+interface TierOption extends ConfigOption {
+  tier: 'value' | 'recommended' | 'premium';
+  label: string;
+  rationale: string;
+  vendor?: string | null;
+  supplyCostAud: string | null;
+  supplySellAud: string;
+  margin: string | null;
+}
+
 // The optional LED option/service lookups: each is its own admin CRUD table, served by
 // GET /admin/<slug>?take=200 → { rows }, all using `name` as the human title field.
 const LED_OPTION_TABLES = [
@@ -336,6 +347,10 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
   const [err, setErr] = useState<string | null>(null);
   const [options, setOptions] = useState<ConfigOption[] | null>(null);
   const [reasons, setReasons] = useState<string[]>([]);
+  // Good / Better / Best tiered options (T2).
+  const [tiers, setTiers] = useState<TierOption[] | null>(null);
+  const [tierReasons, setTierReasons] = useState<string[]>([]);
+  const [distinctProducts, setDistinctProducts] = useState(0);
   // Optional options/services: catalog rows per table + the chosen id per field.
   const [optionRows, setOptionRows] = useState<Record<LedOptionKey, Opt[]>>(
     () => Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, [] as Opt[]])) as unknown as Record<LedOptionKey, Opt[]>,
@@ -454,6 +469,25 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
     }
   };
 
+  // Good / Better / Best: three priced tiers (Value / Recommended / Premium) for the opening.
+  const loadTiers = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await api<{ options: TierOption[]; reasons: string[]; distinctProducts: number }>(
+        `/quotes/${quote.id}/screens/options`,
+        { method: 'POST', body: JSON.stringify({ desiredWidthMm: Number(w), desiredHeightMm: Number(h), allowRotation: rotate }) },
+      );
+      setTiers(res.options);
+      setTierReasons(res.reasons);
+      setDistinctProducts(res.distinctProducts);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Add a component row from the draft pickers (one type + one catalog item + qty).
   const addComponent = () => {
     if (!draftItem) return;
@@ -496,6 +530,7 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
       });
       setName('');
       setOptions(null);
+      setTiers(null);
       await onChange();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed');
@@ -555,8 +590,71 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
           <button className="primary" onClick={configure} disabled={busy}>
             {busy ? 'Configuring…' : '🔍 Find best-fit products'}
           </button>
+          <button onClick={loadTiers} disabled={busy} style={{ marginLeft: 8 }}>
+            {busy ? 'Comparing…' : '⚖️ Good / Better / Best'}
+          </button>
         </div>
       </div>
+
+      {tiers && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Good / Better / Best</h3>
+          {tiers.length === 0 && <p className="muted">No options: {tierReasons.join(' ')}</p>}
+          {tiers.length > 0 && (
+            <>
+              {distinctProducts < 3 && (
+                <p className="muted">
+                  Only {distinctProducts} distinct product{distinctProducts === 1 ? '' : 's'} fit this opening —
+                  some tiers reuse the same product.
+                </p>
+              )}
+              <p className="muted">
+                Prices shown are the LED <strong>supply</strong> figure (panel material) for a like-for-like
+                comparison; install, frame and components are added when you place the screen.
+              </p>
+              <div className="grid3" style={{ alignItems: 'stretch' }}>
+                {tiers.map((t) => (
+                  <div
+                    key={t.tier}
+                    className="card"
+                    style={{
+                      margin: 0,
+                      borderColor: t.tier === 'recommended' ? 'var(--accent, #4f46e5)' : undefined,
+                      borderWidth: t.tier === 'recommended' ? 2 : undefined,
+                    }}
+                  >
+                    <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>
+                      {t.label}
+                    </div>
+                    <p className="muted" style={{ marginTop: 0 }}>{t.rationale}</p>
+                    <div style={{ fontWeight: 600 }}>{t.model}{t.rotated ? ' (rot)' : ''}</div>
+                    <table style={{ width: '100%', fontSize: 13, margin: '8px 0' }}>
+                      <tbody>
+                        <tr><td className="muted">Size (mm)</td><td>{t.widthMm}×{t.heightMm}</td></tr>
+                        <tr><td className="muted">Resolution</td><td>{t.resolutionWpx}×{t.resolutionHpx}</td></tr>
+                        <tr><td className="muted">Ratio</td><td>{t.ratioLabel ?? '—'}</td></tr>
+                        <tr><td className="muted">Fill %</td><td>{t.fillPercent}</td></tr>
+                        <tr><td className="muted">Cabinets</td><td>{t.cabinetCount}</td></tr>
+                        <tr><td className="muted">Cut?</td><td>{t.cutCabinetSuggested ? '⚠️ yes' : '—'}</td></tr>
+                        <tr><td className="muted">Supply sell</td><td>${t.supplySellAud}</td></tr>
+                        {getRole() === 'admin' && (
+                          <>
+                            <tr><td className="muted">Supply cost</td><td>{t.supplyCostAud ? `$${t.supplyCostAud}` : '—'}</td></tr>
+                            <tr><td className="muted">Margin</td><td>{t.margin ? `${(Number(t.margin) * 100).toFixed(1)}%` : '—'}</td></tr>
+                          </>
+                        )}
+                      </tbody>
+                    </table>
+                    <button className="primary" onClick={() => addScreen(t.productId, t.rotated)} disabled={busy} style={{ width: '100%' }}>
+                      Use this option
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {options && (
         <div className="card">

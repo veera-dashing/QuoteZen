@@ -56,6 +56,7 @@ import {
   addLedScreen,
   addLicence,
   configureForQuote,
+  optionsForQuote,
   deleteLedScreen,
   duplicateLedScreen,
   reorderLedScreens,
@@ -340,6 +341,14 @@ export const quoteRoutes = async (
     await assertOwnership(id, actor(request));
     const body = parse(configureSchema, request.body);
     return configureForQuote(id, body);
+  });
+
+  // ── Good / Better / Best tiered options (T2 / FR-057 / FR-067): three priced tiers for an opening ──
+  app.post('/quotes/:id/screens/options', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const body = parse(configureSchema, request.body);
+    return optionsForQuote(id, body, actor(request).role === 'admin');
   });
 
   // ── Child line items (wizard steps) ──

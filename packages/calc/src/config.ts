@@ -171,3 +171,119 @@ export const configureScreen = (
 
   return { options: deduped, reasons: [] };
 };
+
+/**
+ * Good / Better / Best — tiered options (T2; Workshop "Capability 6", FR-057 / FR-067).
+ *
+ * Pure, deterministic SELECTION of three distinct configurations from the ranked output of
+ * {@link configureScreen} (option *generation* is deterministic per the LLM map — only the rationale
+ * narrative is generation, so each tier carries a fixed rationale string). The three tiers are:
+ *
+ *  - **value** ("Budget / Bronze"): the lowest supply *cost/sqm* product that fits (cheapest to build).
+ *  - **recommended** ("Ideal"): the engine's top-ranked best-fit config (closest area fit).
+ *  - **premium** ("Stretch / Gold"): a higher-spec fit — finest pixel pitch (image quality), with
+ *    brightness as a tiebreak.
+ *
+ * Tiers are picked over *distinct products* where possible: recommended is taken first, then value
+ * and premium each skip any product already taken (falling back to the same product only if fewer
+ * than three valid products exist — `distinctProducts` reports how many we actually found). Pricing
+ * (supply → sell + margin) is NOT done here — it stays in the API where the live PricingConfig + FX
+ * live; this only decides *which* configs make up the comparison.
+ */
+export type OptionTier = 'value' | 'recommended' | 'premium';
+
+export interface TierPick {
+  tier: OptionTier;
+  label: string;
+  rationale: string;
+  option: ConfigOption;
+}
+
+export interface TierSelection {
+  picks: TierPick[];
+  /** How many distinct products are represented across the picks (1..3). */
+  distinctProducts: number;
+}
+
+const TIER_META: Record<OptionTier, { label: string; rationale: string }> = {
+  value: {
+    label: 'Value (Budget / Bronze)',
+    rationale: 'Lowest supply cost that fits the opening — the most economical build.',
+  },
+  recommended: {
+    label: 'Recommended (Ideal)',
+    rationale: "The engine's best-fit configuration — closest match to the requested opening.",
+  },
+  premium: {
+    label: 'Premium (Stretch / Gold)',
+    rationale: 'Finest pixel pitch that fits — the highest image quality for this opening.',
+  },
+};
+
+/** Per-product cost/brightness lookup used to rank the value/premium tiers (keyed by productId). */
+export interface TierSelectInput {
+  /** Supply cost per square metre (USD) — drives the value tier. Missing → treated as +∞ (never cheapest). */
+  costPerSqm: Map<string, number>;
+  /** Pixel pitch (mm) — drives the premium tier (finer = better). Missing → treated as +∞ (never finest). */
+  pixelPitchMm: Map<string, number>;
+  /** Brightness (nits) — premium tiebreak (brighter wins). Missing → treated as 0. */
+  brightnessNits?: Map<string, number>;
+}
+
+/**
+ * Select up to three tiers (value/recommended/premium) from ranked configs. Deterministic and stable:
+ * given identical ranked input + lookups, always returns the same picks in tier order.
+ */
+export const selectTiers = (
+  ranked: readonly ConfigOption[],
+  lookup: TierSelectInput,
+): TierSelection => {
+  if (ranked.length === 0) return { picks: [], distinctProducts: 0 };
+
+  const key = (o: ConfigOption) => String(o.productId);
+  const cost = (o: ConfigOption) => lookup.costPerSqm.get(key(o)) ?? Number.POSITIVE_INFINITY;
+  const pitch = (o: ConfigOption) => lookup.pixelPitchMm.get(key(o)) ?? Number.POSITIVE_INFINITY;
+  const nits = (o: ConfigOption) => lookup.brightnessNits?.get(key(o)) ?? 0;
+
+  // Recommended = the top-ranked (best-fit) config — index 0 of the ranked list.
+  const recommended = ranked[0]!;
+
+  // Value = cheapest cost/sqm; tiebreak by best fit (earlier in ranked order), then model.
+  const byCost = [...ranked].sort((a, b) => {
+    const ca = cost(a);
+    const cb = cost(b);
+    if (ca !== cb) return ca - cb;
+    return ranked.indexOf(a) - ranked.indexOf(b);
+  });
+
+  // Premium = finest pitch; tiebreak by brightness (desc), then best fit, then model.
+  const byPremium = [...ranked].sort((a, b) => {
+    const pa = pitch(a);
+    const pb = pitch(b);
+    if (pa !== pb) return pa - pb;
+    if (nits(a) !== nits(b)) return nits(b) - nits(a);
+    return ranked.indexOf(a) - ranked.indexOf(b);
+  });
+
+  // Pick distinct products where possible: take recommended first, then value/premium skipping
+  // products already used; fall back to the best available (possibly a repeat) if nothing else fits.
+  const usedProducts = new Set<string>([key(recommended)]);
+  const firstUnused = (sorted: ConfigOption[]): ConfigOption => {
+    const fresh = sorted.find((o) => !usedProducts.has(key(o)));
+    return fresh ?? sorted[0]!;
+  };
+
+  const value = firstUnused(byCost);
+  usedProducts.add(key(value));
+  const premium = firstUnused(byPremium);
+  usedProducts.add(key(premium));
+
+  const picks: TierPick[] = [
+    { tier: 'value', ...TIER_META.value, option: value },
+    { tier: 'recommended', ...TIER_META.recommended, option: recommended },
+    { tier: 'premium', ...TIER_META.premium, option: premium },
+  ];
+
+  const distinctProducts = new Set(picks.map((p) => key(p.option))).size;
+  return { picks, distinctProducts };
+};
