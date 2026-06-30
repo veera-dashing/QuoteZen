@@ -3,6 +3,7 @@ import {
   CURRENCY_CODES,
   LED_COMPONENT_TYPES,
   LICENCE_TIERS,
+  ORIENTATIONS,
   QUOTE_STATUSES,
   SCREEN_TYPES,
 } from './enums.js';
@@ -90,6 +91,11 @@ export const ledScreenSchema = z.object({
   desiredWidthMm: z.coerce.number().int().positive().optional(),
   desiredHeightMm: z.coerce.number().int().positive().optional(),
   rotateCabinets: z.boolean().default(false),
+  orientation: z.enum(ORIENTATIONS).optional(),
+  aspectRatioId: idSchema.optional(),
+  backCover: z.boolean().default(false),
+  frameNote: z.string().max(500).optional(),
+  serviceDescriptionSuffix: z.string().max(500).optional(),
   gobId: idSchema.optional(),
   frameId: idSchema.optional(),
   trimId: idSchema.optional(),
@@ -117,6 +123,7 @@ export const lcdItemSchema = z.object({
 
 export const lcdScreenSchema = z.object({
   screenName: z.string().max(120).optional(),
+  orientation: z.enum(['P', 'L']).optional(),
   displayId: idSchema.optional(),
   installMethodId: idSchema.optional(),
   serviceHoursId: idSchema.optional(),

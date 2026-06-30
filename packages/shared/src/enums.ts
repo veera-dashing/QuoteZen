@@ -32,3 +32,7 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 export const USER_ROLES = ['admin', 'sales', 'viewer'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
+
+/** LED screen orientation (LED-1 E10). */
+export const ORIENTATIONS = ['Landscape', 'Portrait'] as const;
+export type Orientation = (typeof ORIENTATIONS)[number];

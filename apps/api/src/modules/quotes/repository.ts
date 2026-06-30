@@ -16,6 +16,7 @@ export const quoteInclude = {
       },
       costBreakdown: true,
       ledProduct: true,
+      aspectRatio: true,
       warranty: true,
       serviceHours: true,
       installMethod: true,

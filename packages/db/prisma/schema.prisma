@@ -420,6 +420,8 @@ model ScreenRatio {
   ratioLabel String  @map("ratio_label")
   deprecated Boolean @default(false) @map("deprecated")
 
+  ledScreens QuoteLedScreen[]
+
   @@map("screen_ratios")
 }
 
@@ -797,6 +799,12 @@ model QuoteLedScreen {
   desiredWidthMm      Int?     @map("desired_width_mm")
   desiredHeightMm     Int?     @map("desired_height_mm")
   rotateCabinets      Boolean  @default(false) @map("rotate_cabinets")
+  // LED-1 input fields (S0): orientation/aspect drive UI auto-calc; back_cover may later feed pricing.
+  orientation         String?  @map("orientation")
+  aspectRatioId       BigInt?  @map("aspect_ratio_id")
+  backCover           Boolean  @default(false) @map("back_cover")
+  frameNote           String?  @map("frame_note")
+  serviceDescriptionSuffix String? @map("service_description_suffix")
   gobId               BigInt?  @map("gob_id")
   frameId             BigInt?  @map("frame_id")
   trimId              BigInt?  @map("trim_id")
@@ -848,6 +856,7 @@ model QuoteLedScreen {
   // Catalog FKs are Restrict (P1-08.4 / P1-11.4): a saved quote pins its referenced catalog rows so
   // the price snapshot stays meaningful — deleting a referenced row is blocked (→ deprecate instead).
   ledProduct      LedProduct?         @relation(fields: [ledProductId], references: [id], onDelete: Restrict)
+  aspectRatio     ScreenRatio?        @relation(fields: [aspectRatioId], references: [id], onDelete: Restrict)
   gob             GobOption?          @relation(fields: [gobId], references: [id], onDelete: Restrict)
   frame           Frame?              @relation(fields: [frameId], references: [id], onDelete: Restrict)
   trim            TrimOption?         @relation(fields: [trimId], references: [id], onDelete: Restrict)
@@ -908,6 +917,7 @@ model QuoteLcdScreen {
   seq                    Int      @default(1)
   sortOrder              Int      @default(0) @map("sort_order")
   screenName             String?  @map("screen_name")
+  orientation            String?  @map("orientation")
   displayId              BigInt?  @map("display_id")
   installMethodId        BigInt?  @map("install_method_id")
   serviceHoursId         BigInt?  @map("service_hours_id")

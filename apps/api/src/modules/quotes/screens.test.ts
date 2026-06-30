@@ -285,6 +285,66 @@ describe('missing-rate hard stops (P1-16.9 / P1-07.5) + rule-set snapshot (P1-04
   });
 });
 
+describe('per-screen input fields round-trip (S0)', () => {
+  it('persists orientation + aspectRatioId + backCover on an LED screen and returns the ratio label', async () => {
+    const product = await prisma.ledProduct.findFirst({
+      where: { minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchH: { not: null }, costPerSqmUsd: { not: null } },
+    });
+    const ratio = await prisma.screenRatio.findFirst({ where: { deprecated: false } });
+    expect(ratio).toBeTruthy();
+
+    const created = await app.inject({
+      method: 'POST', url: '/quotes', headers: auth(),
+      payload: { jobReference: `${JOB_PREFIX}inputs-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const quoteId = created.json().id as string;
+
+    const led = await app.inject({
+      method: 'POST', url: `/quotes/${quoteId}/led-screens`, headers: auth(),
+      payload: {
+        screenName: 'Inputs screen',
+        ledProductId: Number(product!.id),
+        desiredWidthMm: 1120,
+        desiredHeightMm: 1920,
+        rotateCabinets: true,
+        orientation: 'Portrait',
+        aspectRatioId: Number(ratio!.id),
+        backCover: true,
+        frameNote: 'Custom housing',
+        serviceDescriptionSuffix: 'after hours',
+      },
+    });
+    expect(led.statusCode).toBe(201);
+    const screen = led.json();
+    expect(screen.orientation).toBe('Portrait');
+    expect(screen.backCover).toBe(true);
+    expect(String(screen.aspectRatioId)).toBe(String(ratio!.id));
+    expect(screen.frameNote).toBe('Custom housing');
+    expect(screen.serviceDescriptionSuffix).toBe('after hours');
+
+    // GET the quote → the include should resolve the aspectRatio label
+    const quote = await app.inject({ method: 'GET', url: `/quotes/${quoteId}`, headers: auth() });
+    const got = (quote.json() as { ledScreens: Array<{ orientation: string; backCover: boolean; aspectRatio: { ratioLabel: string } | null }> }).ledScreens[0]!;
+    expect(got.orientation).toBe('Portrait');
+    expect(got.backCover).toBe(true);
+    expect(got.aspectRatio?.ratioLabel).toBe(ratio!.ratioLabel);
+  });
+
+  it('persists orientation on an LCD screen', async () => {
+    const created = await app.inject({
+      method: 'POST', url: '/quotes', headers: auth(),
+      payload: { jobReference: `${JOB_PREFIX}lcd-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const quoteId = created.json().id as string;
+    const lcd = await app.inject({
+      method: 'POST', url: `/quotes/${quoteId}/lcd-screens`, headers: auth(),
+      payload: { screenName: 'LCD', orientation: 'P', items: [] },
+    });
+    expect(lcd.statusCode).toBe(201);
+    expect(lcd.json().orientation).toBe('P');
+  });
+});
+
 describe('quote wizard backend', () => {
   it('prices an LED screen from a real product and rolls it into the quote total', async () => {
     // a product with the specs needed to price (cabinet dims, pitch, cost/sqm)
