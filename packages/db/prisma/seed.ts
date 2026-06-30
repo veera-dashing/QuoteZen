@@ -42,10 +42,13 @@ const SETTINGS: Array<{ key: string; label: string; value: number; unit: string 
   { key: 'packaging_pct', label: 'Packaging %', value: 0, unit: 'fraction' },
   { key: 'receiver_card_cost', label: 'Receiver Card Cost (per cabinet)', value: 0, unit: '$' },
   { key: 'margin_floor', label: 'Margin Floor', value: 0.2, unit: 'fraction' },
-  // LCD-1 F31: out-of-hours labour uplift applied to install/labour cost when Service Hours ≠
-  // "Business Hours". The workbook derives it from install-hours (SUM(K28:K29)); that hours math is
-  // not fully recoverable here, so a config-driven % on the install/labour cost subtotal is used.
-  { key: 'out_of_hours_uplift_pct', label: 'Out-of-Hours Labour Uplift %', value: 0.25, unit: 'fraction' },
+  // LCD-1 out-of-hours uplift is a LABOUR-COST calc (workbook F31 = SUM(K28:K29) × the uplift rate):
+  // install hours = install-line cost ÷ install hourly cost ($95/hr); site-attendance is excluded —
+  // it divides by /135 and is not part of SUM(K28:K29). When Service Hours ≠ "Business Hours" those
+  // hours are charged at the "Out of Hours uplift" rate (LCDRef r471: $50 cost / $80 sell per hour).
+  { key: 'install_hourly_cost', label: 'Install Labour Cost (per hour)', value: 95, unit: '$' },
+  { key: 'out_of_hours_rate_cost', label: 'Out-of-Hours Uplift Cost (per hour)', value: 50, unit: '$' },
+  { key: 'out_of_hours_rate_sell', label: 'Out-of-Hours Uplift Sell (per hour)', value: 80, unit: '$' },
 ];
 
 const SEAFREIGHT: Array<{ label: string; value: number; currency?: string }> = [

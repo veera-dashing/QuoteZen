@@ -333,8 +333,10 @@ workbook); this exposed the rest in the wizard + added the input-time rules. 146
   rows + templates (parking $50, travel $75, induction, per-hour), per-section subtotals + live total.
   `addLcdScreen` resolves catalog cost server-side (snapshot), applies the fixed `lcd_margin` gross-up per
   line (Σ line sells == `priceTotal`, rounded to $10), and adds an **out-of-hours uplift** line when service
-  hours ≠ "Business Hours" (`out_of_hours_uplift_pct` setting, default 25% — documented assumption since the
-  sheet's exact hours-math isn't recoverable); persists screen/bracket/services subtotals; audited.
+  hours ≠ "Business Hours". The uplift is a **labour-cost calc** (workbook F31 = SUM(K28:K29) × rate):
+  install labour hours = install-line cost ÷ `install_hourly_cost` ($95/hr; site-attendance excluded, it
+  divides by /135 and isn't in SUM(K28:K29)), charged at the LCDRef uplift rate `out_of_hours_rate_cost`
+  ($50/hr) / `out_of_hours_rate_sell` ($80/hr). Persists screen/bracket/services subtotals; audited.
 
 **Still backlogged (deferred by decision / needs infra):** Google OAuth (P1-02) + Zoho (P1-19a/b/c) and
 all Phase-2 AI (P2-*) — deferred by decision; real S3 + AV scanning for uploads (the prototype uses

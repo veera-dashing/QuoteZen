@@ -514,9 +514,10 @@ export const setLedScreenQty = async (userId: bigint, quoteId: bigint, screenId:
  *   of line sells equals the grossed-up total, so the quote rollup (which sums line sells) and this
  *   total never drift. A manual row that already carries a `unitSell` keeps it (an explicit price);
  *   otherwise sell is computed from cost.
- * - **Out-of-hours uplift (F31):** when Service Hours ≠ "Business Hours", an uplift is added on the
- *   install+labour COST subtotal (config-driven `out_of_hours_uplift_pct`; see seed note) and
- *   grossed up by the same margin.
+ * - **Out-of-hours uplift (F31) — a labour-cost calc:** when Service Hours ≠ "Business Hours", the
+ *   install labour HOURS (install-line cost ÷ `install_hourly_cost`, $95/hr; site-attendance excluded —
+ *   the workbook divides it by /135 and leaves it out of SUM(K28:K29)) are charged at the out-of-hours
+ *   uplift rate (`out_of_hours_rate_cost` $50/hr cost, `out_of_hours_rate_sell` $80/hr sell — LCDRef r471).
  *
  * Subtotals are persisted into `priceScreenMediaplayer` (display+mediaplayer sells),
  * `priceBracketShroud` (bracket sells) and `priceServices` (install+labour+location sells).
@@ -531,8 +532,15 @@ export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdSc
     ? await prisma.serviceHoursOption.findUnique({ where: { id: BigInt(input.serviceHoursId) } })
     : null;
   const outOfHours = !!serviceHours && serviceHours.name !== 'Business Hours';
-  const upliftSetting = await prisma.setting.findUnique({ where: { key: 'out_of_hours_uplift_pct' } });
-  const upliftPct = upliftSetting ? Number(upliftSetting.value) : 0;
+  // Out-of-hours uplift is a LABOUR-COST calc: install hours = install-line cost ÷ install hourly cost,
+  // charged at the uplift rate per hour (cost/sell). Rates are settings (workbook/LCDRef defaults).
+  const settingNum = async (key: string, fallback: number): Promise<number> => {
+    const s = await prisma.setting.findUnique({ where: { key } });
+    return s ? Number(s.value) : fallback;
+  };
+  const installHourlyCost = await settingNum('install_hourly_cost', 95);
+  const oohRateCost = await settingNum('out_of_hours_rate_cost', 50);
+  const oohRateSell = await settingNum('out_of_hours_rate_sell', 80);
 
   // Resolve every line's authoritative cost; catalog rows win over client-sent prices.
   type Resolved = {
@@ -571,19 +579,20 @@ export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdSc
     });
   }
 
-  // Out-of-hours uplift: a synthetic services line on the install+labour COST subtotal (F31).
-  if (outOfHours && upliftPct > 0) {
-    const labourCost = resolved
-      .filter((r) => r.itemType === 'install' || r.itemType === 'labour')
-      .reduce((acc, r) => acc + r.unitCost * r.qty, 0);
-    const upliftCost = round(labourCost * upliftPct).toNumber();
-    if (upliftCost > 0) {
+  // Out-of-hours uplift (F31 = SUM(K28:K29) × rate): install labour HOURS charged at the uplift rate.
+  // Install hours = install-line cost ÷ install hourly cost; site-attendance is excluded (workbook /135,
+  // not part of SUM(K28:K29)). Sell uses the uplift sell rate directly (already a marked-up labour rate).
+  if (outOfHours && installHourlyCost > 0) {
+    const upliftHours = resolved
+      .filter((r) => r.itemType === 'install' && !/site attendance/i.test(r.description ?? ''))
+      .reduce((acc, r) => acc + (r.unitCost * r.qty) / installHourlyCost, 0);
+    if (upliftHours > 0) {
       resolved.push({
         itemType: 'install',
-        description: `Out of Hours uplift (${Math.round(upliftPct * 100)}%)`,
+        description: `Out of Hours uplift (${round(upliftHours).toNumber()} hrs @ $${oohRateCost}/hr)`,
         qty: 1,
-        unitCost: upliftCost,
-        unitSell: round(applyMargin(upliftCost, margin)).toNumber(),
+        unitCost: round(upliftHours * oohRateCost).toNumber(),
+        unitSell: round(upliftHours * oohRateSell).toNumber(),
       });
     }
   }

@@ -357,8 +357,13 @@ describe('LCD-1 faithful pricing (S2)', () => {
 
     const outOfHours = await prisma.serviceHoursOption.findFirst({ where: { name: { not: 'Business Hours' } } });
     expect(outOfHours).toBeTruthy();
-    const uplift = await prisma.setting.findUnique({ where: { key: 'out_of_hours_uplift_pct' } });
-    const upliftPct = uplift ? Number(uplift.value) : 0.25;
+    // Out-of-hours uplift is hours-based: install hours = install cost / install_hourly_cost ($95),
+    // charged at the uplift rate ($50 cost / $80 sell per hour). Defaults if settings absent.
+    const num = async (k: string, d: number) =>
+      Number((await prisma.setting.findUnique({ where: { key: k } }))?.value ?? d);
+    const installHourly = await num('install_hourly_cost', 95);
+    const oohCost = await num('out_of_hours_rate_cost', 50);
+    const oohSell = await num('out_of_hours_rate_sell', 80);
 
     const created = await app.inject({
       method: 'POST', url: '/quotes', headers: auth(),
@@ -395,18 +400,22 @@ describe('LCD-1 faithful pricing (S2)', () => {
     expect(Number(installItem.unitCost)).toBe(95);
     expect(Number(installItem.unitSell)).toBe(sellAtMargin(95));
 
-    // Out-of-hours uplift line: on the install+labour COST subtotal (95 + 30 = 125), grossed up.
-    const upliftCost = round2((95 + 30) * upliftPct);
+    // Out-of-hours uplift is a labour-cost calc: only the 'install' row (per-hour, $95) counts as hours
+    // (labour 'Consumables' is excluded — workbook K28:K29 are install rows). hours = 95/95 = 1 →
+    // cost = 1×$50, sell = 1×$80 (the uplift rate, NOT a margin gross-up).
+    const upliftHours = 95 / installHourly; // = 1
+    const upliftCost = round2(upliftHours * oohCost); // 50
+    const upliftSell = round2(upliftHours * oohSell); // 80
     const upliftItem = screen.items.find((i) => i.description?.startsWith('Out of Hours uplift'));
     expect(upliftItem).toBeTruthy();
     expect(Number(upliftItem!.unitCost)).toBe(upliftCost);
-    expect(Number(upliftItem!.unitSell)).toBe(sellAtMargin(upliftCost));
+    expect(Number(upliftItem!.unitSell)).toBe(upliftSell);
 
     // Section subtotals + grand total (G54: rounded to nearest 10).
     const expectScreenMp = sellAtMargin(displayCost) * 2;
     expect(Number(screen.priceScreenMediaplayer)).toBeCloseTo(expectScreenMp, 2);
     expect(Number(screen.priceBracketShroud)).toBe(0);
-    const expectServices = sellAtMargin(95) + sellAtMargin(30) + sellAtMargin(upliftCost);
+    const expectServices = sellAtMargin(95) + sellAtMargin(30) + upliftSell;
     expect(Number(screen.priceServices)).toBeCloseTo(expectServices, 2);
     const expectTotal = Math.round((expectScreenMp + expectServices) / 10) * 10;
     expect(Number(screen.priceTotal)).toBe(expectTotal);
