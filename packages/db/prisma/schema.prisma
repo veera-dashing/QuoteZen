@@ -213,6 +213,7 @@ model FreightOption {
   id   BigInt   @id @default(autoincrement())
   name String
   rate Decimal? @db.Decimal(12, 2)
+  deprecated Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]
 
@@ -261,6 +262,7 @@ model LedProduct {
   mechanicalOptions String? @map("mechanical_options")
   serviceAccess    String?  @map("service_access")
   priceValidFrom   DateTime? @map("price_valid_from")
+  deprecated       Boolean  @default(false) @map("deprecated")
 
   commentary LedCommentary[]
   ledScreens QuoteLedScreen[]
@@ -288,6 +290,7 @@ model Controller {
   maxPixels BigInt? @map("max_pixels")
   maxWidth  Int?    @map("max_width")
   price     Decimal @db.Decimal(12, 2)
+  deprecated Boolean @default(false) @map("deprecated")
 
   ledComponents QuoteLedComponent[]
 
@@ -298,6 +301,7 @@ model LedPeripheral {
   id    BigInt  @id @default(autoincrement())
   name  String
   price Decimal @db.Decimal(12, 2)
+  deprecated Boolean @default(false) @map("deprecated")
 
   ledComponents QuoteLedComponent[]
 
@@ -308,6 +312,7 @@ model GobOption {
   id    BigInt  @id @default(autoincrement())
   name  String
   price Decimal @db.Decimal(12, 2)
+  deprecated Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]
 
@@ -319,6 +324,7 @@ model TrimOption {
   name             String
   widthMultiplier  Decimal @map("width_multiplier") @db.Decimal(12, 4)
   heightMultiplier Decimal @map("height_multiplier") @db.Decimal(12, 4)
+  deprecated       Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]
 
@@ -329,6 +335,7 @@ model HangingBarOption {
   id              BigInt  @id @default(autoincrement())
   name            String
   widthMultiplier Decimal @map("width_multiplier") @db.Decimal(12, 4)
+  deprecated      Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]
 
@@ -341,6 +348,7 @@ model Frame {
   price         Decimal @db.Decimal(12, 2)
   backcoverCost Decimal @default(0) @map("backcover_cost") @db.Decimal(12, 2)
   installHours  Decimal @default(0) @map("install_hours") @db.Decimal(6, 2)
+  deprecated    Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]
 
@@ -351,6 +359,7 @@ model EngineeringOption {
   id    BigInt  @id @default(autoincrement())
   name  String
   price Decimal @db.Decimal(12, 2)
+  deprecated Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]
 
@@ -362,6 +371,7 @@ model InstallMethod {
   name            String
   wallRequirement String? @map("wall_requirement")
   powerDataNote   String? @map("power_data_note")
+  deprecated      Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]
   lcdScreens QuoteLcdScreen[]
@@ -373,6 +383,7 @@ model AccessEquipment {
   id      BigInt  @id @default(autoincrement())
   name    String
   dayRate Decimal @map("day_rate") @db.Decimal(12, 2)
+  deprecated Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]
 
@@ -383,6 +394,7 @@ model WarrantyOption {
   id    BigInt @id @default(autoincrement())
   name  String
   years Int
+  deprecated Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]
   lcdScreens QuoteLcdScreen[]
@@ -393,6 +405,7 @@ model WarrantyOption {
 model ServiceHoursOption {
   id   BigInt @id @default(autoincrement())
   name String
+  deprecated Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]
   lcdScreens QuoteLcdScreen[]
@@ -405,6 +418,7 @@ model ScreenRatio {
   minValue   Decimal @map("min_value") @db.Decimal(8, 2)
   maxValue   Decimal @map("max_value") @db.Decimal(8, 2)
   ratioLabel String  @map("ratio_label")
+  deprecated Boolean @default(false) @map("deprecated")
 
   @@map("screen_ratios")
 }
@@ -414,6 +428,7 @@ model Mediaplayer {
   name        String
   description String?
   cost        Decimal @db.Decimal(12, 2)
+  deprecated  Boolean @default(false) @map("deprecated")
 
   ledComponents    QuoteLedComponent[]
   quoteMediaplayers QuoteMediaplayer[]
@@ -427,6 +442,7 @@ model Peripheral {
   description String?
   cost        Decimal @db.Decimal(12, 2)
   sourceUrl   String? @map("source_url")
+  deprecated  Boolean @default(false) @map("deprecated")
 
   ledComponents    QuoteLedComponent[]
   quotePeripherals QuotePeripheral[]
@@ -447,6 +463,7 @@ model DisplayCatalog {
   totalCost   Decimal? @map("total_cost") @db.Decimal(12, 2)
   margin      Decimal? @db.Decimal(8, 4)
   sell        Decimal? @db.Decimal(12, 2)
+  deprecated  Boolean  @default(false) @map("deprecated")
 
   lcdScreens QuoteLcdScreen[]
   lcdItems   QuoteLcdItem[]
@@ -464,6 +481,7 @@ model ImportCatalog {
   cost        Decimal? @db.Decimal(12, 2)
   sell        Decimal? @db.Decimal(12, 2)
   partNumber  String?  @map("part_number")
+  deprecated  Boolean  @default(false) @map("deprecated")
 
   @@map("import_catalog")
 }
@@ -475,6 +493,7 @@ model ManufacturedProduct {
   brightness Int?
   cost       Decimal? @db.Decimal(12, 2)
   sell       Decimal? @db.Decimal(12, 2)
+  deprecated Boolean  @default(false) @map("deprecated")
 
   bom        ManufacturedBom[]
   quoteItems QuoteManufacturedItem[]
@@ -589,6 +608,7 @@ model SoftwareActivity {
   cost     Decimal @db.Decimal(12, 4)
   sell     Decimal @db.Decimal(12, 4)
   ratio    Decimal? @db.Decimal(8, 4)
+  deprecated Boolean @default(false) @map("deprecated")
 
   quoteItems QuoteSoftwareItem[]
 
@@ -602,6 +622,7 @@ model AudioProduct {
   sourceUrl String?  @map("source_url")
   cost      Decimal? @db.Decimal(12, 2)
   sell      Decimal? @db.Decimal(12, 2)
+  deprecated Boolean @default(false) @map("deprecated")
 
   quoteItems QuoteAudioItem[]
 
@@ -616,6 +637,7 @@ model MusicService {
   sell     Decimal? @db.Decimal(12, 2)
   sqmMin   Int?     @map("sqm_min")
   sqmMax   Int?     @map("sqm_max")
+  deprecated Boolean @default(false) @map("deprecated")
 
   quoteItems QuoteMusicItem[]
 
@@ -630,6 +652,7 @@ model HypervsnProduct {
   resellerAud  Decimal? @map("reseller_aud") @db.Decimal(12, 2)
   sellNzd      Decimal? @map("sell_nzd") @db.Decimal(12, 2)
   resellerNzd  Decimal? @map("reseller_nzd") @db.Decimal(12, 2)
+  deprecated   Boolean  @default(false) @map("deprecated")
 
   quoteItems QuoteHypervsnItem[]
 
@@ -822,17 +845,19 @@ model QuoteLedScreen {
   priceTotal             Decimal? @map("price_total") @db.Decimal(12, 2)
 
   quote           Quote               @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  ledProduct      LedProduct?         @relation(fields: [ledProductId], references: [id])
-  gob             GobOption?          @relation(fields: [gobId], references: [id])
-  frame           Frame?              @relation(fields: [frameId], references: [id])
-  trim            TrimOption?         @relation(fields: [trimId], references: [id])
-  hangingBar      HangingBarOption?   @relation(fields: [hangingBarId], references: [id])
-  engineering     EngineeringOption?  @relation(fields: [engineeringId], references: [id])
-  installMethod   InstallMethod?      @relation(fields: [installMethodId], references: [id])
-  freightOption   FreightOption?      @relation(fields: [freightOptionId], references: [id])
-  warranty        WarrantyOption?     @relation(fields: [warrantyId], references: [id])
-  serviceHours    ServiceHoursOption? @relation(fields: [serviceHoursId], references: [id])
-  accessEquipment AccessEquipment?    @relation(fields: [accessEquipmentId], references: [id])
+  // Catalog FKs are Restrict (P1-08.4 / P1-11.4): a saved quote pins its referenced catalog rows so
+  // the price snapshot stays meaningful — deleting a referenced row is blocked (→ deprecate instead).
+  ledProduct      LedProduct?         @relation(fields: [ledProductId], references: [id], onDelete: Restrict)
+  gob             GobOption?          @relation(fields: [gobId], references: [id], onDelete: Restrict)
+  frame           Frame?              @relation(fields: [frameId], references: [id], onDelete: Restrict)
+  trim            TrimOption?         @relation(fields: [trimId], references: [id], onDelete: Restrict)
+  hangingBar      HangingBarOption?   @relation(fields: [hangingBarId], references: [id], onDelete: Restrict)
+  engineering     EngineeringOption?  @relation(fields: [engineeringId], references: [id], onDelete: Restrict)
+  installMethod   InstallMethod?      @relation(fields: [installMethodId], references: [id], onDelete: Restrict)
+  freightOption   FreightOption?      @relation(fields: [freightOptionId], references: [id], onDelete: Restrict)
+  warranty        WarrantyOption?     @relation(fields: [warrantyId], references: [id], onDelete: Restrict)
+  serviceHours    ServiceHoursOption? @relation(fields: [serviceHoursId], references: [id], onDelete: Restrict)
+  accessEquipment AccessEquipment?    @relation(fields: [accessEquipmentId], references: [id], onDelete: Restrict)
 
   components     QuoteLedComponent[]
   costBreakdown  QuoteLedCostBreakdown[]
@@ -854,10 +879,10 @@ model QuoteLedComponent {
   unitSellSnapshot Decimal?         @map("unit_sell_snapshot") @db.Decimal(12, 2)
 
   screen        QuoteLedScreen @relation(fields: [quoteLedScreenId], references: [id], onDelete: Cascade)
-  controller    Controller?    @relation(fields: [controllerId], references: [id])
-  ledPeripheral LedPeripheral? @relation(fields: [ledPeripheralId], references: [id])
-  mediaplayer   Mediaplayer?   @relation(fields: [mediaplayerId], references: [id])
-  peripheral    Peripheral?    @relation(fields: [peripheralId], references: [id])
+  controller    Controller?    @relation(fields: [controllerId], references: [id], onDelete: Restrict)
+  ledPeripheral LedPeripheral? @relation(fields: [ledPeripheralId], references: [id], onDelete: Restrict)
+  mediaplayer   Mediaplayer?   @relation(fields: [mediaplayerId], references: [id], onDelete: Restrict)
+  peripheral    Peripheral?    @relation(fields: [peripheralId], references: [id], onDelete: Restrict)
 
   @@index([quoteLedScreenId])
   @@map("quote_led_components")
@@ -900,10 +925,10 @@ model QuoteLcdScreen {
   actualCost             Decimal? @map("actual_cost") @db.Decimal(12, 2)
 
   quote         Quote               @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  display       DisplayCatalog?     @relation(fields: [displayId], references: [id])
-  installMethod InstallMethod?      @relation(fields: [installMethodId], references: [id])
-  serviceHours  ServiceHoursOption? @relation(fields: [serviceHoursId], references: [id])
-  warranty      WarrantyOption?     @relation(fields: [warrantyId], references: [id])
+  display       DisplayCatalog?     @relation(fields: [displayId], references: [id], onDelete: Restrict)
+  installMethod InstallMethod?      @relation(fields: [installMethodId], references: [id], onDelete: Restrict)
+  serviceHours  ServiceHoursOption? @relation(fields: [serviceHoursId], references: [id], onDelete: Restrict)
+  warranty      WarrantyOption?     @relation(fields: [warrantyId], references: [id], onDelete: Restrict)
 
   items QuoteLcdItem[]
 
@@ -922,7 +947,7 @@ model QuoteLcdItem {
   unitSell         Decimal?    @map("unit_sell") @db.Decimal(12, 2)
 
   screen  QuoteLcdScreen  @relation(fields: [quoteLcdScreenId], references: [id], onDelete: Cascade)
-  display DisplayCatalog? @relation(fields: [displayId], references: [id])
+  display DisplayCatalog? @relation(fields: [displayId], references: [id], onDelete: Restrict)
 
   @@index([quoteLcdScreenId])
   @@map("quote_lcd_items")
@@ -935,7 +960,7 @@ model QuoteMediaplayer {
   qty           Int    @default(1)
 
   quote       Quote       @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  mediaplayer Mediaplayer @relation(fields: [mediaplayerId], references: [id])
+  mediaplayer Mediaplayer @relation(fields: [mediaplayerId], references: [id], onDelete: Restrict)
 
   @@map("quote_mediaplayers")
 }
@@ -947,7 +972,7 @@ model QuotePeripheral {
   qty          Int    @default(1)
 
   quote      Quote      @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  peripheral Peripheral @relation(fields: [peripheralId], references: [id])
+  peripheral Peripheral @relation(fields: [peripheralId], references: [id], onDelete: Restrict)
 
   @@map("quote_peripherals")
 }
@@ -959,7 +984,7 @@ model QuoteManufacturedItem {
   qty       Int    @default(1)
 
   quote   Quote               @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  product ManufacturedProduct @relation(fields: [productId], references: [id])
+  product ManufacturedProduct @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   @@map("quote_manufactured_items")
 }
@@ -971,7 +996,7 @@ model QuoteAudioItem {
   qty            Int    @default(1)
 
   quote        Quote        @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  audioProduct AudioProduct @relation(fields: [audioProductId], references: [id])
+  audioProduct AudioProduct @relation(fields: [audioProductId], references: [id], onDelete: Restrict)
 
   @@map("quote_audio_items")
 }
@@ -983,7 +1008,7 @@ model QuoteMusicItem {
   qty            Int    @default(1)
 
   quote        Quote        @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  musicService MusicService @relation(fields: [musicServiceId], references: [id])
+  musicService MusicService @relation(fields: [musicServiceId], references: [id], onDelete: Restrict)
 
   @@map("quote_music_items")
 }
@@ -996,7 +1021,7 @@ model QuoteHypervsnItem {
   rateCard          HypervsnRateCard @default(aud) @map("rate_card")
 
   quote           Quote           @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  hypervsnProduct HypervsnProduct @relation(fields: [hypervsnProductId], references: [id])
+  hypervsnProduct HypervsnProduct @relation(fields: [hypervsnProductId], references: [id], onDelete: Restrict)
 
   @@map("quote_hypervsn_items")
 }
@@ -1008,7 +1033,7 @@ model QuoteSoftwareItem {
   qty                Decimal @default(1) @db.Decimal(10, 2)
 
   quote            Quote            @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  softwareActivity SoftwareActivity @relation(fields: [softwareActivityId], references: [id])
+  softwareActivity SoftwareActivity @relation(fields: [softwareActivityId], references: [id], onDelete: Restrict)
 
   @@map("quote_software_items")
 }
@@ -1023,7 +1048,7 @@ model QuoteLicence {
   isInteractive      Boolean     @default(false) @map("is_interactive")
 
   quote            Quote             @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  licenceComponent LicenceComponent? @relation(fields: [licenceComponentId], references: [id])
+  licenceComponent LicenceComponent? @relation(fields: [licenceComponentId], references: [id], onDelete: Restrict)
 
   @@map("quote_licences")
 }

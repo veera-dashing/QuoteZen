@@ -41,7 +41,8 @@ export const configureForQuote = async (
   await getQuote(quoteId);
   const [products, ratios] = await Promise.all([
     prisma.ledProduct.findMany({
-      where: { minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchH: { not: null } },
+      // P1-11.4: deprecated LED products are retained for old quotes but excluded from NEW configs.
+      where: { deprecated: false, minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchH: { not: null } },
     }),
     prisma.screenRatio.findMany(),
   ]);

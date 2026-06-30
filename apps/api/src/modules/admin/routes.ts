@@ -9,6 +9,13 @@ import { TABLE_BY_RESOURCE, TABLES, type FieldDef, type TableDef } from './regis
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const delegate = (def: TableDef): any => (prisma as Record<string, any>)[def.model];
 
+/** True when a table carries the deprecate-not-delete flag (P1-08.4 / P1-11.4). */
+const hasDeprecated = (def: TableDef): boolean => def.fields.some((field) => field.name === 'deprecated');
+
+/** Prisma foreign-key constraint violation — the row is referenced (e.g. by a saved quote). */
+const isForeignKeyError = (err: unknown): boolean =>
+  typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2003';
+
 /** Zod validator for one field. */
 export const fieldSchema = (field: FieldDef): z.ZodTypeAny => {
   switch (field.type) {
@@ -46,6 +53,9 @@ const listQuery = z.object({
   q: z.string().trim().optional(),
   take: z.coerce.number().int().min(1).max(500).default(100),
   skip: z.coerce.number().int().min(0).default(0),
+  // P1-11.4: NEW-quote pickers pass activeOnly=true to hide deprecated catalog rows. Default
+  // (omitted) returns ALL rows so the admin management grid can still see + un-deprecate them.
+  activeOnly: z.coerce.boolean().optional(),
 });
 
 export const adminRoutes = async (app: FastifyInstance): Promise<void> => {
@@ -67,11 +77,13 @@ export const adminRoutes = async (app: FastifyInstance): Promise<void> => {
     read,
     async (request) => {
       const def = resolve(request.params.resource);
-      const { q, take, skip } = parse(listQuery, request.query);
-      const where =
-        q && def.searchFields.length > 0
-          ? { OR: def.searchFields.map((field) => ({ [field]: { contains: q, mode: 'insensitive' } })) }
-          : undefined;
+      const { q, take, skip, activeOnly } = parse(listQuery, request.query);
+      const conditions: Record<string, unknown>[] = [];
+      if (q && def.searchFields.length > 0) {
+        conditions.push({ OR: def.searchFields.map((field) => ({ [field]: { contains: q, mode: 'insensitive' } })) });
+      }
+      if (activeOnly && hasDeprecated(def)) conditions.push({ deprecated: false });
+      const where = conditions.length > 0 ? { AND: conditions } : undefined;
       const [rows, total] = await Promise.all([
         delegate(def).findMany({ where, take, skip, orderBy: { id: 'asc' } }),
         delegate(def).count({ where }),
@@ -158,6 +170,33 @@ export const adminRoutes = async (app: FastifyInstance): Promise<void> => {
       });
     } catch (err) {
       if (err instanceof AppError) throw err;
+      // Deprecate-not-delete (P1-08.4 / P1-11.4): a hard delete blocked by a FK from a saved quote
+      // shouldn't fail — the row must be retained for old quotes but hidden from new ones. If the
+      // table carries a `deprecated` flag, mark it deprecated (audited) and report success.
+      if (isForeignKeyError(err) && hasDeprecated(def)) {
+        await prisma.$transaction(async (tx) => {
+          const txDelegate = (tx as Record<string, any>)[def.model];
+          const before = await txDelegate.findUnique({ where: { id } });
+          if (!before) throw notFound(def.label, id.toString());
+          const after = await txDelegate.update({ where: { id }, data: { deprecated: true } });
+          // Audited as an 'update' (the admin-audit action union); a `_reason` note records that
+          // this update came from a blocked delete, so the trail reads as a deprecation.
+          await recordAdminAudit(tx, {
+            userId: BigInt(request.user.id),
+            tableName: def.resource,
+            recordId: id.toString(),
+            action: 'update',
+            changes: {
+              ...adminUpdateDiff(before as Record<string, unknown>, after as Record<string, unknown>, ['deprecated']),
+              _reason: 'deprecated (delete blocked — referenced by existing quotes)',
+            },
+          });
+        });
+        return reply.code(200).send({
+          deprecated: true,
+          message: 'Referenced by existing quotes — deprecated instead of deleted.',
+        });
+      }
       throw notFound(def.label, id.toString());
     }
     return reply.code(204).send();

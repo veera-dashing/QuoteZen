@@ -42,6 +42,13 @@ const f = (name: string, type: FieldType = 'string', required = false, options?:
 const TIER = ['low', 'high'];
 const SCREEN = ['LCD', 'LED'];
 
+/**
+ * Shared "deprecated" flag (P1-08.4 / P1-11.4): catalog/lookup rows feeding NEW quotes carry this.
+ * Editable so admins can toggle it (un-deprecate) via the generic form. The delete handler also
+ * sets it automatically when a hard-delete is blocked by a FK from a saved quote.
+ */
+const DEPRECATED: FieldDef = f('deprecated', 'boolean');
+
 export const TABLES: TableDef[] = [
   // ── Pricing & currency ──
   {
@@ -82,8 +89,8 @@ export const TABLES: TableDef[] = [
   {
     resource: 'freight-options', model: 'freightOption', label: 'Freight Options', group: 'Locations & Freight',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('rate', 'decimal')],
-    listFields: ['name', 'rate'],
+    fields: [f('name', 'string', true), f('rate', 'decimal'), DEPRECATED],
+    listFields: ['name', 'rate', 'deprecated'],
   },
 
   // ── LED ──
@@ -97,9 +104,9 @@ export const TABLES: TableDef[] = [
       f('powerMaxW', 'int'), f('powerAvgW', 'int'), f('kgPerSqm', 'decimal'), f('costPerSqmUsd', 'decimal'),
       f('modulePrice', 'decimal'), f('volumetricModifier', 'decimal'), f('includesReceivers', 'boolean'),
       f('gobIncluded', 'boolean'), f('packIncluded', 'boolean'), f('serviceAccess'),
-      f('upgradeOptions', 'text'), f('mechanicalOptions', 'text'),
+      f('upgradeOptions', 'text'), f('mechanicalOptions', 'text'), DEPRECATED,
     ],
-    listFields: ['vendor', 'model', 'pixelPitchH', 'brightnessNits', 'costPerSqmUsd', 'cabinetType'],
+    listFields: ['vendor', 'model', 'pixelPitchH', 'brightnessNits', 'costPerSqmUsd', 'cabinetType', 'deprecated'],
   },
   {
     resource: 'led-commentary', model: 'ledCommentary', label: 'LED Commentary', group: 'LED',
@@ -110,74 +117,74 @@ export const TABLES: TableDef[] = [
   {
     resource: 'controllers', model: 'controller', label: 'Controllers', group: 'LED',
     titleField: 'name', searchFields: ['name', 'type'],
-    fields: [f('name', 'string', true), f('type'), f('maxPorts', 'int'), f('maxWidth', 'int'), f('price', 'decimal', true)],
-    listFields: ['name', 'type', 'maxPorts', 'price'],
+    fields: [f('name', 'string', true), f('type'), f('maxPorts', 'int'), f('maxWidth', 'int'), f('price', 'decimal', true), DEPRECATED],
+    listFields: ['name', 'type', 'maxPorts', 'price', 'deprecated'],
   },
   {
     resource: 'led-peripherals', model: 'ledPeripheral', label: 'LED Peripherals', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('price', 'decimal', true)],
-    listFields: ['name', 'price'],
+    fields: [f('name', 'string', true), f('price', 'decimal', true), DEPRECATED],
+    listFields: ['name', 'price', 'deprecated'],
   },
   {
     resource: 'gob-options', model: 'gobOption', label: 'GOB Options', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('price', 'decimal', true)],
-    listFields: ['name', 'price'],
+    fields: [f('name', 'string', true), f('price', 'decimal', true), DEPRECATED],
+    listFields: ['name', 'price', 'deprecated'],
   },
   {
     resource: 'trim-options', model: 'trimOption', label: 'Trim Options', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('widthMultiplier', 'decimal', true), f('heightMultiplier', 'decimal', true)],
-    listFields: ['name', 'widthMultiplier', 'heightMultiplier'],
+    fields: [f('name', 'string', true), f('widthMultiplier', 'decimal', true), f('heightMultiplier', 'decimal', true), DEPRECATED],
+    listFields: ['name', 'widthMultiplier', 'heightMultiplier', 'deprecated'],
   },
   {
     resource: 'hanging-bars', model: 'hangingBarOption', label: 'Hanging Bars', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('widthMultiplier', 'decimal', true)],
-    listFields: ['name', 'widthMultiplier'],
+    fields: [f('name', 'string', true), f('widthMultiplier', 'decimal', true), DEPRECATED],
+    listFields: ['name', 'widthMultiplier', 'deprecated'],
   },
   {
     resource: 'frames', model: 'frame', label: 'Frames', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('price', 'decimal', true), f('backcoverCost', 'decimal'), f('installHours', 'decimal')],
-    listFields: ['name', 'price', 'installHours'],
+    fields: [f('name', 'string', true), f('price', 'decimal', true), f('backcoverCost', 'decimal'), f('installHours', 'decimal'), DEPRECATED],
+    listFields: ['name', 'price', 'installHours', 'deprecated'],
   },
   {
     resource: 'engineering-options', model: 'engineeringOption', label: 'Engineering Options', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('price', 'decimal', true)],
-    listFields: ['name', 'price'],
+    fields: [f('name', 'string', true), f('price', 'decimal', true), DEPRECATED],
+    listFields: ['name', 'price', 'deprecated'],
   },
   {
     resource: 'install-methods', model: 'installMethod', label: 'Install Methods', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('wallRequirement', 'text'), f('powerDataNote', 'text')],
-    listFields: ['name'],
+    fields: [f('name', 'string', true), f('wallRequirement', 'text'), f('powerDataNote', 'text'), DEPRECATED],
+    listFields: ['name', 'deprecated'],
   },
   {
     resource: 'access-equipment', model: 'accessEquipment', label: 'Access Equipment', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('dayRate', 'decimal', true)],
-    listFields: ['name', 'dayRate'],
+    fields: [f('name', 'string', true), f('dayRate', 'decimal', true), DEPRECATED],
+    listFields: ['name', 'dayRate', 'deprecated'],
   },
   {
     resource: 'warranties', model: 'warrantyOption', label: 'Warranties', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('years', 'int', true)],
-    listFields: ['name', 'years'],
+    fields: [f('name', 'string', true), f('years', 'int', true), DEPRECATED],
+    listFields: ['name', 'years', 'deprecated'],
   },
   {
     resource: 'service-hours', model: 'serviceHoursOption', label: 'Service Hours', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true)],
-    listFields: ['name'],
+    fields: [f('name', 'string', true), DEPRECATED],
+    listFields: ['name', 'deprecated'],
   },
   {
     resource: 'screen-ratios', model: 'screenRatio', label: 'Screen Ratios', group: 'LED',
     titleField: 'ratioLabel', searchFields: ['ratioLabel'],
-    fields: [f('minValue', 'decimal', true), f('maxValue', 'decimal', true), f('ratioLabel', 'string', true)],
-    listFields: ['minValue', 'maxValue', 'ratioLabel'],
+    fields: [f('minValue', 'decimal', true), f('maxValue', 'decimal', true), f('ratioLabel', 'string', true), DEPRECATED],
+    listFields: ['minValue', 'maxValue', 'ratioLabel', 'deprecated'],
   },
 
   // ── Displays & hardware ──
@@ -187,36 +194,36 @@ export const TABLES: TableDef[] = [
     fields: [
       f('category', 'string', true), f('subcategory'), f('sizeInch', 'decimal'), f('model', 'string', true),
       f('description', 'text'), f('usd', 'decimal'), f('listAud', 'decimal'), f('freight', 'decimal'),
-      f('totalCost', 'decimal'), f('margin', 'decimal'), f('sell', 'decimal'),
+      f('totalCost', 'decimal'), f('margin', 'decimal'), f('sell', 'decimal'), DEPRECATED,
     ],
-    listFields: ['category', 'sizeInch', 'model', 'listAud', 'sell'],
+    listFields: ['category', 'sizeInch', 'model', 'listAud', 'sell', 'deprecated'],
   },
   {
     resource: 'import-catalog', model: 'importCatalog', label: 'Import Catalog (Philips)', group: 'Displays & Hardware',
     titleField: 'model', searchFields: ['model', 'series', 'description'],
     fields: [
       f('brand', 'string', true), f('series'), f('sizeInch'), f('model', 'string', true),
-      f('description', 'text'), f('cost', 'decimal'), f('sell', 'decimal'), f('partNumber'),
+      f('description', 'text'), f('cost', 'decimal'), f('sell', 'decimal'), f('partNumber'), DEPRECATED,
     ],
-    listFields: ['brand', 'series', 'sizeInch', 'model', 'cost', 'sell'],
+    listFields: ['brand', 'series', 'sizeInch', 'model', 'cost', 'sell', 'deprecated'],
   },
   {
     resource: 'mediaplayers', model: 'mediaplayer', label: 'Mediaplayers', group: 'Displays & Hardware',
     titleField: 'name', searchFields: ['name', 'description'],
-    fields: [f('name', 'string', true), f('description', 'text'), f('cost', 'decimal', true)],
-    listFields: ['name', 'cost'],
+    fields: [f('name', 'string', true), f('description', 'text'), f('cost', 'decimal', true), DEPRECATED],
+    listFields: ['name', 'cost', 'deprecated'],
   },
   {
     resource: 'peripherals', model: 'peripheral', label: 'Peripherals', group: 'Displays & Hardware',
     titleField: 'name', searchFields: ['name', 'description'],
-    fields: [f('name', 'string', true), f('description', 'text'), f('cost', 'decimal', true), f('sourceUrl')],
-    listFields: ['name', 'cost'],
+    fields: [f('name', 'string', true), f('description', 'text'), f('cost', 'decimal', true), f('sourceUrl'), DEPRECATED],
+    listFields: ['name', 'cost', 'deprecated'],
   },
   {
     resource: 'manufactured-products', model: 'manufacturedProduct', label: 'Manufactured Products', group: 'Displays & Hardware',
     titleField: 'type', searchFields: ['type', 'sizeInch'],
-    fields: [f('type', 'string', true), f('sizeInch'), f('brightness', 'int'), f('cost', 'decimal'), f('sell', 'decimal')],
-    listFields: ['type', 'sizeInch', 'brightness', 'sell'],
+    fields: [f('type', 'string', true), f('sizeInch'), f('brightness', 'int'), f('cost', 'decimal'), f('sell', 'decimal'), DEPRECATED],
+    listFields: ['type', 'sizeInch', 'brightness', 'sell', 'deprecated'],
   },
 
   // ── Labour & support ──
@@ -268,26 +275,26 @@ export const TABLES: TableDef[] = [
   {
     resource: 'software-activities', model: 'softwareActivity', label: 'Software Activities', group: 'Add-ons',
     titleField: 'activity', searchFields: ['activity'],
-    fields: [f('activity', 'string', true), f('cost', 'decimal', true), f('sell', 'decimal', true), f('ratio', 'decimal')],
-    listFields: ['activity', 'cost', 'sell'],
+    fields: [f('activity', 'string', true), f('cost', 'decimal', true), f('sell', 'decimal', true), f('ratio', 'decimal'), DEPRECATED],
+    listFields: ['activity', 'cost', 'sell', 'deprecated'],
   },
   {
     resource: 'audio-products', model: 'audioProduct', label: 'Audio Products', group: 'Add-ons',
     titleField: 'name', searchFields: ['name', 'category'],
-    fields: [f('category', 'string', true), f('name', 'string', true), f('sourceUrl'), f('cost', 'decimal'), f('sell', 'decimal')],
-    listFields: ['category', 'name', 'cost', 'sell'],
+    fields: [f('category', 'string', true), f('name', 'string', true), f('sourceUrl'), f('cost', 'decimal'), f('sell', 'decimal'), DEPRECATED],
+    listFields: ['category', 'name', 'cost', 'sell', 'deprecated'],
   },
   {
     resource: 'music-services', model: 'musicService', label: 'Music Services', group: 'Add-ons',
     titleField: 'name', searchFields: ['name', 'category'],
-    fields: [f('category', 'string', true), f('name', 'string', true), f('cost', 'decimal'), f('sell', 'decimal'), f('sqmMin', 'int'), f('sqmMax', 'int')],
-    listFields: ['category', 'name', 'cost', 'sell'],
+    fields: [f('category', 'string', true), f('name', 'string', true), f('cost', 'decimal'), f('sell', 'decimal'), f('sqmMin', 'int'), f('sqmMax', 'int'), DEPRECATED],
+    listFields: ['category', 'name', 'cost', 'sell', 'deprecated'],
   },
   {
     resource: 'hypervsn-products', model: 'hypervsnProduct', label: 'Hypervsn Products', group: 'Add-ons',
     titleField: 'name', searchFields: ['name', 'category'],
-    fields: [f('category', 'string', true), f('name', 'string', true), f('sellAud', 'decimal'), f('resellerAud', 'decimal'), f('sellNzd', 'decimal'), f('resellerNzd', 'decimal')],
-    listFields: ['category', 'name', 'sellAud', 'sellNzd'],
+    fields: [f('category', 'string', true), f('name', 'string', true), f('sellAud', 'decimal'), f('resellerAud', 'decimal'), f('sellNzd', 'decimal'), f('resellerNzd', 'decimal'), DEPRECATED],
+    listFields: ['category', 'name', 'sellAud', 'sellNzd', 'deprecated'],
   },
 
   // ── Clients ──

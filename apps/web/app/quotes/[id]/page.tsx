@@ -325,10 +325,12 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
   );
 
   useEffect(() => {
-    api<{ rows: Opt[] }>('/admin/led-products?take=300').then((r) => setProducts(r.rows));
+    // activeOnly=true hides deprecated catalog rows from NEW selections (P1-11.4); existing quotes
+    // still resolve their stored FK regardless of deprecated state.
+    api<{ rows: Opt[] }>('/admin/led-products?take=300&activeOnly=true').then((r) => setProducts(r.rows));
     Promise.all(
       LED_OPTION_TABLES.map((t) =>
-        api<{ rows: Opt[] }>(`/admin/${t.slug}?take=200`)
+        api<{ rows: Opt[] }>(`/admin/${t.slug}?take=200&activeOnly=true`)
           .then((r) => [t.key, r.rows] as const)
           .catch(() => [t.key, [] as Opt[]] as const),
       ),
@@ -577,7 +579,7 @@ function LcdStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api<{ rows: Opt[] }>('/admin/display-catalog?q=philips&take=100').then((r) => setDisplays(r.rows));
+    api<{ rows: Opt[] }>('/admin/display-catalog?q=philips&take=100&activeOnly=true').then((r) => setDisplays(r.rows));
   }, []);
 
   const add = async () => {
