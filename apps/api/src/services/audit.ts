@@ -74,3 +74,59 @@ export const recordAudit = async (db: Db, input: AuditInput): Promise<void> => {
     })),
   });
 };
+
+/** Action recorded in the (reference-table) admin audit log. */
+export type AdminAuditAction = 'create' | 'update' | 'delete' | 'export';
+
+export interface AdminAuditInput {
+  userId: bigint;
+  tableName: string;
+  recordId?: string | null;
+  action: AdminAuditAction;
+  /** update → { field: { old, new } }; create → created values; delete → prior values. */
+  changes?: Record<string, unknown> | null;
+}
+
+/**
+ * Shape an update diff (changed fields only) into the { field: { old, new } } map stored on an
+ * admin-audit row. Values are stringified so Decimal/Date/BigInt serialise cleanly into JSON.
+ */
+export const adminUpdateDiff = (
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  fields: readonly string[],
+): Record<string, { old: string | null; new: string | null }> => {
+  const out: Record<string, { old: string | null; new: string | null }> = {};
+  for (const change of diffFields(before, after, fields)) {
+    out[change.field] = { old: toStr(change.oldValue), new: toStr(change.newValue) };
+  }
+  return out;
+};
+
+/** Stringify every value in a record (for create/delete snapshots) so the JSON is portable. */
+export const adminSnapshot = (
+  row: Record<string, unknown>,
+  fields: readonly string[],
+): Record<string, string | null> => {
+  const out: Record<string, string | null> = {};
+  for (const field of fields) {
+    if (field in row) out[field] = toStr(row[field]);
+  }
+  return out;
+};
+
+/**
+ * Write one append-only admin-audit row for a reference-table mutation or export (P1-06.6 / P1-07.6).
+ * Pass a transaction client (`db`) to commit the audit atomically with the mutation it records.
+ */
+export const recordAdminAudit = async (db: Db, input: AdminAuditInput): Promise<void> => {
+  await db.adminAuditLog.create({
+    data: {
+      userId: input.userId,
+      tableName: input.tableName,
+      recordId: input.recordId ?? null,
+      action: input.action,
+      changes: (input.changes ?? null) as never,
+    },
+  });
+};

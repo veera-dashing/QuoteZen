@@ -18,6 +18,7 @@ import { parse as parseCsv } from 'csv-parse/sync';
 import { stringify as stringifyCsv } from 'csv-stringify/sync';
 import { prisma } from '@quotezen/db';
 import { AppError, notFound } from '../../errors.js';
+import { recordAdminAudit } from '../../services/audit.js';
 import { TABLE_BY_RESOURCE, type TableDef } from './registry.js';
 import { buildSchemas, delegate } from './routes.js';
 
@@ -188,6 +189,14 @@ export const importExportRoutes = async (app: FastifyInstance): Promise<void> =>
       return out;
     });
     const csv = stringifyCsv(records, { header: true, columns });
+    // Record WHO exported WHAT (cost-bearing tables are admin-only — BR-081).
+    await recordAdminAudit(prisma, {
+      userId: BigInt(request.user.id),
+      tableName: def.resource,
+      recordId: null,
+      action: 'export',
+      changes: { rows: rows.length },
+    });
     return reply
       .header('content-type', 'text/csv; charset=utf-8')
       .header('content-disposition', `attachment; filename="${def.resource}.csv"`)

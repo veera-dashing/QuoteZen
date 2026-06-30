@@ -11,6 +11,7 @@ import type { TableDef } from '@/lib/types';
 const NAV: Array<{ href: string; label: string; roles: Role[] }> = [
   { href: '/quotes', label: '📐 Quotes', roles: ['admin', 'sales'] },
   { href: '/admin/users', label: '👥 Users & roles', roles: ['admin'] },
+  { href: '/admin/margins', label: '💰 Margins & markups', roles: ['admin'] },
   { href: '/admin/audit', label: '📜 Audit log', roles: ['admin'] },
   { href: '/admin/kb', label: '📚 Knowledge base', roles: ['admin', 'sales'] },
   { href: '/admin/rules', label: '⚖️ Effective rules', roles: ['admin', 'sales'] },
