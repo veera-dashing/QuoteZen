@@ -17,6 +17,11 @@ export default function NewQuote() {
   const [clientId, setClientId] = useState('');
   const [locationId, setLocationId] = useState('');
   const [currencyCode, setCurrencyCode] = useState('AUD');
+  // Project information / commercial (U1) — discountPct shown as %, stored as a fraction.
+  const [requestedShippingDate, setRequestedShippingDate] = useState('');
+  const [siteAddress, setSiteAddress] = useState('');
+  const [projectNotes, setProjectNotes] = useState('');
+  const [discountPctInput, setDiscountPctInput] = useState('');
   const [clients, setClients] = useState<Option[]>([]);
   const [locations, setLocations] = useState<Option[]>([]);
   const [currencies, setCurrencies] = useState<Option[]>([]);
@@ -62,6 +67,10 @@ export default function NewQuote() {
           clientId: clientId ? Number(clientId) : undefined,
           locationId: locationId ? Number(locationId) : undefined,
           viewerUserIds: selectedViewers.size ? [...selectedViewers].map(Number) : undefined,
+          requestedShippingDate: requestedShippingDate || undefined,
+          siteAddress: siteAddress.trim() || undefined,
+          projectNotes: projectNotes.trim() || undefined,
+          discountPct: discountPctInput.trim() === '' ? undefined : Number(discountPctInput) / 100,
         }),
       });
       router.replace(`/quotes/${quote.id}`);
@@ -110,6 +119,25 @@ export default function NewQuote() {
             onChange={setCurrencyCode}
             options={currencies.map((c) => ({ value: c.code ?? '', label: c.code ?? '' }))}
           />
+        </div>
+        <h4 style={{ margin: '4px 0' }}>Project information</h4>
+        <div className="grid2">
+          <div className="field">
+            <label>Requested shipping date</label>
+            <input type="date" value={requestedShippingDate} onChange={(e) => setRequestedShippingDate(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Discount override (%)</label>
+            <input type="number" min={0} max={99} step="0.5" value={discountPctInput} onChange={(e) => setDiscountPctInput(e.target.value)} placeholder="(default)" />
+          </div>
+        </div>
+        <div className="field">
+          <label>Site address</label>
+          <input value={siteAddress} onChange={(e) => setSiteAddress(e.target.value)} placeholder="e.g. 12 Site St, Sydney" />
+        </div>
+        <div className="field">
+          <label>Project notes</label>
+          <textarea value={projectNotes} onChange={(e) => setProjectNotes(e.target.value)} rows={3} style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box' }} placeholder="Internal project notes…" />
         </div>
         {viewers.length > 0 && (
           <div className="field">

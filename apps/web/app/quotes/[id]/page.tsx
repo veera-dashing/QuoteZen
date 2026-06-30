@@ -11,12 +11,20 @@ interface LedScreen {
   resolutionWpx: number | null; resolutionHpx: number | null; priceTotal: string | null;
   orientation?: string | null;
   aspectRatio?: { ratioLabel: string } | null;
+  // Secondary options/services (Form 2) — raw FK scalars + housing/notes, used to pre-fill the editor.
+  gobId?: string | null; frameId?: string | null; trimId?: string | null; hangingBarId?: string | null;
+  engineeringId?: string | null; installMethodId?: string | null; freightOptionId?: string | null;
+  warrantyId?: string | null; serviceHoursId?: string | null; accessEquipmentId?: string | null;
+  backCover?: boolean; frameNote?: string | null; serviceDescriptionSuffix?: string | null;
 }
 interface LcdScreen { id: string; screenName: string | null; priceTotal: string | null }
 interface Licence { id: string; screenType: string; tier: string; qty: number; isInteractive: boolean }
 interface Quote {
   id: string; jobReference: string; status: string; lockVersion: number;
   clientId: string | null; locationId: string | null;
+  // Quote-level PI / commercial fields (U1).
+  requestedShippingDate?: string | null; siteAddress?: string | null; projectNotes?: string | null;
+  discountPct?: string | null; // stored as a fraction 0..1
   totalEquipment: string; totalServices: string; totalRecurring: string; grandTotal: string;
   currency?: { code: string } | null;
   ledScreens: LedScreen[]; lcdScreens: LcdScreen[]; licences: Licence[];
@@ -26,7 +34,7 @@ interface Risk { category: 'technical' | 'commercial' | 'delivery'; description:
 interface Audit { id: string; action: string; fieldName: string | null; oldValue: string | null; newValue: string | null; changedAt: string; user?: { name: string } }
 interface QuoteDoc { id: string; originalName: string; mimeType: string; sizeBytes: number; version: number; uploadedBy: { id: string; name: string } | null; createdAt: string }
 
-const STEPS = ['Details', 'LED screens', 'LCD screens', 'Licences', 'Review'] as const;
+const STEPS = ['Details', 'Select Screens', 'Licences', 'Review'] as const;
 
 export default function QuoteWizard() {
   const { id } = useParams<{ id: string }>();
@@ -65,10 +73,9 @@ export default function QuoteWizard() {
       </div>
 
       {step === 0 && <DetailsStep quote={quote} onChange={refetch} />}
-      {step === 1 && <LedStep quote={quote} onChange={refetch} />}
-      {step === 2 && <LcdStep quote={quote} onChange={refetch} />}
-      {step === 3 && <LicenceStep quote={quote} onChange={refetch} />}
-      {step === 4 && <ReviewStep quote={quote} onChange={refetch} />}
+      {step === 1 && <SelectScreensStep quote={quote} onChange={refetch} />}
+      {step === 2 && <LicenceStep quote={quote} onChange={refetch} />}
+      {step === 3 && <ReviewStep quote={quote} onChange={refetch} />}
 
       <div className="step-actions">
         <button disabled={step === 0} onClick={() => setStep(step - 1)}>
@@ -95,6 +102,15 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
   const [clientId, setClientId] = useState(quote.clientId ?? '');
   const [locationId, setLocationId] = useState(quote.locationId ?? '');
   const [currencyCode, setCurrencyCode] = useState(quote.currency?.code ?? 'AUD');
+  // Project information / commercial (U1). discountPct is stored as a fraction (0..1) but shown as %.
+  const [requestedShippingDate, setRequestedShippingDate] = useState(
+    quote.requestedShippingDate ? quote.requestedShippingDate.slice(0, 10) : '',
+  );
+  const [siteAddress, setSiteAddress] = useState(quote.siteAddress ?? '');
+  const [projectNotes, setProjectNotes] = useState(quote.projectNotes ?? '');
+  const [discountPctInput, setDiscountPctInput] = useState(
+    quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
+  );
   const [selectedViewers, setSelectedViewers] = useState<Set<string>>(
     () => new Set((quote.viewers ?? []).map((v) => v.user.id)),
   );
@@ -153,6 +169,11 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
           clientId: clientId ? Number(clientId) : null,
           locationId: locationId ? Number(locationId) : null,
           viewerUserIds: [...selectedViewers].map(Number),
+          // Project information (U1). discountPct converts % → fraction; empty clears the override.
+          requestedShippingDate: requestedShippingDate || null,
+          siteAddress: siteAddress.trim() ? siteAddress.trim() : null,
+          projectNotes: projectNotes.trim() ? projectNotes.trim() : null,
+          discountPct: discountPctInput.trim() === '' ? null : Number(discountPctInput) / 100,
           // Optimistic concurrency: server rejects (409) if the quote moved since we loaded it.
           expectedVersion: quote.lockVersion,
         }),
@@ -167,7 +188,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
     } finally {
       setBusy(false);
     }
-  }, [quote.id, quote.lockVersion, jobReference, currencyCode, clientId, locationId, selectedViewers, onChange]);
+  }, [quote.id, quote.lockVersion, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, discountPctInput, onChange]);
 
   const save = persist;
 
@@ -191,6 +212,16 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
           <div><label>Job reference</label><input value={quote.jobReference} readOnly /></div>
           <div><label>Status</label><input value={quote.status} readOnly /></div>
           <div><label>Currency</label><input value={quote.currency?.code ?? ''} readOnly /></div>
+        </div>
+        <h4 style={{ margin: '16px 0 4px' }}>Project information</h4>
+        <div className="grid3">
+          <div><label>Requested shipping date</label><input value={quote.requestedShippingDate ? quote.requestedShippingDate.slice(0, 10) : ''} readOnly /></div>
+          <div><label>Site address</label><input value={quote.siteAddress ?? ''} readOnly /></div>
+          <div><label>Discount</label><input value={quote.discountPct != null && quote.discountPct !== '' ? `${Number(quote.discountPct) * 100}%` : '(default)'} readOnly /></div>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>Project notes</label>
+          <textarea value={quote.projectNotes ?? ''} readOnly rows={3} style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box' }} />
         </div>
         <div style={{ marginTop: 12 }}>
           <label>Shared with viewers</label>
@@ -247,6 +278,27 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
           />
         </div>
         <div><label>Status</label><input value={quote.status} readOnly /></div>
+      </div>
+
+      <h4 style={{ margin: '18px 0 4px' }}>Project information</h4>
+      <p className="muted" style={{ marginTop: 0 }}>Quote-level site &amp; commercial details. The discount overrides the client/system default (leave blank to inherit).</p>
+      <div className="grid3">
+        <div>
+          <label>Requested shipping date</label>
+          <input type="date" value={requestedShippingDate} onChange={(e) => { setRequestedShippingDate(e.target.value); setDirty(true); }} />
+        </div>
+        <div>
+          <label>Site address</label>
+          <input value={siteAddress} onChange={(e) => { setSiteAddress(e.target.value); setDirty(true); }} placeholder="e.g. 12 Site St, Sydney" />
+        </div>
+        <div>
+          <label>Discount override (%)</label>
+          <input type="number" min={0} max={99} step="0.5" value={discountPctInput} onChange={(e) => { setDiscountPctInput(e.target.value); setDirty(true); }} placeholder="(default)" />
+        </div>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <label>Project notes</label>
+        <textarea value={projectNotes} onChange={(e) => { setProjectNotes(e.target.value); setDirty(true); }} rows={3} style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box' }} placeholder="Internal project notes…" />
       </div>
 
       {viewers.length > 0 && (
@@ -355,7 +407,11 @@ function sizeLabel(o: Pick<ConfigOption, 'sizeMode' | 'sizeDeltaPct'>): string {
   return `${sign}${pct}% ${o.sizeMode}`;
 }
 
-function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
+// Form 1 (U1): select & finalise an LED panel — opening size + orientation/ratio + configure /
+// Good-Better-Best / specific-product selection + components + rotate. Adds the screen (POST
+// /led-screens) with panel + geometry + components only; secondary options/services are set
+// afterwards via the per-screen PATCH editor (LedOptionsEditor / Form 2).
+function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
   const [products, setProducts] = useState<Opt[]>([]);
   const [productId, setProductId] = useState('');
   const [name, setName] = useState('');
@@ -370,21 +426,11 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
   const [tiers, setTiers] = useState<TierOption[] | null>(null);
   const [tierReasons, setTierReasons] = useState<string[]>([]);
   const [distinctProducts, setDistinctProducts] = useState(0);
-  // Optional options/services: catalog rows per table + the chosen id per field.
-  const [optionRows, setOptionRows] = useState<Record<LedOptionKey, Opt[]>>(
-    () => Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, [] as Opt[]])) as unknown as Record<LedOptionKey, Opt[]>,
-  );
-  const [selectedOptions, setSelectedOptions] = useState<Record<LedOptionKey, string>>(
-    () => Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, ''])) as unknown as Record<LedOptionKey, string>,
-  );
 
   // S1: orientation + aspect ratio (with auto-dimension calc), components, back cover, notes.
   const [orientation, setOrientation] = useState('');
   const [aspectRatioId, setAspectRatioId] = useState('');
   const [ratios, setRatios] = useState<Array<{ id: string; ratioLabel: string }>>([]);
-  const [backCover, setBackCover] = useState(false);
-  const [frameNote, setFrameNote] = useState('');
-  const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState('');
   // Component pickers: catalog rows per type + the user's chosen component rows + the add-row draft.
   const [componentRows, setComponentRows] = useState<Record<LedComponentType, Opt[]>>(
     () => Object.fromEntries(LED_COMPONENT_TABLES.map((t) => [t.componentType, [] as Opt[]])) as unknown as Record<LedComponentType, Opt[]>,
@@ -398,15 +444,6 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
     // activeOnly=true hides deprecated catalog rows from NEW selections (P1-11.4); existing quotes
     // still resolve their stored FK regardless of deprecated state.
     api<{ rows: Opt[] }>('/admin/led-products?take=300&activeOnly=true').then((r) => setProducts(r.rows));
-    Promise.all(
-      LED_OPTION_TABLES.map((t) =>
-        api<{ rows: Opt[] }>(`/admin/${t.slug}?take=200&activeOnly=true`)
-          .then((r) => [t.key, r.rows] as const)
-          .catch(() => [t.key, [] as Opt[]] as const),
-      ),
-    ).then((entries) => {
-      setOptionRows(Object.fromEntries(entries) as unknown as Record<LedOptionKey, Opt[]>);
-    });
     // Aspect ratios for the orientation/auto-dimension rule.
     api<{ rows: Array<{ id: string; ratioLabel: string }> }>('/admin/screen-ratios?take=200&activeOnly=true')
       .then((r) => setRatios(r.rows))
@@ -460,16 +497,6 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
   // Re-run the auto-calc from the current width when orientation/ratio changes.
   const onOrientationChange = (v: string) => { setOrientation(v); recalcDim('w', w, v, aspectRatioId); };
   const onRatioChange = (v: string) => { setAspectRatioId(v); recalcDim('w', w, orientation, v); };
-
-  // Only the option ids that are actually set, ready to merge into a POST body.
-  const selectedOptionIds = (): Record<string, number> => {
-    const out: Record<string, number> = {};
-    for (const t of LED_OPTION_TABLES) {
-      const v = selectedOptions[t.key];
-      if (v) out[t.key] = Number(v);
-    }
-    return out;
-  };
 
   const configure = async () => {
     setBusy(true);
@@ -539,48 +566,19 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
           // S1 inputs (only sent when set).
           ...(orientation ? { orientation } : {}),
           ...(aspectRatioId ? { aspectRatioId: Number(aspectRatioId) } : {}),
-          backCover,
-          ...(frameNote ? { frameNote } : {}),
-          ...(serviceDescriptionSuffix ? { serviceDescriptionSuffix } : {}),
           components: componentPayload(),
-          // Chosen options/services (only the ids that are set are sent).
-          ...selectedOptionIds(),
         }),
       });
       setName('');
       setOptions(null);
       setTiers(null);
+      setComponents([]);
       await onChange();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed');
     } finally {
       setBusy(false);
     }
-  };
-
-  const remove = async (sid: string) => {
-    await api(`/quotes/${quote.id}/led-screens/${sid}`, { method: 'DELETE' });
-    await onChange();
-  };
-
-  const setQty = async (sid: string, qty: number) => {
-    if (!(qty >= 1)) return;
-    await api(`/quotes/${quote.id}/led-screens/${sid}/qty`, { method: 'PATCH', body: JSON.stringify({ qty }) });
-    await onChange();
-  };
-
-  const duplicate = async (sid: string) => {
-    await api(`/quotes/${quote.id}/led-screens/${sid}/duplicate`, { method: 'POST', body: JSON.stringify({}) });
-    await onChange();
-  };
-
-  const move = async (index: number, dir: -1 | 1) => {
-    const ids = quote.ledScreens.map((s) => Number(s.id));
-    const target = index + dir;
-    if (target < 0 || target >= ids.length) return;
-    [ids[index], ids[target]] = [ids[target]!, ids[index]!];
-    await api(`/quotes/${quote.id}/led-screens/reorder`, { method: 'POST', body: JSON.stringify({ orderedIds: ids }) });
-    await onChange();
   };
 
   // Required-field gating (P1-12.3): the essentials before "+ Add & price".
@@ -790,23 +788,6 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
           Pick orientation + an aspect ratio and one dimension auto-fills the other (still editable).
         </p>
 
-        <h4 style={{ margin: '16px 0 4px' }}>Options &amp; services</h4>
-        <p className="muted" style={{ marginTop: 0 }}>All optional — selections are priced and persisted with the screen.</p>
-        <div className="grid3">
-          {LED_OPTION_TABLES.map((t) => (
-            <div key={t.key}>
-              <label>{t.label}</label>
-              <SearchSelect
-                value={selectedOptions[t.key]}
-                onChange={(v) => setSelectedOptions((prev) => ({ ...prev, [t.key]: v }))}
-                allowEmpty
-                placeholder={`Select ${t.label.toLowerCase()}…`}
-                options={(optionRows[t.key] ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
-              />
-            </div>
-          ))}
-        </div>
-
         <h4 style={{ margin: '16px 0 4px' }}>Components</h4>
         <p className="muted" style={{ marginTop: 0 }}>
           Attach controllers, mediaplayers and peripherals — add as many as needed; each is priced with the screen.
@@ -856,69 +837,21 @@ function LedStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
           </div>
         )}
 
-        <h4 style={{ margin: '16px 0 4px' }}>Housing &amp; descriptions</h4>
-        <div className="grid3">
-          <div>
-            <label>Back cover</label>
-            <input type="checkbox" checked={backCover} onChange={(e) => setBackCover(e.target.checked)} style={{ width: 'auto' }} />
-          </div>
-          <div>
-            <label>Frame / housing description</label>
-            <input value={frameNote} onChange={(e) => setFrameNote(e.target.value)} placeholder="optional" />
-          </div>
-          <div>
-            <label>Service description suffix</label>
-            <input value={serviceDescriptionSuffix} onChange={(e) => setServiceDescriptionSuffix(e.target.value)} placeholder="optional" />
-          </div>
-        </div>
-
         {!canAddSpecific && (
           <p className="muted" style={{ marginTop: 12 }}>
             ⚠️ Required before pricing: {missing.join(', ')}.
           </p>
         )}
+        <p className="muted" style={{ marginTop: 12 }}>
+          Finalising adds the LED screen with the panel, geometry &amp; components. Set trim, frame, GOB,
+          install, freight, warranty and notes afterwards in the per-screen <b>Options &amp; services</b>
+          editor below.
+        </p>
         <div className="step-actions">
           <button className="primary" onClick={() => addScreen()} disabled={busy || !canAddSpecific}>
-            {busy ? 'Pricing…' : '+ Add & price'}
+            {busy ? 'Pricing…' : '+ Finalise panel & add screen'}
           </button>
         </div>
-      </div>
-
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>LED screens ({quote.ledScreens.length})</h3>
-        {quote.ledScreens.length === 0 && <p className="muted">None yet — this step is optional.</p>}
-        {quote.ledScreens.map((s, i) => (
-          <div className="list-row" key={s.id}>
-            <div>
-              <b>{s.screenName || 'LED screen'}</b>{' '}
-              <span className="muted">
-                {[
-                  s.resolutionWpx && s.resolutionHpx ? `${s.resolutionWpx}×${s.resolutionHpx}px` : '',
-                  s.orientation ?? '',
-                  s.aspectRatio?.ratioLabel ?? '',
-                ].filter(Boolean).join(' · ')}
-              </span>
-            </div>
-            <div className="row-actions">
-              <button className="ghost" title="Move up" disabled={i === 0} onClick={() => move(i, -1)}>▲</button>
-              <button className="ghost" title="Move down" disabled={i === quote.ledScreens.length - 1} onClick={() => move(i, 1)}>▼</button>
-              <label className="muted" style={{ display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
-                Qty
-                <input
-                  type="number"
-                  min={1}
-                  defaultValue={s.qty}
-                  style={{ width: 60 }}
-                  onBlur={(e) => { const v = Number(e.target.value); if (v !== s.qty) setQty(s.id, v); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                />
-              </label>
-              <span>{quote.currency?.code} {(Number(s.priceTotal ?? 0) * s.qty).toLocaleString()}</span>
-              <button className="ghost" onClick={() => duplicate(s.id)}>Duplicate</button>
-              <button className="danger" onClick={() => remove(s.id)}>Delete</button>
-            </div>
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -965,7 +898,7 @@ const LCD_MANUAL_TEMPLATES: Record<string, Array<{ description: string; unitCost
 
 interface LcdLine { sectionKey: string; itemType: LcdItemType; displayId?: string; description: string; qty: number; unitCost?: number; manual: boolean }
 
-function LcdStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
+function LcdAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
   const [catalog, setCatalog] = useState<Opt[]>([]);
   const [serviceHoursId, setServiceHoursId] = useState('');
   const [warrantyId, setWarrantyId] = useState('');
@@ -1148,14 +1081,218 @@ function LcdStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<vo
           <button className="primary" onClick={save} disabled={busy || lines.length === 0}>+ Add LCD screen</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Form 2 (U1): per-screen secondary options & services, shown after an LED screen is finalised and
+// tied to that screen. Pre-filled from the screen's stored FK scalars + housing/notes; saved via
+// PATCH /quotes/:id/led-screens/:screenId which re-prices the screen.
+function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: LedScreen; onChange: () => Promise<void> }) {
+  const canWrite = getRole() !== 'viewer';
+  const [optionRows, setOptionRows] = useState<Record<LedOptionKey, Opt[]>>(
+    () => Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, [] as Opt[]])) as unknown as Record<LedOptionKey, Opt[]>,
+  );
+  // Pre-fill each option field from the screen's stored FK scalar.
+  const initial = (): Record<LedOptionKey, string> =>
+    Object.fromEntries(
+      LED_OPTION_TABLES.map((t) => {
+        const v = (screen as unknown as Record<string, unknown>)[t.key];
+        return [t.key, v != null ? String(v) : ''];
+      }),
+    ) as unknown as Record<LedOptionKey, string>;
+  const [selected, setSelected] = useState<Record<LedOptionKey, string>>(initial);
+  const [backCover, setBackCover] = useState(!!screen.backCover);
+  const [frameNote, setFrameNote] = useState(screen.frameNote ?? '');
+  const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(screen.serviceDescriptionSuffix ?? '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    Promise.all(
+      LED_OPTION_TABLES.map((t) =>
+        api<{ rows: Opt[] }>(`/admin/${t.slug}?take=200&activeOnly=true`)
+          .then((r) => [t.key, r.rows] as const)
+          .catch(() => [t.key, [] as Opt[]] as const),
+      ),
+    ).then((entries) => setOptionRows(Object.fromEntries(entries) as unknown as Record<LedOptionKey, Opt[]>));
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    setSaved(false);
+    try {
+      const body: Record<string, unknown> = {
+        backCover,
+        frameNote: frameNote.trim() ? frameNote.trim() : null,
+        serviceDescriptionSuffix: serviceDescriptionSuffix.trim() ? serviceDescriptionSuffix.trim() : null,
+      };
+      for (const t of LED_OPTION_TABLES) body[t.key] = selected[t.key] ? Number(selected[t.key]) : null;
+      await api(`/quotes/${quote.id}/led-screens/${screen.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+      setSaved(true);
+      await onChange();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--border)' }}>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Options &amp; services for this screen — all optional. Saving re-prices the screen.
+      </p>
+      <div className="grid3">
+        {LED_OPTION_TABLES.map((t) => (
+          <div key={t.key}>
+            <label>{t.label}</label>
+            <SearchSelect
+              value={selected[t.key]}
+              onChange={(v) => { setSelected((p) => ({ ...p, [t.key]: v })); setSaved(false); }}
+              allowEmpty
+              placeholder={`Select ${t.label.toLowerCase()}…`}
+              options={(optionRows[t.key] ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
+              disabled={!canWrite}
+            />
+          </div>
+        ))}
+      </div>
+      <h4 style={{ margin: '14px 0 4px' }}>Housing &amp; descriptions</h4>
+      <div className="grid3">
+        <div>
+          <label>Back cover</label>
+          <input type="checkbox" checked={backCover} disabled={!canWrite} onChange={(e) => { setBackCover(e.target.checked); setSaved(false); }} style={{ width: 'auto' }} />
+        </div>
+        <div>
+          <label>Frame / housing description</label>
+          <input value={frameNote} disabled={!canWrite} onChange={(e) => { setFrameNote(e.target.value); setSaved(false); }} placeholder="optional" />
+        </div>
+        <div>
+          <label>Service description suffix</label>
+          <input value={serviceDescriptionSuffix} disabled={!canWrite} onChange={(e) => { setServiceDescriptionSuffix(e.target.value); setSaved(false); }} placeholder="optional" />
+        </div>
+      </div>
+      {err && <div className="error" style={{ marginTop: 8 }}>{err}</div>}
+      {canWrite && (
+        <div className="row-actions" style={{ alignItems: 'center', marginTop: 10 }}>
+          <button className="primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save options & re-price'}</button>
+          {saved && <span style={{ color: 'var(--ok, #16a34a)' }}>✓ Saved &amp; re-priced</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Merged "Select Screens" step (U1): a LED/LCD type selector drives which add-flow shows; below, a
+// combined list of every screen on the quote (LED + LCD), each labelled by type, with per-screen
+// controls (LED: qty/duplicate/reorder/delete + expandable Options & services editor; LCD as today).
+function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
+  const canWrite = getRole() !== 'viewer';
+  const [screenType, setScreenType] = useState<'LED' | 'LCD'>('LED');
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const cur = quote.currency?.code ?? '';
+
+  // LED list management.
+  const removeLed = async (sid: string) => {
+    await api(`/quotes/${quote.id}/led-screens/${sid}`, { method: 'DELETE' });
+    await onChange();
+  };
+  const setLedQty = async (sid: string, qty: number) => {
+    if (!(qty >= 1)) return;
+    await api(`/quotes/${quote.id}/led-screens/${sid}/qty`, { method: 'PATCH', body: JSON.stringify({ qty }) });
+    await onChange();
+  };
+  const duplicateLed = async (sid: string) => {
+    await api(`/quotes/${quote.id}/led-screens/${sid}/duplicate`, { method: 'POST', body: JSON.stringify({}) });
+    await onChange();
+  };
+  const moveLed = async (index: number, dir: -1 | 1) => {
+    const ids = quote.ledScreens.map((s) => Number(s.id));
+    const target = index + dir;
+    if (target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target]!, ids[index]!];
+    await api(`/quotes/${quote.id}/led-screens/reorder`, { method: 'POST', body: JSON.stringify({ orderedIds: ids }) });
+    await onChange();
+  };
+
+  const totalScreens = quote.ledScreens.length + quote.lcdScreens.length;
+
+  return (
+    <div>
+      <div className="card">
+        <div className="topbar">
+          <h3 style={{ margin: 0 }}>Select Screens</h3>
+          {canWrite && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className={screenType === 'LED' ? 'primary' : 'ghost'} onClick={() => setScreenType('LED')}>LED</button>
+              <button className={screenType === 'LCD' ? 'primary' : 'ghost'} onClick={() => setScreenType('LCD')}>LCD</button>
+            </div>
+          )}
+        </div>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Pick a screen type, then add screens with the {screenType} flow below. All screens on this
+          quote appear in the combined list.
+        </p>
+      </div>
+
+      {canWrite && screenType === 'LED' && <LedAddForm quote={quote} onChange={onChange} />}
+      {canWrite && screenType === 'LCD' && <LcdAddForm quote={quote} onChange={onChange} />}
 
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>LCD screens ({quote.lcdScreens.length})</h3>
-        {quote.lcdScreens.length === 0 && <p className="muted">None yet — optional.</p>}
+        <h3 style={{ marginTop: 0 }}>Screens on this quote ({totalScreens})</h3>
+        {totalScreens === 0 && <p className="muted">None yet — this step is optional.</p>}
+
+        {quote.ledScreens.map((s, i) => (
+          <div key={`led-${s.id}`} style={{ borderBottom: '1px solid var(--border)', paddingBottom: 10, marginBottom: 10 }}>
+            <div className="list-row">
+              <div>
+                <span className="pill" style={{ marginRight: 6 }}>LED</span>
+                <b>{s.screenName || 'LED screen'}</b>{' '}
+                <span className="muted">
+                  {[
+                    s.resolutionWpx && s.resolutionHpx ? `${s.resolutionWpx}×${s.resolutionHpx}px` : '',
+                    s.orientation ?? '',
+                    s.aspectRatio?.ratioLabel ?? '',
+                  ].filter(Boolean).join(' · ')}
+                </span>
+              </div>
+              <div className="row-actions">
+                <button className="ghost" title="Move up" disabled={!canWrite || i === 0} onClick={() => moveLed(i, -1)}>▲</button>
+                <button className="ghost" title="Move down" disabled={!canWrite || i === quote.ledScreens.length - 1} onClick={() => moveLed(i, 1)}>▼</button>
+                <label className="muted" style={{ display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
+                  Qty
+                  <input
+                    type="number"
+                    min={1}
+                    defaultValue={s.qty}
+                    disabled={!canWrite}
+                    style={{ width: 60 }}
+                    onBlur={(e) => { const v = Number(e.target.value); if (v !== s.qty) setLedQty(s.id, v); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                  />
+                </label>
+                <span>{cur} {(Number(s.priceTotal ?? 0) * s.qty).toLocaleString()}</span>
+                <button className="ghost" onClick={() => setExpanded(expanded === s.id ? null : s.id)}>
+                  {expanded === s.id ? '▴ Options & services' : '▾ Options & services'}
+                </button>
+                {canWrite && <button className="ghost" onClick={() => duplicateLed(s.id)}>Duplicate</button>}
+                {canWrite && <button className="danger" onClick={() => removeLed(s.id)}>Delete</button>}
+              </div>
+            </div>
+            {expanded === s.id && <LedOptionsEditor quote={quote} screen={s} onChange={onChange} />}
+          </div>
+        ))}
+
         {quote.lcdScreens.map((s) => (
-          <div className="list-row" key={s.id}>
-            <b>{s.screenName || 'LCD'}</b>
-            <span>{quote.currency?.code} {Number(s.priceTotal ?? 0).toLocaleString()}</span>
+          <div className="list-row" key={`lcd-${s.id}`}>
+            <div>
+              <span className="pill" style={{ marginRight: 6 }}>LCD</span>
+              <b>{s.screenName || 'LCD screen'}</b>
+            </div>
+            <span>{cur} {Number(s.priceTotal ?? 0).toLocaleString()}</span>
           </div>
         ))}
       </div>
