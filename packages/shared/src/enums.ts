@@ -28,6 +28,14 @@ export type ReviewDecision = (typeof REVIEW_DECISIONS)[number];
 export const SCREEN_TYPES = ['LED', 'LCD'] as const;
 export type ScreenType = (typeof SCREEN_TYPES)[number];
 
+/**
+ * Where a quote's discount applies (U5). `one_off` = an upfront concession on the equipment + services
+ * total (the default; recurring untouched). `recurring` = applies to every renewal — discounts the
+ * recurring total instead, leaving the upfront sell (and the one-off margin) intact.
+ */
+export const DISCOUNT_SCOPES = ['one_off', 'recurring'] as const;
+export type DiscountScope = (typeof DISCOUNT_SCOPES)[number];
+
 export const LICENCE_TIERS = ['low', 'high'] as const;
 export type LicenceTier = (typeof LICENCE_TIERS)[number];
 

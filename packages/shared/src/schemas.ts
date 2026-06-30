@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   CURRENCY_CODES,
+  DISCOUNT_SCOPES,
   LED_COMPONENT_TYPES,
   LICENCE_TIERS,
   ORIENTATIONS,
@@ -34,6 +35,8 @@ export const createQuoteSchema = z.object({
   requestedShippingDate: z.coerce.date().optional(),
   /** Quote-level discount override (U0), fraction 0..1; wins over the client/system default. Not yet applied to pricing. */
   discountPct: z.coerce.number().min(0).max(1).optional(),
+  /** Where the discount applies (U5): one-off upfront concession (default) vs every renewal. */
+  discountScope: z.enum(DISCOUNT_SCOPES).default('one_off'),
   /** Quote-wide PI capture (U0). */
   siteAddress: z.string().max(500).optional(),
   projectNotes: z.string().max(2000).optional(),
@@ -48,6 +51,8 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   locationId: idSchema.nullish(),
   // Nullable on update so the editor can clear the discount/PI fields (U0).
   discountPct: z.coerce.number().min(0).max(1).nullish(),
+  /** Discount scope (U5); optional on update. */
+  discountScope: z.enum(DISCOUNT_SCOPES).optional(),
   siteAddress: z.string().max(500).nullish(),
   projectNotes: z.string().max(2000).nullish(),
   /** Optimistic-locking token from the last read; a mismatch is a 409 conflict (P1-05.2). */

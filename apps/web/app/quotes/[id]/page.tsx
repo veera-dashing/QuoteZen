@@ -25,6 +25,7 @@ interface Quote {
   // Quote-level PI / commercial fields (U1).
   requestedShippingDate?: string | null; siteAddress?: string | null; projectNotes?: string | null;
   discountPct?: string | null; // stored as a fraction 0..1
+  discountScope?: 'one_off' | 'recurring' | null; // U5 — upfront vs every renewal
   totalEquipment: string; totalServices: string; totalRecurring: string; grandTotal: string;
   currency?: { code: string } | null;
   ledScreens: LedScreen[]; lcdScreens: LcdScreen[]; licences: Licence[];
@@ -111,6 +112,10 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
   const [discountPctInput, setDiscountPctInput] = useState(
     quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
   );
+  // U5 — where the discount applies (one-off upfront vs every renewal).
+  const [discountScope, setDiscountScope] = useState<'one_off' | 'recurring'>(
+    quote.discountScope === 'recurring' ? 'recurring' : 'one_off',
+  );
   const [selectedViewers, setSelectedViewers] = useState<Set<string>>(
     () => new Set((quote.viewers ?? []).map((v) => v.user.id)),
   );
@@ -174,6 +179,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
           siteAddress: siteAddress.trim() ? siteAddress.trim() : null,
           projectNotes: projectNotes.trim() ? projectNotes.trim() : null,
           discountPct: discountPctInput.trim() === '' ? null : Number(discountPctInput) / 100,
+          discountScope,
           // Optimistic concurrency: server rejects (409) if the quote moved since we loaded it.
           expectedVersion: quote.lockVersion,
         }),
@@ -188,7 +194,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
     } finally {
       setBusy(false);
     }
-  }, [quote.id, quote.lockVersion, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, discountPctInput, onChange]);
+  }, [quote.id, quote.lockVersion, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, discountPctInput, discountScope, onChange]);
 
   const save = persist;
 
@@ -218,6 +224,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
           <div><label>Requested shipping date</label><input value={quote.requestedShippingDate ? quote.requestedShippingDate.slice(0, 10) : ''} readOnly /></div>
           <div><label>Site address</label><input value={quote.siteAddress ?? ''} readOnly /></div>
           <div><label>Discount</label><input value={quote.discountPct != null && quote.discountPct !== '' ? `${Number(quote.discountPct) * 100}%` : '(default)'} readOnly /></div>
+          <div><label>Discount applies to</label><input value={quote.discountScope === 'recurring' ? 'Every renewal (recurring)' : 'One-off (upfront)'} readOnly /></div>
         </div>
         <div style={{ marginTop: 8 }}>
           <label>Project notes</label>
@@ -294,6 +301,13 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
         <div>
           <label>Discount override (%)</label>
           <input type="number" min={0} max={99} step="0.5" value={discountPctInput} onChange={(e) => { setDiscountPctInput(e.target.value); setDirty(true); }} placeholder="(default)" />
+        </div>
+        <div>
+          <label>Discount applies to</label>
+          <select value={discountScope} onChange={(e) => { setDiscountScope(e.target.value as 'one_off' | 'recurring'); setDirty(true); }}>
+            <option value="one_off">One-off (upfront)</option>
+            <option value="recurring">Every renewal (recurring)</option>
+          </select>
         </div>
       </div>
       <div style={{ marginTop: 8 }}>
@@ -1406,8 +1420,8 @@ interface PriceResult {
   overrides?: OverrideSummary[];
   hasOverrides?: boolean;
   licences: Array<{ screenType: string; tier: string; qty: number; isInteractive: boolean; annual: string }>;
-  // U3 — effective client discount applied to the one-off sell base (equipment + services).
-  discount?: { pct: number; source: 'quote' | 'client' | 'system'; amount: string };
+  // U3/U5 — effective client discount; `scope` decides the base (one-off upfront vs every renewal).
+  discount?: { pct: number; source: 'quote' | 'client' | 'system'; scope?: 'one_off' | 'recurring'; amount: string };
   totals: {
     equipment: string; services: string; recurring: string; grandTotal: string;
     margin: string | null; marginFloor: number | null;
@@ -1945,7 +1959,7 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
               {price.discount && price.discount.pct > 0 && (
                 <div className="stat">
                   <div className="label">
-                    Discount ({(price.discount.pct * 100).toFixed(price.discount.pct * 100 % 1 ? 1 : 0)}% · {price.discount.source})
+                    Discount ({(price.discount.pct * 100).toFixed(price.discount.pct * 100 % 1 ? 1 : 0)}% · {price.discount.scope === 'recurring' ? 'per renewal' : 'one-off'})
                   </div>
                   <div className="value" style={{ color: 'var(--danger, #dc2626)' }}>
                     − {cur} {Number(price.discount.amount).toLocaleString()}

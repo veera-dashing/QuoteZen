@@ -3,7 +3,7 @@ import type { Prisma } from '@quotezen/db';
 import { aggregateQuote, type QuoteLineContribution } from '@quotezen/calc';
 import { d, marginOf, round, sum } from '@quotezen/shared';
 import type { CreateQuoteInput, UpdateQuoteInput } from '@quotezen/shared';
-import type { QuoteStatus } from '@quotezen/shared';
+import type { DiscountScope, QuoteStatus } from '@quotezen/shared';
 import { AppError, conflict, notFound } from '../../errors.js';
 import type { UserRole } from '@quotezen/shared';
 import { diffFields, recordAudit } from '../../services/audit.js';
@@ -39,6 +39,7 @@ const QUOTE_HEADER_FIELDS = [
   'validUntil',
   'requestedShippingDate',
   'discountPct',
+  'discountScope',
   'siteAddress',
   'projectNotes',
 ] as const;
@@ -63,6 +64,7 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput) => {
         validUntil: input.validUntil ?? null,
         requestedShippingDate: input.requestedShippingDate ?? null,
         discountPct: input.discountPct ?? null,
+        discountScope: input.discountScope ?? 'one_off',
         siteAddress: input.siteAddress ?? null,
         projectNotes: input.projectNotes ?? null,
         createdById: userId,
@@ -221,6 +223,7 @@ export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuote
   if (input.validUntil !== undefined) data.validUntil = input.validUntil;
   if (input.requestedShippingDate !== undefined) data.requestedShippingDate = input.requestedShippingDate;
   if (input.discountPct !== undefined) data.discountPct = input.discountPct;
+  if (input.discountScope !== undefined) data.discountScope = input.discountScope;
   if (input.siteAddress !== undefined) data.siteAddress = input.siteAddress;
   if (input.projectNotes !== undefined) data.projectNotes = input.projectNotes;
   if (input.currencyCode !== undefined) {
@@ -272,11 +275,16 @@ const FINALISED_STATUSES: QuoteStatus[] = ['approved', 'issued'];
  * U3 — the realised margin is computed on the DISCOUNTED sell: the effective client discount reduces
  * the total sell (cost is unchanged), so a discount lowers margin and the existing below-floor
  * guardrail in `changeStatus` fires correctly. `discountPct` is the resolved fraction 0..1.
+ *
+ * U5 — the realised margin here is the ONE-OFF (equipment + services) margin. Only a `one_off`-scope
+ * discount lowers it; a `recurring`-scope discount touches the recurring renewal total, not the
+ * upfront sell, so it must NOT reduce this margin (and so must NOT trip the one-off floor guardrail).
  */
 export const computeMargin = (
   quote: QuoteWithChildren,
   overrides?: Map<string, OverrideRow>,
   discountPct = 0,
+  discountScope: DiscountScope = 'one_off',
 ) => {
   const costs: Array<string> = [];
   const sells: Array<string> = [];
@@ -300,9 +308,10 @@ export const computeMargin = (
     }
   }
   const totalCost = sum(costs);
-  // U3: discount reduces the sell side (cost unchanged) → margin reflects the concession.
-  const totalSell =
-    discountPct > 0 ? round(sum(sells).times(d(1).minus(discountPct))) : sum(sells);
+  // U3/U5: a ONE-OFF discount reduces the upfront sell side (cost unchanged) → margin reflects the
+  // concession. A recurring-scope discount does not touch the upfront sell, so leave the sell intact.
+  const applyDiscount = discountPct > 0 && discountScope === 'one_off';
+  const totalSell = applyDiscount ? round(sum(sells).times(d(1).minus(discountPct))) : sum(sells);
   return { totalCost, totalSell, margin: round(marginOf(totalCost, totalSell), 4) };
 };
 
@@ -326,6 +335,8 @@ export interface ResolvedDiscount {
   /** Fraction 0..1. */
   pct: number;
   source: DiscountSource;
+  /** Where the discount applies (U5): one-off upfront concession vs every renewal (recurring). */
+  scope: DiscountScope;
 }
 
 /**
@@ -333,17 +344,22 @@ export interface ResolvedDiscount {
  * client default, which wins over the system default setting. Precedence:
  *   quote.discountPct → client.discountPct → `default_client_discount_pct` setting → 0.
  * The system-default value must be supplied (read once by the async caller) so this stays pure.
+ *
+ * U5 — `scope` is always the quote-level decision (`quote.discountScope`, default `one_off`). It is
+ * independent of where the *rate* came from: a client/system-default rate still applies to whichever
+ * base the quote elected (upfront vs recurring).
  */
 export const resolveDiscount = (
   quote: QuoteWithChildren,
   defaultDiscountPct: number,
 ): ResolvedDiscount => {
-  if (quote.discountPct != null) return { pct: Number(quote.discountPct), source: 'quote' };
+  const scope = (quote.discountScope as DiscountScope) ?? 'one_off';
+  if (quote.discountPct != null) return { pct: Number(quote.discountPct), source: 'quote', scope };
   if (quote.client?.discountPct != null) {
-    return { pct: Number(quote.client.discountPct), source: 'client' };
+    return { pct: Number(quote.client.discountPct), source: 'client', scope };
   }
-  if (defaultDiscountPct > 0) return { pct: defaultDiscountPct, source: 'system' };
-  return { pct: 0, source: 'system' };
+  if (defaultDiscountPct > 0) return { pct: defaultDiscountPct, source: 'system', scope };
+  return { pct: 0, source: 'system', scope };
 };
 
 export const changeStatus = async (
@@ -374,8 +390,11 @@ export const changeStatus = async (
     // Margin must reflect pinned overrides so a below-floor override trips the guardrail (P1-17.5),
     // and the effective client discount (U3) so a deep discount below the floor is gated too.
     const ovMap = overrideMap(await pruneOrphanOverrides(existing, await listOverrides(id)));
-    const { pct: discountPct } = resolveDiscount(existing, await getDefaultDiscountPct());
-    const { margin } = computeMargin(existing, ovMap, discountPct);
+    const { pct: discountPct, scope: discountScope } = resolveDiscount(
+      existing,
+      await getDefaultDiscountPct(),
+    );
+    const { margin } = computeMargin(existing, ovMap, discountPct, discountScope);
     if (floor > 0 && margin.lessThan(floor)) {
       if (!isAdmin(actor)) {
         throw new AppError(
@@ -423,8 +442,8 @@ export const changeStatus = async (
     // Knowledge-base capture on outcome states (P1-19f). Margin reflects pinned overrides.
     if (CAPTURE_STATUSES.includes(status)) {
       const ov = overrideMap(await listOverrides(id));
-      const { pct } = resolveDiscount(quote, await getDefaultDiscountPct());
-      await captureKbEntry(tx, quote, actor.id, status, computeMargin(quote, ov, pct).margin.toString());
+      const { pct, scope } = resolveDiscount(quote, await getDefaultDiscountPct());
+      await captureKbEntry(tx, quote, actor.id, status, computeMargin(quote, ov, pct, scope).margin.toString());
     }
     return quote;
   });
@@ -476,8 +495,11 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
   // Active overrides (post-prune) drive the per-line flag + the overrides summary (P1-17.2/.3).
   const activeOverrides = await pruneOrphanOverrides(quote, await listOverrides(id));
   const ovMap = overrideMap(activeOverrides);
-  // U3 — effective client discount (quote override → client → system default) + discounted margin.
+  // U3/U5 — effective client discount (quote override → client → system default) + discounted margin.
   const discount = resolveDiscount(quote, await getDefaultDiscountPct());
+  // Authoritative, scope-aware discount amount (one-off vs recurring) from the shared rollup, so the
+  // surfaced concession matches whichever base the discount was applied to (U5).
+  const discountAmount = computeQuoteTotals(quote, ovMap, await getDefaultDiscountPct()).discount.amount;
 
   const sections: PriceSection[] = [];
   for (const s of quote.ledScreens) {
@@ -539,18 +561,14 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
       isInteractive: l.isInteractive,
       annual: dec(l.licenceComponent?.value),
     })),
-    // U3 — effective discount applied to the one-off sell base (equipment + services, after markup);
-    // recurring is NOT discounted. `amount` is the dollar concession on the upfront total.
+    // U3/U5 — effective discount; `scope` decides the base: `one_off` discounts the upfront sell
+    // (equipment + services, after markup), `recurring` discounts the renewal total. `amount` is the
+    // dollar concession on whichever base, taken from the shared scope-aware rollup.
     discount: {
       pct: discount.pct,
       source: discount.source,
-      // pre-discount upfront-after-markup = equipment + services (with reseller markup folded in via
-      // recompute); the stored grandTotal is already net of the discount, so amount = pct × pre-net.
-      amount: round(
-        d(dec(quote.totalEquipment)).plus(dec(quote.totalServices)).times(
-          1 + Number(quote.resellerMarkup),
-        ).times(discount.pct),
-      ).toString(),
+      scope: discount.scope,
+      amount: discountAmount,
     },
     totals: {
       equipment: dec(quote.totalEquipment),
@@ -559,7 +577,7 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
       grandTotal: dec(quote.grandTotal),
       // Margin derives from cost → admin-only (BR-081); reflects pinned overrides (P1-17.5) and the
       // effective client discount (U3 — discount lowers the realised margin).
-      margin: showCost ? computeMargin(quote, ovMap, discount.pct).margin.toString() : null,
+      margin: showCost ? computeMargin(quote, ovMap, discount.pct, discount.scope).margin.toString() : null,
       marginFloor: showCost ? await getMarginFloor() : null,
     },
   };
@@ -570,8 +588,8 @@ export interface QuoteTotalsResult {
   services: string;
   recurring: string;
   grandTotal: string;
-  /** The effective client discount applied (U3). */
-  discount: { pct: number; source: DiscountSource; amount: string };
+  /** The effective client discount applied (U3/U5). */
+  discount: { pct: number; source: DiscountSource; scope: DiscountScope; amount: string };
 }
 
 /**
@@ -622,20 +640,34 @@ export const computeQuoteTotals = (
 
   const agg = aggregateQuote(lines, Number(quote.resellerMarkup));
 
-  // U3 — apply the effective client discount to the one-off sell base only. `agg.grandTotal` is the
-  // upfront (equipment + services) after the reseller markup; recurring is reported separately and is
-  // NOT discounted. discountAmount = round(pct × upfront-after-markup); discounted grandTotal = that
-  // upfront minus the discount. Decimal math throughout.
-  const { pct, source } = resolveDiscount(quote, defaultDiscountPct);
-  const discountAmount = pct > 0 ? round(agg.grandTotal.times(pct)) : round(0);
-  const grandTotal = round(agg.grandTotal.minus(discountAmount));
+  // U3/U5 — apply the effective client discount to the base the quote elected (`discountScope`).
+  // `agg.grandTotal` is the upfront (equipment + services) after the reseller markup; `agg.recurring`
+  // is the annual/renewal total. Decimal math throughout.
+  //   • one_off  (default): discount the UPFRONT base; recurring untouched. Matches U3 behaviour.
+  //   • recurring         : discount the RECURRING total; upfront untouched.
+  const { pct, source, scope } = resolveDiscount(quote, defaultDiscountPct);
+  const recurringBase = round(agg.recurring);
+  let recurring = recurringBase;
+  let upfront = round(agg.grandTotal);
+  let discountAmount = round(0);
+  if (pct > 0) {
+    if (scope === 'recurring') {
+      discountAmount = round(recurringBase.times(pct));
+      recurring = round(recurringBase.minus(discountAmount));
+    } else {
+      discountAmount = round(agg.grandTotal.times(pct));
+      upfront = round(agg.grandTotal.minus(discountAmount));
+    }
+  }
+  // grandTotal is the upfront one-off total (recurring is reported separately, as before).
+  const grandTotal = upfront;
 
   return {
     equipment: agg.equipment.toString(),
     services: agg.services.toString(),
-    recurring: agg.recurring.toString(),
+    recurring: recurring.toString(),
     grandTotal: grandTotal.toString(),
-    discount: { pct, source, amount: discountAmount.toString() },
+    discount: { pct, source, scope, amount: discountAmount.toString() },
   };
 };
 
@@ -800,8 +832,8 @@ export const setOverride = async (
   let warning: string | null = null;
   const floor = await getMarginFloor();
   if (floor > 0) {
-    const { pct } = resolveDiscount(updated, await getDefaultDiscountPct());
-    const { margin } = computeMargin(updated, ovMap, pct);
+    const { pct, scope } = resolveDiscount(updated, await getDefaultDiscountPct());
+    const { margin } = computeMargin(updated, ovMap, pct, scope);
     if (margin.lessThan(floor)) {
       warning = `This override drops the quote margin to ${margin.times(100).toFixed(1)}%, below the floor of ${(floor * 100).toFixed(1)}%. Finalisation will require admin approval.`;
     }

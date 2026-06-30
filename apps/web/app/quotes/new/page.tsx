@@ -22,6 +22,8 @@ export default function NewQuote() {
   const [siteAddress, setSiteAddress] = useState('');
   const [projectNotes, setProjectNotes] = useState('');
   const [discountPctInput, setDiscountPctInput] = useState('');
+  // U5 — where the discount applies: one-off upfront concession (default) vs every renewal.
+  const [discountScope, setDiscountScope] = useState<'one_off' | 'recurring'>('one_off');
   const [clients, setClients] = useState<Option[]>([]);
   const [locations, setLocations] = useState<Option[]>([]);
   const [currencies, setCurrencies] = useState<Option[]>([]);
@@ -71,6 +73,7 @@ export default function NewQuote() {
           siteAddress: siteAddress.trim() || undefined,
           projectNotes: projectNotes.trim() || undefined,
           discountPct: discountPctInput.trim() === '' ? undefined : Number(discountPctInput) / 100,
+          discountScope,
         }),
       });
       router.replace(`/quotes/${quote.id}`);
@@ -130,6 +133,13 @@ export default function NewQuote() {
             <label>Discount override (%)</label>
             <input type="number" min={0} max={99} step="0.5" value={discountPctInput} onChange={(e) => setDiscountPctInput(e.target.value)} placeholder="(default)" />
           </div>
+        </div>
+        <div className="field">
+          <label>Discount applies to</label>
+          <select value={discountScope} onChange={(e) => setDiscountScope(e.target.value as 'one_off' | 'recurring')}>
+            <option value="one_off">One-off (upfront equipment + services)</option>
+            <option value="recurring">Every renewal (recurring total)</option>
+          </select>
         </div>
         <div className="field">
           <label>Site address</label>

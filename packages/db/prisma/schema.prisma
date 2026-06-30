@@ -758,6 +758,8 @@ model Quote {
   requestedShippingDate DateTime?   @map("requested_shipping_date")
   /** Quote-level discount OVERRIDE (U0), a fraction 0..1; wins over the client/system default. Not yet applied to pricing. */
   discountPct           Decimal?    @map("discount_pct") @db.Decimal(5, 4)
+  /** Where the discount applies (U5): `one_off` = the upfront equipment+services concession; `recurring` = every renewal (the recurring total). */
+  discountScope         String      @default("one_off") @map("discount_scope")
   /** Quote-wide PI capture (U0): the install site address and free-text project notes. */
   siteAddress           String?     @map("site_address")
   projectNotes          String?     @map("project_notes")
