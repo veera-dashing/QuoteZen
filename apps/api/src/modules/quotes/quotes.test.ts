@@ -249,6 +249,100 @@ describe('quote lifecycle', () => {
     expect(bad.statusCode).toBe(422);
   });
 
+  it('filters the dashboard list by status / q / clientId and respects per-user scope (P1-19d.1)', async () => {
+    const tag = Math.floor(Math.random() * 1e9);
+    const refA = `${JOB_PREFIX}dashA-${tag}`;
+    const refB = `${JOB_PREFIX}dashB-${tag}`;
+
+    // Two admin quotes; move A to in_review so a status filter can distinguish them.
+    const a = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: authHeader(),
+      payload: { jobReference: refA, currencyCode: 'AUD' },
+    });
+    const aId = a.json().id as string;
+    const b = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: authHeader(),
+      payload: { jobReference: refB, currencyCode: 'AUD' },
+    });
+    const bId = b.json().id as string;
+    await app.inject({
+      method: 'POST',
+      url: `/quotes/${aId}/status`,
+      headers: authHeader(),
+      payload: { status: 'in_review' },
+    });
+
+    // status filter → only A (in_review), not B (draft).
+    const byStatus = await app.inject({
+      method: 'GET',
+      url: '/quotes?status=in_review',
+      headers: authHeader(),
+    });
+    const statusIds = (byStatus.json() as Array<{ id: string }>).map((q) => q.id);
+    expect(statusIds).toContain(aId);
+    expect(statusIds).not.toContain(bId);
+
+    // q substring (case-insensitive) on jobReference → only A.
+    const byQ = await app.inject({
+      method: 'GET',
+      url: `/quotes?q=DASHA-${tag}`,
+      headers: authHeader(),
+    });
+    const qIds = (byQ.json() as Array<{ id: string }>).map((q) => q.id);
+    expect(qIds).toContain(aId);
+    expect(qIds).not.toContain(bId);
+
+    // clientId filter with no matching quotes → neither A nor B.
+    const byClient = await app.inject({
+      method: 'GET',
+      url: '/quotes?clientId=999999999',
+      headers: authHeader(),
+    });
+    const clientIds = (byClient.json() as Array<{ id: string }>).map((q) => q.id);
+    expect(clientIds).not.toContain(aId);
+    expect(clientIds).not.toContain(bId);
+
+    // Per-user scope still holds: sales cannot see the admin quote even with a matching filter.
+    const salesLogin = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'sales@quotezen.local', password: 'demo' },
+    });
+    const salesAuth = { authorization: `Bearer ${salesLogin.json().token as string}` };
+    const salesScoped = await app.inject({
+      method: 'GET',
+      url: `/quotes?q=DASHA-${tag}`,
+      headers: salesAuth,
+    });
+    expect((salesScoped.json() as Array<{ id: string }>).map((q) => q.id)).not.toContain(aId);
+  });
+
+  it('recompute-preview reports differs:false for a freshly-computed quote (P1-19d.3)', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: authHeader(),
+      payload: { jobReference: `${JOB_PREFIX}preview-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const id = created.json().id as string;
+
+    // Persist totals, then preview must match exactly (no drift) without mutating.
+    await app.inject({ method: 'POST', url: `/quotes/${id}/recompute`, headers: authHeader() });
+    const preview = await app.inject({
+      method: 'GET',
+      url: `/quotes/${id}/recompute-preview`,
+      headers: authHeader(),
+    });
+    expect(preview.statusCode).toBe(200);
+    const body = preview.json() as { current: string; recomputed: string; differs: boolean };
+    expect(body.differs).toBe(false);
+    expect(Number(body.current)).toBe(Number(body.recomputed));
+  });
+
   it('soft-deletes (archives) and restores a quote, preserving the row and audit (P1-05.1)', async () => {
     const jobReference = `${JOB_PREFIX}arch-${Math.floor(Math.random() * 1e9)}`;
     const created = await app.inject({

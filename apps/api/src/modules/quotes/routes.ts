@@ -32,6 +32,7 @@ import {
   getQuote,
   getQuotes,
   priceQuote,
+  recomputePreview,
   recomputeQuote,
   setOverride,
   updateQuote,
@@ -96,8 +97,8 @@ export const quoteRoutes = async (
   });
 
   app.get('/quotes', auth, (request) => {
-    const { archived } = parse(listQuotesQuerySchema, request.query);
-    return getQuotes(actor(request), { archived });
+    const { archived, status, clientId, q, from, to } = parse(listQuotesQuerySchema, request.query);
+    return getQuotes(actor(request), { archived, status, clientId, q, from, to });
   });
 
   app.post('/quotes', write, async (request, reply) => {
@@ -144,6 +145,14 @@ export const quoteRoutes = async (
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     return recomputeQuote(userId(request), id);
+  });
+
+  // Read-only recompute preview (P1-19d.3): "recomputing now would change X → Y" for a reopened
+  // finished quote. Auth + ownership; never mutates (no `write` role, no persisted change).
+  app.get('/quotes/:id/recompute-preview', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return recomputePreview(id);
   });
 
   // Fully itemised price (every line), cost masked for non-admin (P1-16.8 / BR-081).

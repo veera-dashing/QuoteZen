@@ -1,4 +1,5 @@
 import { prisma } from '@quotezen/db';
+import type { Prisma } from '@quotezen/db';
 import { aggregateQuote, type QuoteLineContribution } from '@quotezen/calc';
 import { marginOf, round, sum } from '@quotezen/shared';
 import type { CreateQuoteInput, UpdateQuoteInput } from '@quotezen/shared';
@@ -95,18 +96,36 @@ const isAdmin = (actor: Actor): boolean => actor.role === 'admin';
 export interface ListQuotesOptions {
   /** Show archived quotes instead of active ones (P1-05.1). Defaults to active-only. */
   archived?: boolean;
+  /** Dashboard filters (P1-19d.1), composed alongside the per-user scope + archive filter. */
+  status?: QuoteStatus;
+  clientId?: number;
+  /** Case-insensitive substring match on jobReference. */
+  q?: string;
+  /** createdAt date range (inclusive). */
+  from?: Date;
+  to?: Date;
 }
 
 /**
  * List quotes the actor may see (admins → all; others → own + assigned-as-viewer), composed with the
- * archive filter: by default only active quotes (`archivedAt: null`); `archived:true` shows archived.
+ * archive filter and the optional dashboard filters (status / client / jobRef substring / createdAt
+ * range, P1-19d.1). The per-user scope and archive default (active-only) are always applied; filters
+ * only narrow further, so existing callers passing no filters behave exactly as before.
  */
 export const getQuotes = (actor: Actor, opts: ListQuotesOptions = {}) => {
-  const archiveWhere = opts.archived ? { NOT: { archivedAt: null } } : { archivedAt: null };
-  const scopeWhere = isAdmin(actor)
-    ? undefined
-    : { OR: [{ createdById: actor.id }, { viewers: { some: { userId: actor.id } } }] };
-  return listQuotes(scopeWhere ? { AND: [archiveWhere, scopeWhere] } : archiveWhere);
+  const clauses: Prisma.QuoteWhereInput[] = [
+    opts.archived ? { NOT: { archivedAt: null } } : { archivedAt: null },
+  ];
+  if (!isAdmin(actor)) {
+    clauses.push({ OR: [{ createdById: actor.id }, { viewers: { some: { userId: actor.id } } }] });
+  }
+  if (opts.status) clauses.push({ status: opts.status });
+  if (opts.clientId !== undefined) clauses.push({ clientId: opts.clientId });
+  if (opts.q) clauses.push({ jobReference: { contains: opts.q, mode: 'insensitive' } });
+  if (opts.from || opts.to) {
+    clauses.push({ createdAt: { gte: opts.from, lte: opts.to } });
+  }
+  return listQuotes({ AND: clauses });
 };
 
 /** Archive (soft-delete) a quote: stamp archivedAt, audit, never hard-delete (P1-05.1). */
@@ -467,12 +486,15 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
   };
 };
 
-/** Map a quote's children to calc contributions, then recompute and persist the totals. */
-export const recomputeQuote = async (userId: bigint, id: bigint) => {
-  const quote = await getQuote(id);
-  // Pinned overrides (P1-17): a screen's effective sell is its override value (if active) else the
-  // computed price; everything downstream (equipment, grand total) recomputes from the pinned value.
-  const overrides = overrideMap(await pruneOrphanOverrides(quote, await listOverrides(id)));
+/**
+ * Pure rollup: map a quote's children to calc contributions and aggregate them, applying any pinned
+ * overrides. No DB writes — shared by the persisting `recomputeQuote` and the read-only
+ * `recomputePreview` (P1-19d.3) so the two can never drift.
+ */
+export const computeQuoteTotals = (
+  quote: QuoteWithChildren,
+  overrides: Map<string, OverrideRow>,
+) => {
   const lines: QuoteLineContribution[] = [];
 
   // Per-screen qty multiplies the stored (per-unit) price into the rollup (P1-14.2). LED screens
@@ -501,7 +523,29 @@ export const recomputeQuote = async (userId: bigint, id: bigint) => {
     lines.push({ kind: 'recurring', extendedSell: Number(dec(mu.musicService.sell)) * mu.qty });
   }
 
-  const totals = aggregateQuote(lines, Number(quote.resellerMarkup));
+  return aggregateQuote(lines, Number(quote.resellerMarkup));
+};
+
+/**
+ * Recompute-preview (P1-19d.3): re-run the rollup in memory and compare to the stored grand total —
+ * WITHOUT persisting anything. Lets a "reopened" finished quote surface "recomputing now would change
+ * X → Y" vs "keep as quoted". Shares `computeQuoteTotals` with the real recompute so they can't drift.
+ */
+export const recomputePreview = async (id: bigint) => {
+  const quote = await getQuote(id);
+  const overrides = overrideMap(await pruneOrphanOverrides(quote, await listOverrides(id)));
+  const recomputed = computeQuoteTotals(quote, overrides).grandTotal.toString();
+  const current = dec(quote.grandTotal);
+  return { current, recomputed, differs: Number(current) !== Number(recomputed) };
+};
+
+/** Map a quote's children to calc contributions, then recompute and persist the totals. */
+export const recomputeQuote = async (userId: bigint, id: bigint) => {
+  const quote = await getQuote(id);
+  // Pinned overrides (P1-17): a screen's effective sell is its override value (if active) else the
+  // computed price; everything downstream (equipment, grand total) recomputes from the pinned value.
+  const overrides = overrideMap(await pruneOrphanOverrides(quote, await listOverrides(id)));
+  const totals = computeQuoteTotals(quote, overrides);
 
   return prisma.$transaction(async (tx) => {
     const updated = await tx.quote.update({
