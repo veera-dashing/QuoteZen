@@ -570,6 +570,18 @@ interface QuoteValidation {
   screens: Array<{ screenId: string; screenName: string; findings: ValidationFinding[] }>;
 }
 
+interface PriceLine { label: string; category: string | null; qty: number; cost: string | null; sell: string | null }
+interface PriceSection { type: 'led' | 'lcd' | 'licence'; name: string; lines: PriceLine[]; total: string }
+interface PriceResult {
+  costVisible: boolean;
+  sections: PriceSection[];
+  licences: Array<{ screenType: string; tier: string; qty: number; isInteractive: boolean; annual: string }>;
+  totals: {
+    equipment: string; services: string; recurring: string; grandTotal: string;
+    margin: string | null; marginFloor: number | null;
+  };
+}
+
 function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [audit, setAudit] = useState<Audit[]>([]);
@@ -578,7 +590,24 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const [versions, setVersions] = useState<Version[]>([]);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [validation, setValidation] = useState<QuoteValidation | null>(null);
-  const isAdmin = getRole() === 'admin';
+  const [price, setPrice] = useState<PriceResult | null>(null);
+  const [pricing, setPricing] = useState(false);
+  const [priceError, setPriceError] = useState<string | null>(null);
+  const role = getRole();
+  const isAdmin = role === 'admin';
+  const canPrice = role === 'admin' || role === 'sales';
+
+  const loadPrice = async () => {
+    setPricing(true);
+    setPriceError(null);
+    try {
+      setPrice(await api<PriceResult>(`/quotes/${quote.id}/price`, { method: 'POST' }));
+    } catch (e) {
+      setPriceError(e instanceof Error ? e.message : 'Pricing failed');
+    } finally {
+      setPricing(false);
+    }
+  };
 
   const loadAudit = useCallback(() => {
     api<Audit[]>(`/quotes/${quote.id}/audit`).then(setAudit);
@@ -650,6 +679,114 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
           <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(quote.totalRecurring).toLocaleString()}</div></div>
           <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(quote.grandTotal).toLocaleString()}</div></div>
         </div>
+      </div>
+
+      <div className="card">
+        <div className="topbar">
+          <h3 style={{ margin: 0 }}>Itemised price</h3>
+          <button
+            className="primary"
+            onClick={loadPrice}
+            disabled={!canPrice || pricing}
+            title={canPrice ? undefined : 'Viewers cannot price a quote'}
+          >
+            {pricing ? 'Pricing…' : '＄ Itemise price'}
+          </button>
+        </div>
+        {!canPrice && (
+          <p className="muted" style={{ marginTop: 8 }}>Read-only role — pricing is unavailable.</p>
+        )}
+        {priceError && <div className="error" style={{ marginTop: 10 }}>{priceError}</div>}
+        {price && (
+          <div style={{ marginTop: 14 }}>
+            {!price.costVisible && (
+              <p className="muted" style={{ marginTop: 0 }}>Cost hidden for your role.</p>
+            )}
+            {price.sections.length === 0 && <p className="muted">No priced lines yet.</p>}
+            {price.sections.map((sec, si) => (
+              <div key={si} style={{ marginBottom: 14 }}>
+                <div className="topbar">
+                  <b>{sec.name} <span className="muted">· {sec.type.toUpperCase()}</span></b>
+                  <span>{cur} {Number(sec.total).toLocaleString()}</span>
+                </div>
+                <div className="table-wrap" style={{ marginTop: 6 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Label</th><th>Category</th><th className="cell-num">Qty</th>
+                        {price.costVisible && <th className="cell-num">Cost</th>}
+                        <th className="cell-num">Sell</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sec.lines.map((l, li) => (
+                        <tr key={li}>
+                          <td>{l.label}</td>
+                          <td className="muted">{l.category ?? '—'}</td>
+                          <td className="cell-num">{l.qty}</td>
+                          {price.costVisible && (
+                            <td className="cell-num">{cur} {Number(l.cost ?? 0).toLocaleString()}</td>
+                          )}
+                          <td className="cell-num">{cur} {Number(l.sell ?? 0).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+            {price.licences.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <b>Licences</b>
+                <div className="table-wrap" style={{ marginTop: 6 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Screen type</th><th>Tier</th><th className="cell-num">Qty</th>
+                        <th>Interactive</th><th className="cell-num">Annual</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {price.licences.map((l, li) => (
+                        <tr key={li}>
+                          <td>{l.screenType}</td>
+                          <td className="muted">{l.tier}</td>
+                          <td className="cell-num">{l.qty}</td>
+                          <td>{l.isInteractive ? 'Yes' : 'No'}</td>
+                          <td className="cell-num">{cur} {Number(l.annual).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            <div className="totals">
+              <div className="stat"><div className="label">Equipment</div><div className="value">{cur} {Number(price.totals.equipment).toLocaleString()}</div></div>
+              <div className="stat"><div className="label">Services</div><div className="value">{cur} {Number(price.totals.services).toLocaleString()}</div></div>
+              <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(price.totals.recurring).toLocaleString()}</div></div>
+              <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(price.totals.grandTotal).toLocaleString()}</div></div>
+              {price.totals.margin != null && (() => {
+                const margin = Number(price.totals.margin);
+                const floor = price.totals.marginFloor;
+                const below = floor != null && margin < floor;
+                return (
+                  <>
+                    <div className="stat">
+                      <div className="label">Margin</div>
+                      <div className="value" style={below ? { color: 'var(--danger, #dc2626)' } : undefined}>
+                        {(margin * 100).toFixed(1)}%{below ? ' ⛔' : ''}
+                      </div>
+                    </div>
+                    {floor != null && (
+                      <div className="stat"><div className="label">Margin floor</div><div className="value">{(floor * 100).toFixed(1)}%</div></div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="card">
