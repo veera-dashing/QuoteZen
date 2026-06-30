@@ -338,9 +338,40 @@ workbook); this exposed the rest in the wizard + added the input-time rules. 146
   divides by /135 and isn't in SUM(K28:K29)), charged at the LCDRef uplift rate `out_of_hours_rate_cost`
   ($50/hr) / `out_of_hours_rate_sell` ($80/hr). Persists screen/bracket/services subtotals; audited.
 
-**Still backlogged (deferred by decision / needs infra):** Google OAuth (P1-02) + Zoho (P1-19a/b/c) and
-all Phase-2 AI (P2-*) — deferred by decision; real S3 + AV scanning for uploads (the prototype uses
-local disk); full Terraform/Docker/CD (CI is lightweight only).
+### Block 9 — Workshop "Capability Assessment" deterministic gaps (`Workshop 1 - Current State…` PDF)
+Reconciled the manual 6-stage process + 8 target capabilities from the Propel Ventures workshop PDF
+against the build. The deterministic quote-flow core (Capabilities 4 & 5 — tech config + commercial
+estimation — plus versioning/audit/RBAC/governance) was already done and matches; the workshop's own
+"where the LLM is used" map + MVP matrix put the LLM/Zoho/embedding parts as do-it-next / don't-do.
+Built the four remaining **deterministic** gaps (AI/Zoho stay deferred). 160 tests green.
+- ✅ **T1 — Two-stage review & approval (Capability 7 / BR-001 / FR-102-110)** — `technical_review` +
+  `commercial_review` statuses; `quote_reviews` table (stage/decision/reviewer/comment + the reviewed
+  `lockVersion`). `recordReview` advances/kicks-back + audits (no lockVersion bump, so both stage
+  approvals share a revision); `changeStatus` blocks `→ issued` unless BOTH a technical AND a commercial
+  `approved` review exist **for the current revision** (BR-001 — admins cannot bypass), alongside the
+  margin + validation guardrails; a content edit re-arms the gate; history preserved (FR-110). `POST/GET
+  /quotes/:id/reviews`; Review & approval UI card + history; Issue disabled until both approved.
+- ✅ **T4 — Manual assumptions & risks register (Capability 2 manual / FR-038-041,095)** — `quote_risks`
+  (category/severity/mitigation); `GET/PUT /quotes/:id/risks` + combined `GET …/register` (assumptions
+  from `quote_terms` + risks); risks flow into the proposal PDF (high-severity red) + PM handoff (sorted
+  high-first); ReviewStep register card with high-severity highlighting (viewer read-only). Manual capture
+  only — AI gap/risk *detection* stays deferred.
+- ✅ **T2 — Good/Better/Best options (Capability 6 / FR-057,067)** — calc `selectTiers`: Value (cheapest
+  cost/sqm) / Recommended (best-fit) / Premium (finest pitch) over distinct products, each with a static
+  rationale; `POST /quotes/:id/screens/options` prices each at the **supply level** (area × cost/sqm × FX ×
+  LED markup) via the live PricingConfig, cost+margin admin-masked (BR-081), no persistence; LED-step
+  comparison cards with "Use this option" → existing add path.
+- ✅ **T3 — Ratio guardrail + over/under sizing (Capability 4 / FR-059-067, BR-033)** — `configureScreen`
+  now emits fit+under+over variants per product/orientation (deduped); `ConfigOption` gains `sizeMode`
+  (under|exact|over), signed `deltaWidth/HeightMm`, `sizeDeltaPct`, `ratioPreferred`, advisory
+  `ratioGuidance` (preferred order 16:9,2:1,3:1,5:4,1:1,9:16 — non-blocking). Configure table shows a
+  colour-coded Sizing column + ⚠ ratio-guidance flag.
+
+**Still backlogged (deferred by decision / needs infra):** the workshop's AI/Zoho capabilities — Opportunity
+Intake (Zoho sync + AI doc/metadata extraction, Cap 1), Opportunity Analysis (AI gap/risk/clarification
+detection, Cap 2), Knowledge Engine (vector similarity, Cap 3), Learning Engine (close-the-loop, Cap 8),
+Zoho estimate push (Cap 6) — plus Google OAuth (P1-02) and all Phase-2 AI (P2-*); real S3 + AV scanning for
+uploads (the prototype uses local disk); full Terraform/Docker/CD (CI is lightweight only).
 
 **Local Postgres for dev/tests:**
 ```bash
