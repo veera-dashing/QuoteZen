@@ -48,3 +48,11 @@ export type UserRole = (typeof USER_ROLES)[number];
 /** LED screen orientation (LED-1 E10). */
 export const ORIENTATIONS = ['Landscape', 'Portrait'] as const;
 export type Orientation = (typeof ORIENTATIONS)[number];
+
+/** Manual risk-register category (T4 / FR-038–041). */
+export const RISK_CATEGORIES = ['technical', 'commercial', 'delivery'] as const;
+export type RiskCategory = (typeof RISK_CATEGORIES)[number];
+
+/** Manual risk-register severity (T4). High-severity risks are highlighted in the UI + PDF. */
+export const RISK_SEVERITIES = ['low', 'medium', 'high'] as const;
+export type RiskSeverity = (typeof RISK_SEVERITIES)[number];

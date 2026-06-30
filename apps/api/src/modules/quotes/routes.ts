@@ -12,6 +12,7 @@ import {
   listQuotesQuerySchema,
   ledScreenSchema,
   quoteLicenceSchema,
+  quoteRisksSchema,
   quoteTermsSchema,
   reorderScreensSchema,
   screenQtySchema,
@@ -63,6 +64,7 @@ import {
 import { buildQuotePdf } from './pdf.js';
 import { buildBom, buildDescriptions, buildPmHandoff, buildSolutionSummary, loadRatios } from './outputs.js';
 import { getTerms, replaceTerms } from './terms.js';
+import { getRegister, getRisks, replaceRisks } from './risks.js';
 import {
   createVersion,
   diffVersions,
@@ -274,6 +276,27 @@ export const quoteRoutes = async (
     await assertOwnership(id, actor(request));
     const input = parse(quoteTermsSchema, request.body);
     return replaceTerms(userId(request), id, input);
+  });
+
+  // ── Manual assumptions & risks register (T4 / FR-038–041, FR-095) ──
+  app.get('/quotes/:id/risks', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return getRisks(id);
+  });
+
+  app.put('/quotes/:id/risks', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const input = parse(quoteRisksSchema, request.body);
+    return replaceRisks(userId(request), id, input);
+  });
+
+  // Combined register (assumptions from terms + risks) for the pre-finalisation register view.
+  app.get('/quotes/:id/register', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    return getRegister(id);
   });
 
   // ── Versioning & snapshots (P1-04) ──

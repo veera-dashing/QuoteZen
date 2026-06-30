@@ -249,6 +249,69 @@ describe('quote lifecycle', () => {
     expect(bad.statusCode).toBe(422);
   });
 
+  it('captures a manual assumptions & risks register that flows into the PM handoff + PDF (T4)', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/quotes',
+      headers: authHeader(),
+      payload: { jobReference: `${JOB_PREFIX}risks-${Math.floor(Math.random() * 1e9)}`, currencyCode: 'AUD' },
+    });
+    const id = created.json().id as string;
+
+    // No risks yet.
+    const empty = await app.inject({ method: 'GET', url: `/quotes/${id}/risks`, headers: authHeader() });
+    expect(empty.statusCode).toBe(200);
+    expect(empty.json()).toEqual([]);
+
+    // PUT then GET round-trips (seq from index, mitigation optional).
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/quotes/${id}/risks`,
+      headers: authHeader(),
+      payload: {
+        risks: [
+          { category: 'delivery', description: 'Long lead time on panels', severity: 'medium', mitigation: 'Order early' },
+          { category: 'technical', description: 'Outdoor ingress rating unconfirmed', severity: 'high' },
+        ],
+      },
+    });
+    expect(put.statusCode).toBe(200);
+    const saved = put.json() as Array<{ category: string; description: string; severity: string; seq: number }>;
+    expect(saved).toHaveLength(2);
+    expect(saved[1]).toMatchObject({ category: 'technical', severity: 'high', seq: 1 });
+
+    const after = await app.inject({ method: 'GET', url: `/quotes/${id}/risks`, headers: authHeader() });
+    expect((after.json() as unknown[]).length).toBe(2);
+
+    // Combined register: assumptions (terms) + risks.
+    const register = await app.inject({ method: 'GET', url: `/quotes/${id}/register`, headers: authHeader() });
+    expect(register.statusCode).toBe(200);
+    const reg = register.json() as { assumptions: string[]; risks: unknown[] };
+    expect(Array.isArray(reg.assumptions)).toBe(true);
+    expect(reg.risks).toHaveLength(2);
+
+    // PM handoff includes risks sorted high → low.
+    const handoff = await app.inject({ method: 'GET', url: `/quotes/${id}/pm-handoff`, headers: authHeader() });
+    expect(handoff.statusCode).toBe(200);
+    const ho = handoff.json() as { risks: Array<{ severity: string; description: string }> };
+    expect(ho.risks).toHaveLength(2);
+    expect(ho.risks[0]?.severity).toBe('high'); // high sorted first
+
+    // PDF still generates with the risks section.
+    const pdf = await app.inject({ method: 'GET', url: `/quotes/${id}/export.pdf`, headers: authHeader() });
+    expect(pdf.statusCode).toBe(200);
+    expect(pdf.rawPayload.subarray(0, 4).toString()).toBe('%PDF');
+
+    // Invalid input (empty description) → 422.
+    const bad = await app.inject({
+      method: 'PUT',
+      url: `/quotes/${id}/risks`,
+      headers: authHeader(),
+      payload: { risks: [{ category: 'technical', description: '', severity: 'low' }] },
+    });
+    expect(bad.statusCode).toBe(422);
+  });
+
   it('filters the dashboard list by status / q / clientId and respects per-user scope (P1-19d.1)', async () => {
     const tag = Math.floor(Math.random() * 1e9);
     const refA = `${JOB_PREFIX}dashA-${tag}`;

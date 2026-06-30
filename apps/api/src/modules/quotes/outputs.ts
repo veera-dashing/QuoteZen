@@ -172,12 +172,29 @@ export const buildSolutionSummary = (quote: QuoteWithChildren, showCost: boolean
   exclusions: DEFAULT_EXCLUSIONS,
 });
 
+/** Risk severity ordering for grouped/sorted display (high → low). T4. */
+const SEVERITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
+/** Manual risks sorted by severity (high first), then capture order. Shared by the PDF + PM handoff. */
+export const sortedRisks = (quote: QuoteWithChildren) =>
+  [...quote.risks].sort(
+    (a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9) || a.seq - b.seq,
+  );
+
 /** PM handoff (P1-18.5): execution-focused subset of the approved quote. */
 export const buildPmHandoff = (quote: QuoteWithChildren) => ({
   jobReference: quote.jobReference,
   client: quote.client?.name ?? null,
   location: quote.location?.name ?? null,
   status: quote.status,
+  // Assumptions & risks register (T4): assumptions reuse terms (kind=assumption); risks are manual.
+  assumptions: quote.terms.filter((t) => t.kind === 'assumption').map((t) => t.text),
+  risks: sortedRisks(quote).map((r) => ({
+    category: r.category,
+    severity: r.severity,
+    description: r.description,
+    mitigation: r.mitigation,
+  })),
   screens: quote.ledScreens.map((s) => ({
     name: s.screenName,
     product: s.ledProduct?.model ?? null,

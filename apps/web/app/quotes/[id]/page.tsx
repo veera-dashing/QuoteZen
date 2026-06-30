@@ -22,6 +22,7 @@ interface Quote {
   ledScreens: LedScreen[]; lcdScreens: LcdScreen[]; licences: Licence[];
   viewers?: Array<{ user: { id: string; name: string; email: string } }>;
 }
+interface Risk { category: 'technical' | 'commercial' | 'delivery'; description: string; severity: 'low' | 'medium' | 'high'; mitigation: string | null; seq?: number }
 interface Audit { id: string; action: string; fieldName: string | null; oldValue: string | null; newValue: string | null; changedAt: string; user?: { name: string } }
 interface QuoteDoc { id: string; originalName: string; mimeType: string; sizeBytes: number; version: number; uploadedBy: { id: string; name: string } | null; createdAt: string }
 
@@ -1181,6 +1182,13 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const [termsSaved, setTermsSaved] = useState(false);
   const [termsError, setTermsError] = useState<string | null>(null);
 
+  // Assumptions & risks register (T4): assumptions reuse `assumptionsText` above; risks are an
+  // editable table here. High-severity risks are highlighted; flows into the proposal PDF + PM handoff.
+  const [risks, setRisks] = useState<Risk[]>([]);
+  const [risksSaving, setRisksSaving] = useState(false);
+  const [risksSaved, setRisksSaved] = useState(false);
+  const [risksError, setRisksError] = useState<string | null>(null);
+
   // Per-job documents + re-run (P1-19e).
   const [docs, setDocs] = useState<QuoteDoc[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -1218,6 +1226,51 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
       setTermsError(e instanceof Error ? e.message : 'Save failed');
     } finally {
       setTermsSaving(false);
+    }
+  };
+
+  const loadRisks = useCallback(() => {
+    api<Risk[]>(`/quotes/${quote.id}/risks`)
+      .then(setRisks)
+      .catch(() => setRisksError('Could not load risks'));
+  }, [quote.id]);
+
+  const updateRisk = (i: number, patch: Partial<Risk>) => {
+    setRisks((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+    setRisksSaved(false);
+  };
+  const addRisk = () => {
+    setRisks((rs) => [...rs, { category: 'technical', description: '', severity: 'medium', mitigation: '' }]);
+    setRisksSaved(false);
+  };
+  const removeRisk = (i: number) => {
+    setRisks((rs) => rs.filter((_, idx) => idx !== i));
+    setRisksSaved(false);
+  };
+
+  const saveRisks = async () => {
+    setRisksSaving(true);
+    setRisksError(null);
+    setRisksSaved(false);
+    const payload = {
+      risks: risks
+        .filter((r) => r.description.trim().length > 0)
+        .map((r) => ({
+          category: r.category,
+          description: r.description.trim(),
+          severity: r.severity,
+          mitigation: r.mitigation && r.mitigation.trim() ? r.mitigation.trim() : undefined,
+        })),
+    };
+    try {
+      await api(`/quotes/${quote.id}/risks`, { method: 'PUT', body: JSON.stringify(payload) });
+      setRisksSaved(true);
+      loadRisks();
+      loadAudit();
+    } catch (e) {
+      setRisksError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setRisksSaving(false);
     }
   };
 
@@ -1311,9 +1364,10 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
     loadVersions();
     loadValidation();
     loadTerms();
+    loadRisks();
     loadDocs();
     loadReviews();
-  }, [loadAudit, loadVersions, loadValidation, loadTerms, loadDocs, loadReviews]);
+  }, [loadAudit, loadVersions, loadValidation, loadTerms, loadRisks, loadDocs, loadReviews]);
 
   // Record a technical/commercial review decision (T1). Advances or kicks back the workflow server-side.
   const recordReview = async (stage: 'technical' | 'commercial', decision: 'approved' | 'rejected') => {
@@ -1767,6 +1821,97 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
             {termsError && <span style={{ color: 'var(--danger, #dc2626)' }}>{termsError}</span>}
           </div>
         )}
+      </div>
+
+      <div className="card" style={{ borderLeft: '4px solid var(--accent, #6d6bf6)' }}>
+        <h3 style={{ marginTop: 0 }}>Assumptions &amp; risks</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Manual register highlighted before finalisation. Assumptions come from the proposal text
+          above (Assumptions group); risks are captured here. Both flow into the proposal PDF and the
+          PM handoff. High-severity risks are highlighted.
+        </p>
+
+        <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Assumptions</label>
+        {(() => {
+          const items = assumptionsText.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+          return items.length > 0 ? (
+            <ul style={{ marginTop: 0, paddingLeft: 18, fontSize: 13 }}>
+              {items.map((a, i) => <li key={i}>{a}</li>)}
+            </ul>
+          ) : (
+            <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+              No assumptions captured — edit the Assumptions group in Proposal text above.
+            </p>
+          );
+        })()}
+
+        <label style={{ display: 'block', fontWeight: 600, margin: '14px 0 6px' }}>Risks</label>
+        {risks.length === 0 && (
+          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>No risks captured yet.</p>
+        )}
+        {risks.length > 0 && (
+          <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ textAlign: 'left' }}>
+                <th style={{ width: 120 }}>Category</th>
+                <th>Description</th>
+                <th style={{ width: 110 }}>Severity</th>
+                <th>Mitigation</th>
+                {canWrite && <th style={{ width: 32 }} />}
+              </tr>
+            </thead>
+            <tbody>
+              {risks.map((r, i) => {
+                const high = r.severity === 'high';
+                return (
+                  <tr key={i} style={high ? { background: 'rgba(220,38,38,0.08)' } : undefined}>
+                    <td>
+                      <select value={r.category} disabled={!canWrite} onChange={(e) => updateRisk(i, { category: e.target.value as Risk['category'] })} style={{ width: '100%' }}>
+                        <option value="technical">technical</option>
+                        <option value="commercial">commercial</option>
+                        <option value="delivery">delivery</option>
+                      </select>
+                    </td>
+                    <td>
+                      <input value={r.description} disabled={!canWrite} onChange={(e) => updateRisk(i, { description: e.target.value })} placeholder="Describe the risk…" style={{ width: '100%' }} />
+                    </td>
+                    <td>
+                      <select
+                        value={r.severity}
+                        disabled={!canWrite}
+                        onChange={(e) => updateRisk(i, { severity: e.target.value as Risk['severity'] })}
+                        style={{ width: '100%', fontWeight: high ? 700 : 400, color: high ? 'var(--danger, #dc2626)' : undefined }}
+                      >
+                        <option value="low">low</option>
+                        <option value="medium">medium</option>
+                        <option value="high">high</option>
+                      </select>
+                    </td>
+                    <td>
+                      <input value={r.mitigation ?? ''} disabled={!canWrite} onChange={(e) => updateRisk(i, { mitigation: e.target.value })} placeholder="(optional)" style={{ width: '100%' }} />
+                    </td>
+                    {canWrite && (
+                      <td>
+                        <button className="danger" onClick={() => removeRisk(i)} title="Remove risk">✕</button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        {canWrite && (
+          <div className="row-actions" style={{ alignItems: 'center', marginTop: 10 }}>
+            <button onClick={addRisk}>+ Add risk</button>
+            <button className="primary" onClick={saveRisks} disabled={risksSaving}>
+              {risksSaving ? 'Saving…' : 'Save risks'}
+            </button>
+            {risksSaved && <span style={{ color: 'var(--ok, #16a34a)' }}>✓ Saved</span>}
+            {risksError && <span style={{ color: 'var(--danger, #dc2626)' }}>{risksError}</span>}
+          </div>
+        )}
+        {!canWrite && risksError && <div className="error" style={{ marginTop: 10 }}>{risksError}</div>}
       </div>
 
       <div className="card">

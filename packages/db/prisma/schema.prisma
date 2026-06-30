@@ -758,6 +758,7 @@ model Quote {
   softwareItems      QuoteSoftwareItem[]
   licences           QuoteLicence[]
   terms              QuoteTerm[]
+  risks              QuoteRisk[]
   auditLogs          QuoteAuditLog[]
   revisions          QuoteRevision[]
   reviews            QuoteReview[]
@@ -1105,6 +1106,30 @@ model QuoteTerm {
   quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
 
   @@map("quote_terms")
+}
+
+/**
+ * Manually-captured risk for a quote (T4 / Workshop "Capability 2", FR-038–041). The risks half of
+ * the assumptions & risks register; assumptions reuse `quote_terms` (kind=assumption). Manual capture
+ * only — AI gap/risk detection stays deferred. Flows into the proposal PDF + PM handoff.
+ */
+model QuoteRisk {
+  id          BigInt   @id @default(autoincrement())
+  quoteId     BigInt   @map("quote_id")
+  /** 'technical' | 'commercial' | 'delivery' (app-level enum). */
+  category    String
+  description String
+  /** 'low' | 'medium' | 'high' (app-level enum). */
+  severity    String
+  mitigation  String?
+  /** Display / save order (seq = array index). */
+  seq         Int
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([quoteId])
+  @@map("quote_risks")
 }
 
 // Quote sharing — assign specific viewer users to a quote; they can read only quotes assigned to them.

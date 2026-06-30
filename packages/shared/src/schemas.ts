@@ -5,6 +5,8 @@ import {
   LICENCE_TIERS,
   ORIENTATIONS,
   QUOTE_STATUSES,
+  RISK_CATEGORIES,
+  RISK_SEVERITIES,
   REVIEW_DECISIONS,
   REVIEW_STAGES,
   SCREEN_TYPES,
@@ -209,6 +211,23 @@ export const quoteTermsSchema = z.object({
   ),
 });
 export type QuoteTermsInput = z.infer<typeof quoteTermsSchema>;
+
+// ─── Manual assumptions & risks register (T4 / FR-038–041, FR-095) ────────────
+/**
+ * The full ordered set of manually-captured risks; seq is derived from the array index on save.
+ * Assumptions reuse the proposal-text terms (kind=assumption) — this is the risks half.
+ */
+export const quoteRisksSchema = z.object({
+  risks: z.array(
+    z.object({
+      category: z.enum(RISK_CATEGORIES),
+      description: z.string().min(1).max(1000),
+      severity: z.enum(RISK_SEVERITIES),
+      mitigation: z.string().max(1000).optional(),
+    }),
+  ),
+});
+export type QuoteRisksInput = z.infer<typeof quoteRisksSchema>;
 
 export const quoteLicenceSchema = z.object({
   licenceComponentId: idSchema.optional(),

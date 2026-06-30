@@ -38,6 +38,7 @@ export const quoteInclude = {
   softwareItems: { include: { softwareActivity: true } },
   licences: { include: { licenceComponent: true } },
   terms: { orderBy: { seq: 'asc' } },
+  risks: { orderBy: { seq: 'asc' } },
 } satisfies Prisma.QuoteInclude;
 
 export type QuoteWithChildren = Prisma.QuoteGetPayload<{ include: typeof quoteInclude }>;
