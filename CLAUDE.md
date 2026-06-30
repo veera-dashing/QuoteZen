@@ -387,6 +387,11 @@ quote-level PI on the first screen, a new Manufacturers table, override+floor-en
   `computeMargin` discounts the sell so the **below-floor finalisation guardrail auto-fires** (non-admin 403,
   admin override audited) — no guardrail duplication. `/price` returns `discount {pct,source,amount}` +
   discount-aware margin (admin-gated); `/rules/client/:id/effective` shows client vs system discount.
+- ✅ **U5 — discount scope** — `quotes.discount_scope` (`one_off` | `recurring`, default one_off) chosen at
+  quote creation + editable. `computeQuoteTotals` discounts the elected base (one_off → upfront
+  equipment+services; recurring → the recurring/renewal total); `computeMargin` only discounts the one-off
+  margin for `one_off` scope, so a recurring-scope discount never trips the one-off margin-floor guardrail.
+  `/price` returns `discount.scope`; new-quote form + Details selector (One-off upfront / Every renewal).
 - ✅ **U1 — wizard restructure** — `STEPS = Details · Select Screens · Licences · Review`. Details has a
   **Project information** block (requested shipping date, site address, project notes, quote-level discount
   override %) on the optimistic-lock PATCH. **Select Screens** merges LED+LCD behind an LED/LCD type toggle +
