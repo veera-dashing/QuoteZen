@@ -1,7 +1,7 @@
 import { prisma } from '@quotezen/db';
 import type { Prisma } from '@quotezen/db';
 import { aggregateQuote, type QuoteLineContribution } from '@quotezen/calc';
-import { marginOf, round, sum } from '@quotezen/shared';
+import { d, marginOf, round, sum } from '@quotezen/shared';
 import type { CreateQuoteInput, UpdateQuoteInput } from '@quotezen/shared';
 import type { QuoteStatus } from '@quotezen/shared';
 import { AppError, conflict, notFound } from '../../errors.js';
@@ -268,10 +268,15 @@ const FINALISED_STATUSES: QuoteStatus[] = ['approved', 'issued'];
  * When `overrides` is supplied, an overridden LED screen's SELL contribution = its override value
  * (× qty) — cost stays the computed cost-sum — so margin reflects overrides and the existing
  * below-floor finalisation guardrail (P1-19g.2) triggers automatically (P1-17.5).
+ *
+ * U3 — the realised margin is computed on the DISCOUNTED sell: the effective client discount reduces
+ * the total sell (cost is unchanged), so a discount lowers margin and the existing below-floor
+ * guardrail in `changeStatus` fires correctly. `discountPct` is the resolved fraction 0..1.
  */
 export const computeMargin = (
   quote: QuoteWithChildren,
   overrides?: Map<string, OverrideRow>,
+  discountPct = 0,
 ) => {
   const costs: Array<string> = [];
   const sells: Array<string> = [];
@@ -295,13 +300,50 @@ export const computeMargin = (
     }
   }
   const totalCost = sum(costs);
-  const totalSell = sum(sells);
+  // U3: discount reduces the sell side (cost unchanged) → margin reflects the concession.
+  const totalSell =
+    discountPct > 0 ? round(sum(sells).times(d(1).minus(discountPct))) : sum(sells);
   return { totalCost, totalSell, margin: round(marginOf(totalCost, totalSell), 4) };
 };
 
 export const getMarginFloor = async (): Promise<number> => {
   const setting = await prisma.setting.findUnique({ where: { key: 'margin_floor' } });
   return setting ? Number(setting.value) : 0;
+};
+
+/** The system default client discount (fraction 0..1), or 0 when unset. */
+export const getDefaultDiscountPct = async (): Promise<number> => {
+  const setting = await prisma.setting.findUnique({
+    where: { key: 'default_client_discount_pct' },
+  });
+  return setting ? Number(setting.value) : 0;
+};
+
+/** Where the effective discount came from. */
+export type DiscountSource = 'quote' | 'client' | 'system';
+
+export interface ResolvedDiscount {
+  /** Fraction 0..1. */
+  pct: number;
+  source: DiscountSource;
+}
+
+/**
+ * Resolve the effective commercial discount for a quote (U3). The quote-level override WINS over the
+ * client default, which wins over the system default setting. Precedence:
+ *   quote.discountPct → client.discountPct → `default_client_discount_pct` setting → 0.
+ * The system-default value must be supplied (read once by the async caller) so this stays pure.
+ */
+export const resolveDiscount = (
+  quote: QuoteWithChildren,
+  defaultDiscountPct: number,
+): ResolvedDiscount => {
+  if (quote.discountPct != null) return { pct: Number(quote.discountPct), source: 'quote' };
+  if (quote.client?.discountPct != null) {
+    return { pct: Number(quote.client.discountPct), source: 'client' };
+  }
+  if (defaultDiscountPct > 0) return { pct: defaultDiscountPct, source: 'system' };
+  return { pct: 0, source: 'system' };
 };
 
 export const changeStatus = async (
@@ -329,9 +371,11 @@ export const changeStatus = async (
   let validationNote: string | null = null;
   if (FINALISED_STATUSES.includes(status)) {
     const floor = await getMarginFloor();
-    // Margin must reflect pinned overrides so a below-floor override trips the guardrail (P1-17.5).
+    // Margin must reflect pinned overrides so a below-floor override trips the guardrail (P1-17.5),
+    // and the effective client discount (U3) so a deep discount below the floor is gated too.
     const ovMap = overrideMap(await pruneOrphanOverrides(existing, await listOverrides(id)));
-    const { margin } = computeMargin(existing, ovMap);
+    const { pct: discountPct } = resolveDiscount(existing, await getDefaultDiscountPct());
+    const { margin } = computeMargin(existing, ovMap, discountPct);
     if (floor > 0 && margin.lessThan(floor)) {
       if (!isAdmin(actor)) {
         throw new AppError(
@@ -379,7 +423,8 @@ export const changeStatus = async (
     // Knowledge-base capture on outcome states (P1-19f). Margin reflects pinned overrides.
     if (CAPTURE_STATUSES.includes(status)) {
       const ov = overrideMap(await listOverrides(id));
-      await captureKbEntry(tx, quote, actor.id, status, computeMargin(quote, ov).margin.toString());
+      const { pct } = resolveDiscount(quote, await getDefaultDiscountPct());
+      await captureKbEntry(tx, quote, actor.id, status, computeMargin(quote, ov, pct).margin.toString());
     }
     return quote;
   });
@@ -431,6 +476,8 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
   // Active overrides (post-prune) drive the per-line flag + the overrides summary (P1-17.2/.3).
   const activeOverrides = await pruneOrphanOverrides(quote, await listOverrides(id));
   const ovMap = overrideMap(activeOverrides);
+  // U3 — effective client discount (quote override → client → system default) + discounted margin.
+  const discount = resolveDiscount(quote, await getDefaultDiscountPct());
 
   const sections: PriceSection[] = [];
   for (const s of quote.ledScreens) {
@@ -492,27 +539,59 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
       isInteractive: l.isInteractive,
       annual: dec(l.licenceComponent?.value),
     })),
+    // U3 — effective discount applied to the one-off sell base (equipment + services, after markup);
+    // recurring is NOT discounted. `amount` is the dollar concession on the upfront total.
+    discount: {
+      pct: discount.pct,
+      source: discount.source,
+      // pre-discount upfront-after-markup = equipment + services (with reseller markup folded in via
+      // recompute); the stored grandTotal is already net of the discount, so amount = pct × pre-net.
+      amount: round(
+        d(dec(quote.totalEquipment)).plus(dec(quote.totalServices)).times(
+          1 + Number(quote.resellerMarkup),
+        ).times(discount.pct),
+      ).toString(),
+    },
     totals: {
       equipment: dec(quote.totalEquipment),
       services: dec(quote.totalServices),
       recurring: dec(quote.totalRecurring),
       grandTotal: dec(quote.grandTotal),
-      // Margin derives from cost → admin-only (BR-081); reflects pinned overrides (P1-17.5).
-      margin: showCost ? computeMargin(quote, ovMap).margin.toString() : null,
+      // Margin derives from cost → admin-only (BR-081); reflects pinned overrides (P1-17.5) and the
+      // effective client discount (U3 — discount lowers the realised margin).
+      margin: showCost ? computeMargin(quote, ovMap, discount.pct).margin.toString() : null,
       marginFloor: showCost ? await getMarginFloor() : null,
     },
   };
 };
 
+export interface QuoteTotalsResult {
+  equipment: string;
+  services: string;
+  recurring: string;
+  grandTotal: string;
+  /** The effective client discount applied (U3). */
+  discount: { pct: number; source: DiscountSource; amount: string };
+}
+
 /**
  * Pure rollup: map a quote's children to calc contributions and aggregate them, applying any pinned
  * overrides. No DB writes — shared by the persisting `recomputeQuote` and the read-only
  * `recomputePreview` (P1-19d.3) so the two can never drift.
+ *
+ * U3 — client discount: the effective discount (quote override → client → system default) reduces the
+ * SELL price. It applies ONLY to the one-off sell base (equipment + services) — recurring licences,
+ * music and other annual lines are EXCLUDED by decision (a discount is a one-off concession, not an
+ * ongoing rate cut). The reseller markup is applied first (it's part of the "sell"), then the discount
+ * comes off that grossed-up upfront total, then recurring is added back:
+ *   grandTotal = (equipment + services) − discountAmount + recurring.
+ * Money stays Decimal throughout (no float).
  */
 export const computeQuoteTotals = (
   quote: QuoteWithChildren,
   overrides: Map<string, OverrideRow>,
-) => {
+  defaultDiscountPct = 0,
+): QuoteTotalsResult => {
   const lines: QuoteLineContribution[] = [];
 
   // Per-screen qty multiplies the stored (per-unit) price into the rollup (P1-14.2). LED screens
@@ -541,7 +620,23 @@ export const computeQuoteTotals = (
     lines.push({ kind: 'recurring', extendedSell: Number(dec(mu.musicService.sell)) * mu.qty });
   }
 
-  return aggregateQuote(lines, Number(quote.resellerMarkup));
+  const agg = aggregateQuote(lines, Number(quote.resellerMarkup));
+
+  // U3 — apply the effective client discount to the one-off sell base only. `agg.grandTotal` is the
+  // upfront (equipment + services) after the reseller markup; recurring is reported separately and is
+  // NOT discounted. discountAmount = round(pct × upfront-after-markup); discounted grandTotal = that
+  // upfront minus the discount. Decimal math throughout.
+  const { pct, source } = resolveDiscount(quote, defaultDiscountPct);
+  const discountAmount = pct > 0 ? round(agg.grandTotal.times(pct)) : round(0);
+  const grandTotal = round(agg.grandTotal.minus(discountAmount));
+
+  return {
+    equipment: agg.equipment.toString(),
+    services: agg.services.toString(),
+    recurring: agg.recurring.toString(),
+    grandTotal: grandTotal.toString(),
+    discount: { pct, source, amount: discountAmount.toString() },
+  };
 };
 
 /**
@@ -552,9 +647,16 @@ export const computeQuoteTotals = (
 export const recomputePreview = async (id: bigint) => {
   const quote = await getQuote(id);
   const overrides = overrideMap(await pruneOrphanOverrides(quote, await listOverrides(id)));
-  const recomputed = computeQuoteTotals(quote, overrides).grandTotal.toString();
+  const defaultDiscount = await getDefaultDiscountPct();
+  const recomputed = computeQuoteTotals(quote, overrides, defaultDiscount).grandTotal;
   const current = dec(quote.grandTotal);
   return { current, recomputed, differs: Number(current) !== Number(recomputed) };
+};
+
+/** Resolve the effective discount for a quote by id (reads the system default). */
+export const getEffectiveDiscount = async (id: bigint): Promise<ResolvedDiscount> => {
+  const quote = await getQuote(id);
+  return resolveDiscount(quote, await getDefaultDiscountPct());
 };
 
 /** Map a quote's children to calc contributions, then recompute and persist the totals. */
@@ -563,16 +665,17 @@ export const recomputeQuote = async (userId: bigint, id: bigint) => {
   // Pinned overrides (P1-17): a screen's effective sell is its override value (if active) else the
   // computed price; everything downstream (equipment, grand total) recomputes from the pinned value.
   const overrides = overrideMap(await pruneOrphanOverrides(quote, await listOverrides(id)));
-  const totals = computeQuoteTotals(quote, overrides);
+  const defaultDiscount = await getDefaultDiscountPct();
+  const totals = computeQuoteTotals(quote, overrides, defaultDiscount);
 
   return prisma.$transaction(async (tx) => {
     const updated = await tx.quote.update({
       where: { id },
       data: {
-        totalEquipment: totals.equipment.toString(),
-        totalServices: totals.services.toString(),
-        totalRecurring: totals.recurring.toString(),
-        grandTotal: totals.grandTotal.toString(),
+        totalEquipment: totals.equipment,
+        totalServices: totals.services,
+        totalRecurring: totals.recurring,
+        grandTotal: totals.grandTotal,
         updatedById: userId,
       },
       include: quoteInclude,
@@ -583,7 +686,7 @@ export const recomputeQuote = async (userId: bigint, id: bigint) => {
       action: 'update',
       entityTable: 'quotes',
       entityId: id,
-      changes: [{ field: 'grand_total', oldValue: dec(quote.grandTotal), newValue: totals.grandTotal.toString() }],
+      changes: [{ field: 'grand_total', oldValue: dec(quote.grandTotal), newValue: totals.grandTotal }],
     });
     return updated;
   });
@@ -697,7 +800,8 @@ export const setOverride = async (
   let warning: string | null = null;
   const floor = await getMarginFloor();
   if (floor > 0) {
-    const { margin } = computeMargin(updated, ovMap);
+    const { pct } = resolveDiscount(updated, await getDefaultDiscountPct());
+    const { margin } = computeMargin(updated, ovMap, pct);
     if (margin.lessThan(floor)) {
       warning = `This override drops the quote margin to ${margin.times(100).toFixed(1)}%, below the floor of ${(floor * 100).toFixed(1)}%. Finalisation will require admin approval.`;
     }

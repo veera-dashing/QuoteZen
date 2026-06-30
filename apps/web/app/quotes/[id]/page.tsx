@@ -1269,6 +1269,8 @@ interface PriceResult {
   overrides?: OverrideSummary[];
   hasOverrides?: boolean;
   licences: Array<{ screenType: string; tier: string; qty: number; isInteractive: boolean; annual: string }>;
+  // U3 — effective client discount applied to the one-off sell base (equipment + services).
+  discount?: { pct: number; source: 'quote' | 'client' | 'system'; amount: string };
   totals: {
     equipment: string; services: string; recurring: string; grandTotal: string;
     margin: string | null; marginFloor: number | null;
@@ -1803,6 +1805,16 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
               <div className="stat"><div className="label">Equipment</div><div className="value">{cur} {Number(price.totals.equipment).toLocaleString()}</div></div>
               <div className="stat"><div className="label">Services</div><div className="value">{cur} {Number(price.totals.services).toLocaleString()}</div></div>
               <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(price.totals.recurring).toLocaleString()}</div></div>
+              {price.discount && price.discount.pct > 0 && (
+                <div className="stat">
+                  <div className="label">
+                    Discount ({(price.discount.pct * 100).toFixed(price.discount.pct * 100 % 1 ? 1 : 0)}% · {price.discount.source})
+                  </div>
+                  <div className="value" style={{ color: 'var(--danger, #dc2626)' }}>
+                    − {cur} {Number(price.discount.amount).toLocaleString()}
+                  </div>
+                </div>
+              )}
               <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(price.totals.grandTotal).toLocaleString()}</div></div>
               {price.totals.margin != null && (() => {
                 const margin = Number(price.totals.margin);

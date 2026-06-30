@@ -20,6 +20,7 @@ export const ruleRoutes = async (app: FastifyInstance): Promise<void> => {
     const settings = await prisma.setting.findMany();
     const byKey = new Map(settings.map((s) => [s.key, Number(s.value)]));
     const marginFloor = byKey.get('margin_floor') ?? 0;
+    const defaultDiscount = byKey.get('default_client_discount_pct') ?? 0;
 
     const clientMargin = client.defaultMargin != null ? Number(client.defaultMargin) : null;
     const belowFloor = clientMargin != null && clientMargin < marginFloor;
@@ -44,6 +45,18 @@ export const ruleRoutes = async (app: FastifyInstance): Promise<void> => {
         // Guardrail wins: a below-floor client margin is clamped up to the floor.
         effective: belowFloor ? marginFloor : (clientMargin ?? marginFloor),
       },
+      // Client commercial discount (U3): client override → system default. Quote-level override is
+      // resolved per-quote at pricing time and is not a client-rule concept.
+      discount: (() => {
+        const hasClient = client.discountPct != null;
+        const value = hasClient ? Number(client.discountPct) : defaultDiscount;
+        return {
+          value,
+          source: hasClient ? ('client' as const) : ('system' as const),
+          overridesGlobal: hasClient,
+          systemDefault: defaultDiscount,
+        };
+      })(),
       preferredProductFamily: field(client.preferredProductFamily, Boolean(client.preferredProductFamily)),
       preferredPitchMm: field(
         client.preferredPitchMm != null ? Number(client.preferredPitchMm) : null,
