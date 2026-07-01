@@ -533,3 +533,14 @@ size-tolerance bands, and Good/Better/Best tiers (those are the LED "lego" flow)
   (Σ discounted cost / Σ cost)` — SYNC, so with no discount the screen sell == the tab total and a per-line
   discount lowers it proportionally (keeps `computeMargin`/`computeQuoteTotals`/`priceQuote`/V2 coherent).
   `lcd-tab-pricing.test.ts` + updated S2/x2/v3 expectations. 227 tests green (9 shared + 103 calc + 115 api).
+- ✅ **LCD-tab automations completed** — the remaining `(LCD 1)` conveniences: (1) **auto service
+  description** (`describeLcdScreen`: model + "in-built SeenCMP mediaplayer"/external players +
+  components + Landscape/Portrait + warranty, tab B2) wired into BOM/solution/PM-handoff/PDF; (2) **auto
+  Media Player Configuration qty** = count of selected mediaplayers (tab F23); (3) **location-driven
+  travel uplift** (tab row 30) = `location.hourly_uplift × total install hours` (site-attendance ÷135,
+  other install ÷95), sell = cost × `service_markup` (1.65), added only when uplift>0 (Melbourne 0 → no
+  line, so the sample stays 10,120); regenerated on re-edit via the auto-line strip ("Location travel
+  uplift" prefix); (4) **Order List** string ("N × display, N × bracket…", tab B56) in the outputs;
+  (5) **Analysis block** (Hardware/Bracket/Services @ nominated margin + Total At Fixed Margin, tab rows
+  47–54) shown in the LCD form. `lcd-automations.test.ts` (4) + `describeLcdScreen` calc tests. 234 tests
+  green (9 shared + 110 calc + 119 api). No migration (all derivable from existing columns).

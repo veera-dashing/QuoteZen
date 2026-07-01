@@ -1727,6 +1727,18 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   // priceTotal = ROUND(Σ cost×qty / (1 − margin), nearest $10) — mirrors the server (tab G54).
   const totalCost = lines.reduce((a, l) => a + costOf(l) * l.qty, 0);
   const grand = totalCost > 0 ? Math.round(totalCost / (1 - MARGIN) / 10) * 10 : 0;
+  // Analysis block (tab rows 47–54): per-section fixed-margin values, mirroring the server
+  // (priceScreenMediaplayer / priceBracketShroud / priceServices). grossFixed(cost) = ROUND(cost/(1−0.30),$10).
+  // Preview-only over the editable lines (server-generated install/OOH/location/warranty lines are added
+  // server-side and are authoritative). Same formula the server uses.
+  const grossFixed = (cost: number): number => (cost > 0 ? Math.round(cost / (1 - MARGIN) / 10) * 10 : 0);
+  const costWhere = (pred: (l: LcdLine) => boolean): number =>
+    lines.filter(pred).reduce((a, l) => a + costOf(l) * l.qty, 0);
+  const hardwareSell = grossFixed(costWhere((l) => l.itemType === 'display' || l.itemType === 'mediaplayer'));
+  const bracketSell = grossFixed(costWhere((l) => l.itemType === 'bracket'));
+  const servicesSell = grossFixed(
+    costWhere((l) => l.itemType === 'install' || l.itemType === 'labour' || l.itemType === 'location_fee' || l.itemType === 'warranty'),
+  );
 
   const save = async () => {
     setBusy(true);
@@ -1877,6 +1889,28 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         <p className="muted" style={{ margin: '2px 0 8px', fontSize: 12 }}>
           Line prices are list reference; the quote uses the fixed-margin total — ROUND(Σ cost ÷ (1 − 30%), $10). Server is authoritative.
         </p>
+        {/* Analysis block (tab rows 47–54): per-section fixed-margin sells (server authoritative). */}
+        <div style={{ borderTop: '1px solid var(--border, #e5e5e5)', margin: '4px 0 8px', paddingTop: 8 }}>
+          <div className="list-row" style={{ fontWeight: 600, fontSize: 12 }}>
+            <span style={{ flex: 1 }}>Analysis</span>
+          </div>
+          <div className="list-row" style={{ fontSize: 13 }}>
+            <span style={{ flex: 1 }}>Total Hardware @ margin</span>
+            <span>{quote.currency?.code} {hardwareSell.toLocaleString()}</span>
+          </div>
+          <div className="list-row" style={{ fontSize: 13 }}>
+            <span style={{ flex: 1 }}>Bracket &amp; Shroud @ margin</span>
+            <span>{quote.currency?.code} {bracketSell.toLocaleString()}</span>
+          </div>
+          <div className="list-row" style={{ fontSize: 13 }}>
+            <span style={{ flex: 1 }}>Total Services @ margin</span>
+            <span>{quote.currency?.code} {servicesSell.toLocaleString()}</span>
+          </div>
+          <div className="list-row" style={{ fontWeight: 700 }}>
+            <span style={{ flex: 1 }}>Total At Fixed Margin</span>
+            <span>{quote.currency?.code} {grand.toLocaleString()}</span>
+          </div>
+        </div>
         <div className="step-actions">
           <button className="primary" onClick={save} disabled={busy || lines.length === 0}>
             {busy ? 'Saving…' : isEditing ? 'Save changes' : '+ Add LCD screen'}

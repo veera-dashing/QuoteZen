@@ -1,4 +1,10 @@
-import { describeLcdScreen, describeLedScreen, resolveScreenRatio, type ScreenRatioRow } from '@quotezen/calc';
+import {
+  buildLcdOrderList,
+  describeLcdScreen,
+  describeLedScreen,
+  resolveScreenRatio,
+  type ScreenRatioRow,
+} from '@quotezen/calc';
 import { prisma } from '@quotezen/db';
 import type { QuoteWithChildren } from './repository.js';
 
@@ -87,11 +93,42 @@ export const buildDescriptions = (
         model: s.display?.model ?? s.screenName,
         warrantyName: s.warranty?.name ?? null,
         locationName: quote.location?.name ?? null,
+        orientation: (s.orientation as 'L' | 'P' | null) ?? null,
+        externalMediaplayers: lcdExternalMediaplayers(s),
+        componentDescriptions: lcdComponentDescriptions(s),
       }),
     });
   }
   return out;
 };
+
+type LcdScreen = QuoteWithChildren['lcdScreens'][number];
+
+/** Item description or its catalog model, for LCD narrative building. */
+const lcdItemLabel = (i: LcdScreen['items'][number]): string =>
+  (i.description ?? i.display?.model ?? '').trim();
+
+/** External `mediaplayer` item descriptions (qty>0) — empty → the in-built SeenCMP mediaplayer (tab B2). */
+const lcdExternalMediaplayers = (s: LcdScreen): string[] =>
+  s.items
+    .filter((i) => i.itemType === 'mediaplayer' && Number(i.qty) > 0)
+    .map(lcdItemLabel)
+    .filter((d) => d.length > 0);
+
+/** Bracket + install item descriptions worth surfacing in the LCD description (tab B2). */
+const lcdComponentDescriptions = (s: LcdScreen): string[] =>
+  s.items
+    .filter((i) => (i.itemType === 'bracket' || i.itemType === 'install') && Number(i.qty) > 0)
+    .map(lcdItemLabel)
+    .filter((d) => d.length > 0);
+
+/** Order list (tab B56): "N x <display>, N x <bracket>, …" from the screen's display + bracket items. */
+export const lcdOrderList = (s: LcdScreen): string =>
+  buildLcdOrderList(
+    s.items
+      .filter((i) => i.itemType === 'display' || i.itemType === 'bracket')
+      .map((i) => ({ name: lcdItemLabel(i), qty: Number(i.qty) })),
+  );
 
 export interface BomComponent {
   type: string;
@@ -162,6 +199,15 @@ export const buildSolutionSummary = (quote: QuoteWithChildren, showCost: boolean
     priceTotal: dec(s.priceTotal),
     costTotal: showCost ? dec(s.priceScreenMediaplayer) : null,
   })),
+  lcdScreens: quote.lcdScreens.map((s) => ({
+    name: s.screenName,
+    display: s.display?.model ?? null,
+    orientation: s.orientation ?? null,
+    priceTotal: dec(s.priceTotal),
+    costTotal: showCost ? dec(s.priceScreenMediaplayer) : null,
+    // Order list (tab B56): what to procure for this display.
+    orderList: lcdOrderList(s),
+  })),
   totals: {
     equipment: dec(quote.totalEquipment),
     services: dec(quote.totalServices),
@@ -205,5 +251,12 @@ export const buildPmHandoff = (quote: QuoteWithChildren) => ({
     installMethod: s.installMethod?.name ?? null,
     serviceAccess: s.serviceAccess ?? null,
     componentsToProcure: s.components.map((c) => ({ name: componentName(c), qty: c.qty })),
+  })),
+  lcdScreens: quote.lcdScreens.map((s) => ({
+    name: s.screenName,
+    display: s.display?.model ?? null,
+    orientation: s.orientation ?? null,
+    // Order list (tab B56): the display + brackets the PM procures for this screen.
+    orderList: lcdOrderList(s),
   })),
 });

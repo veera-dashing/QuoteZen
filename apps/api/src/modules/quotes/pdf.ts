@@ -1,7 +1,7 @@
 import PDFDocument from 'pdfkit';
 import type { ScreenRatioRow } from '@quotezen/calc';
 import type { QuoteWithChildren } from './repository.js';
-import { DEFAULT_ASSUMPTIONS, DEFAULT_EXCLUSIONS, DEFAULT_TERMS, buildDescriptions, sortedRisks } from './outputs.js';
+import { DEFAULT_ASSUMPTIONS, DEFAULT_EXCLUSIONS, DEFAULT_TERMS, buildDescriptions, lcdOrderList, sortedRisks } from './outputs.js';
 
 const money = (v: { toString(): string } | null | undefined, code: string): string =>
   `${code} ${Number(v ?? 0).toLocaleString('en-AU', { minimumFractionDigits: 2 })}`;
@@ -46,10 +46,14 @@ export const buildQuotePdf = (
         line(descriptions.get(s.id.toString()) ?? s.screenName ?? 'LED screen', money(s.priceTotal, code));
       }
     }
-    // LCD screens
+    // LCD screens — deterministic descriptions (tab B2) + order list (tab B56).
     if (quote.lcdScreens.length > 0) {
       heading('LCD displays');
-      for (const s of quote.lcdScreens) line(s.screenName ?? 'LCD', money(s.priceTotal, code));
+      for (const s of quote.lcdScreens) {
+        line(descriptions.get(s.id.toString()) ?? s.screenName ?? 'LCD', money(s.priceTotal, code));
+        const order = lcdOrderList(s);
+        if (order) doc.fontSize(8).fillColor('#888').text(`Order list: ${order}`, 50, doc.y, { width: 495 });
+      }
     }
     // Licences
     if (quote.licences.length > 0) {

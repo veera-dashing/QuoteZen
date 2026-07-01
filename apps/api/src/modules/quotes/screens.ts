@@ -1052,7 +1052,10 @@ interface LcdPricing {
   priceTotal: number;
 }
 
-const computeLcdScreenPricing = async (input: LcdScreenInput): Promise<LcdPricing> => {
+const computeLcdScreenPricing = async (
+  input: LcdScreenInput,
+  locationHourlyUplift: number,
+): Promise<LcdPricing> => {
   const config = await loadPricingConfig();
   const margin = config.markups.lcdMargin;
 
@@ -1083,6 +1086,7 @@ const computeLcdScreenPricing = async (input: LcdScreenInput): Promise<LcdPricin
       const d = i.description ?? '';
       if (d.startsWith('Installation — ')) return false;
       if (/^Out of Hours uplift/i.test(d)) return false;
+      if (d.startsWith('Location travel uplift')) return false;
     }
     return true;
   });
@@ -1123,6 +1127,21 @@ const computeLcdScreenPricing = async (input: LcdScreenInput): Promise<LcdPricin
     });
   }
 
+  // FEATURE 2 (tab F23 = SUM(F9:F11)): a "Media Player Configuration" install/labour line's qty is
+  // auto-set to the number of mediaplayers on the screen (0 if none). Done before totals so cost +
+  // priceTotal reflect the corrected qty.
+  const mediaplayerCount = resolved
+    .filter((r) => r.itemType === 'mediaplayer')
+    .reduce((acc, r) => acc + r.qty, 0);
+  for (const r of resolved) {
+    if (
+      (r.itemType === 'install' || r.itemType === 'labour') &&
+      /media\s*player configuration/i.test(r.description ?? '')
+    ) {
+      r.qty = mediaplayerCount;
+    }
+  }
+
   // X2: install-method labour line — pushed BEFORE the OOH block so it feeds the uplift hours (install
   // labour incurs the out-of-hours uplift when service hours ≠ Business Hours). rate = the method's own
   // hourly rate, else the install_hourly_cost setting ($95).
@@ -1142,9 +1161,40 @@ const computeLcdScreenPricing = async (input: LcdScreenInput): Promise<LcdPricin
     }
   }
 
+  // FEATURE 3 (tab row 30): location-driven travel/labour uplift. Total install hours (K40) = Σ over
+  // install lines of cost/(site-attendance ? 135 : 95); a site-attendance line is identified by its
+  // description. The location's hourly uplift ($/hr, from locations.hourly_uplift) is charged over
+  // those hours, marked up by the service markup. This line carries NO install hours of its own, so it
+  // must be pushed AFTER the K40 tally and it must never feed the OOH calc (the OOH filter divides by
+  // installHourlyCost — including this line would recursively inflate the uplift), hence the guard below.
+  {
+    const totalInstallHours = resolved
+      .filter((r) => r.itemType === 'install')
+      .reduce((acc, r) => {
+        const isSiteAttendance = /site attendance/i.test(r.description ?? '');
+        const perHourCost = isSiteAttendance ? 135 : installHourlyCost;
+        return perHourCost > 0 ? acc + (r.unitCost * r.qty) / perHourCost : acc;
+      }, 0);
+    if (locationHourlyUplift > 0 && totalInstallHours > 0) {
+      const unitCost = round(locationHourlyUplift * totalInstallHours).toNumber();
+      resolved.push({
+        itemType: 'install',
+        description: `Location travel uplift (${round(totalInstallHours).toNumber()} hrs @ $${locationHourlyUplift}/hr)`,
+        qty: 1,
+        unitCost,
+        unitSell: round(unitCost * serviceMarkup).toNumber(),
+      });
+    }
+  }
+
   if (outOfHours && installHourlyCost > 0) {
     const upliftHours = resolved
-      .filter((r) => r.itemType === 'install' && !/site attendance/i.test(r.description ?? ''))
+      .filter(
+        (r) =>
+          r.itemType === 'install' &&
+          !/site attendance/i.test(r.description ?? '') &&
+          !(r.description ?? '').startsWith('Location travel uplift'),
+      )
       .reduce((acc, r) => acc + (r.unitCost * r.qty) / installHourlyCost, 0);
     if (upliftHours > 0) {
       resolved.push({
@@ -1219,12 +1269,12 @@ export const updateLcdScreen = async (
   screenId: bigint,
   input: LcdScreenInput,
 ) => {
-  await getQuote(quoteId);
+  const quote = await getQuote(quoteId);
   const screen = await prisma.quoteLcdScreen.findFirst({ where: { id: screenId, quoteId } });
   if (!screen) throw notFound('LCD screen', screenId.toString());
 
   const { resolved, priceScreenMediaplayer, priceBracketShroud, priceServices, priceTotal } =
-    await computeLcdScreenPricing(input);
+    await computeLcdScreenPricing(input, Number(quote.location?.hourlyUplift ?? 0));
 
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.quoteLcdScreen.update({
@@ -1294,9 +1344,9 @@ export const updateLcdScreen = async (
  * `priceBracketShroud` (bracket sells) and `priceServices` (install+labour+location sells).
  */
 export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdScreenInput) => {
-  await getQuote(quoteId);
+  const quote = await getQuote(quoteId);
   const { resolved, priceScreenMediaplayer, priceBracketShroud, priceServices, priceTotal } =
-    await computeLcdScreenPricing(input);
+    await computeLcdScreenPricing(input, Number(quote.location?.hourlyUplift ?? 0));
 
   return prisma.$transaction(async (tx) => {
     const maxOrder = await tx.quoteLcdScreen.aggregate({ where: { quoteId }, _max: { sortOrder: true } });
