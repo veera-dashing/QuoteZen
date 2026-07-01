@@ -431,3 +431,28 @@ From live UX feedback on the quote flow. 188 tests green (9 shared + 85 calc + 9
   (Label/Qty/Cost admin-only/Sell/Disc%/Effective) + licences + totals; per-line discount % PATCHes
   led-lines/lcd-items by section type (live refetch); Stack vs Per-item-only discount-mode toggle
   (409-safe). Viewer read-only.
+
+### Block 12 — pixel pitch by viewing distance, indoor/outdoor, GOB in screen suggestion
+From live feedback: the LED screen suggestion query should be driven not only by size/aspect but by
+**viewing distance**, **environment (indoor/outdoor)**, and **GOB (fine pitch)** — surfaced in the
+FIRST part of the LED form and folded into the ranked configuration results. 203 tests green
+(9 shared + 96 calc + 98 api).
+- ✅ **W0 — config filters (backend)** — migration `w0_led_environment` adds `led_products.environment`
+  (indoor/outdoor/both; nullable) + `ENVIRONMENTS` enum + admin registry field; setting
+  `outdoor_brightness_nits` (4000) seeded. calc `configureScreen`: `effectiveEnvironment` (product field,
+  falling back to brightness ≥ threshold ⇒ outdoor) filters by requested environment; a `viewingDistanceM`
+  filter drops products whose pixel pitch exceeds the distance (max pitch ≈ distance in metres); every
+  `ConfigOption` now carries `pixelPitchMm` + `gobRecommended` (pitch < 2.5mm). `ConfigConfidence` scoring
+  unchanged. Threaded through `configureForQuote`/`optionsForQuote`; `configureSchema` gains optional
+  `environment` + `viewingDistanceM`; empty-with-reasons on no fit (never an error). Tested (`w0.test.ts`).
+- ✅ **W1 — first-section inputs (web)** — LED add form's first "Screen selection" card gains an
+  **Environment & suitability** sub-section: **Viewing distance (m)** (optional number), **Environment**
+  (SearchSelect Indoor/Outdoor, empty = "Any"), and **GOB (fine pitch)** moved UP from the post-selection
+  options grid — bound to the SAME `gobId` state `addScreen()` sends (single source of truth). A shared
+  `selectionBody()` threads `environment` + `viewingDistanceM` into both `configure()` and `loadTiers()`
+  (sent only when set). Ranked table + Good/Better/Best cards show a **GOB** badge (tooltip: fine pitch —
+  GOB recommended) + a sortable **Pitch (mm)** column. Web-only; no schema/API change.
+
+**Note on W0 vs Block 11's `environment`:** the earlier W0 draft mentioned in prior context is this block;
+`led_products.environment` is the only new catalog column. The indoor/outdoor decision uses the field first
+and falls back to `brightness_nits ≥ outdoor_brightness_nits` when the field is null.
