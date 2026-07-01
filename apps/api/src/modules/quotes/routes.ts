@@ -90,6 +90,9 @@ const configureSchema = z.object({
   desiredWidthMm: z.coerce.number().int().positive(),
   desiredHeightMm: z.coerce.number().int().positive(),
   allowRotation: z.boolean().optional(),
+  // W0: optional environment + viewing-distance filters (absent → unchanged behaviour).
+  environment: z.enum(['indoor', 'outdoor']).optional(),
+  viewingDistanceM: z.coerce.number().positive().optional(),
 });
 
 const idParam = z.object({ id: z.coerce.bigint() });

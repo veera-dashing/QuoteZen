@@ -301,6 +301,8 @@ model LedProduct {
   pixelPitchH      Decimal? @map("pixel_pitch_h") @db.Decimal(6, 3)
   pixelPitchV      Decimal? @map("pixel_pitch_v") @db.Decimal(6, 3)
   brightnessNits   Int?     @map("brightness_nits")
+  /** W0: 'indoor' | 'outdoor' | null. Null → config falls back to a brightness heuristic. */
+  environment      String?  @map("environment")
   powerMaxW        Int?     @map("power_max_w")
   powerAvgW        Int?     @map("power_avg_w")
   kgPerSqm         Decimal? @map("kg_per_sqm") @db.Decimal(8, 2)

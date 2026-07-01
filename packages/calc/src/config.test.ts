@@ -273,6 +273,103 @@ describe('configureScreen — U2 manufacturer-priority ordering', () => {
   });
 });
 
+describe('configureScreen — W0 environment filter (+ brightness fallback)', () => {
+  // Four 500mm-square products that all fit 1000×1000 exactly; they differ only in environment/brightness:
+  //  E1 explicit indoor;  E2 explicit outdoor;  B_HI no env + 5000 nits (→ outdoor via fallback);
+  //  B_LO no env + 800 nits (→ indoor via fallback).
+  const E1: ConfigProduct = { id: 'e-indoor', model: 'ExpIndoor', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 2.6, pixelPitchVmm: 2.6, environment: 'indoor', brightnessNits: 800 };
+  const E2: ConfigProduct = { id: 'e-outdoor', model: 'ExpOutdoor', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 2.6, pixelPitchVmm: 2.6, environment: 'outdoor', brightnessNits: 6000 };
+  const B_HI: ConfigProduct = { id: 'b-hi', model: 'BrightNoEnv', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 2.6, pixelPitchVmm: 2.6, environment: null, brightnessNits: 5000 };
+  const B_LO: ConfigProduct = { id: 'b-lo', model: 'DimNoEnv', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 2.6, pixelPitchVmm: 2.6, environment: null, brightnessNits: 800 };
+  const ALL = [E1, E2, B_HI, B_LO];
+  const opening = { desiredWidthMm: 1000, desiredHeightMm: 1000, ratios: RATIOS };
+
+  it('no environment requested → no filter (all products offered)', () => {
+    const res = configureScreen(ALL, opening);
+    const ids = new Set(res.options.map((o) => String(o.productId)));
+    expect(ids).toEqual(new Set(['e-indoor', 'e-outdoor', 'b-hi', 'b-lo']));
+  });
+
+  it('environment=outdoor keeps explicit-outdoor + bright-no-env (fallback), drops indoor + dim', () => {
+    const res = configureScreen(ALL, { ...opening, environment: 'outdoor', outdoorBrightnessNits: 4000 });
+    const ids = res.options.map((o) => String(o.productId));
+    expect(new Set(ids)).toEqual(new Set(['e-outdoor', 'b-hi']));
+    expect(ids).not.toContain('e-indoor');
+    expect(ids).not.toContain('b-lo'); // 800 nits < 4000 → indoor by fallback
+  });
+
+  it('environment=indoor keeps explicit-indoor + dim-no-env (fallback), drops outdoor + bright', () => {
+    const res = configureScreen(ALL, { ...opening, environment: 'indoor', outdoorBrightnessNits: 4000 });
+    expect(new Set(res.options.map((o) => String(o.productId)))).toEqual(new Set(['e-indoor', 'b-lo']));
+  });
+
+  it('threshold moves the fallback boundary (5000-nit no-env product becomes indoor at threshold 6000)', () => {
+    const res = configureScreen([B_HI], { ...opening, environment: 'indoor', outdoorBrightnessNits: 6000 });
+    // 5000 < 6000 → indoor now, so it survives the indoor filter.
+    expect(res.options.map((o) => String(o.productId))).toEqual(['b-hi']);
+  });
+
+  it('empty-with-reasons when no product matches the requested environment', () => {
+    const res = configureScreen([E1, B_LO], { ...opening, environment: 'outdoor', outdoorBrightnessNits: 4000 });
+    expect(res.options).toEqual([]);
+    expect(res.reasons[0]).toMatch(/No outdoor products/);
+  });
+});
+
+describe('configureScreen — W0 viewing-distance filter + coarsest-fit ranking', () => {
+  // Three fine/coarse products (all 500mm square, exact fit at 1000×1000, same manufacturer default):
+  const FINE: ConfigProduct = { id: 'p1_5', model: 'Fine15', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 1.5, pixelPitchVmm: 1.5 };
+  const MID: ConfigProduct = { id: 'p2_0', model: 'Mid20', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 2.0, pixelPitchVmm: 2.0 };
+  const COARSE: ConfigProduct = { id: 'p3_0', model: 'Coarse30', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 3.0, pixelPitchVmm: 3.0 };
+  const ALL = [FINE, MID, COARSE];
+  const opening = { desiredWidthMm: 1000, desiredHeightMm: 1000, ratios: RATIOS };
+
+  it('excludes products coarser than the max pitch (≈1mm : 1m); 2m → pitch > 2mm dropped', () => {
+    const res = configureScreen(ALL, { ...opening, viewingDistanceM: 2 });
+    const ids = res.options.map((o) => String(o.productId));
+    expect(ids).toContain('p1_5'); // 1.5 ≤ 2
+    expect(ids).toContain('p2_0'); // 2.0 ≤ 2 (inclusive)
+    expect(ids).not.toContain('p3_0'); // 3.0 > 2 → excluded
+  });
+
+  it('ranks the coarsest pitch that still fits FIRST (best value) at equal fit + manufacturer', () => {
+    // All three are equal on every prior key (exact 1000×1000, non-rotated, same mfr) — so at 3m the
+    // coarsest surviving pitch (3.0) should rank ahead of 2.0 and 1.5.
+    const res = configureScreen(ALL, { ...opening, viewingDistanceM: 3 });
+    expect(res.options.map((o) => o.pixelPitchMm)).toEqual([3.0, 2.0, 1.5]);
+  });
+
+  it('no viewing distance → no pitch filter and no coarsest bias (model-name tiebreak preserved)', () => {
+    const res = configureScreen(ALL, opening);
+    expect(res.options).toHaveLength(3);
+    // Without the coarsest bias the final tiebreak is model name: Coarse30 < Fine15 < Mid20.
+    expect(res.options.map((o) => o.model)).toEqual(['Coarse30', 'Fine15', 'Mid20']);
+  });
+
+  it('empty-with-reasons when every product is too coarse for the distance', () => {
+    const res = configureScreen([COARSE], { ...opening, viewingDistanceM: 1 });
+    expect(res.options).toEqual([]);
+    expect(res.reasons[0]).toMatch(/No products fine enough/);
+  });
+});
+
+describe('configureScreen — W0 gobRecommended + pixelPitchMm', () => {
+  const opening = { desiredWidthMm: 1000, desiredHeightMm: 1000, ratios: RATIOS };
+  it('gobRecommended true for fine pitch (<2.5mm) and exposes pixelPitchMm', () => {
+    const FINE: ConfigProduct = { id: 'g1', model: 'Fine', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 1.8, pixelPitchVmm: 1.8 };
+    const o = configureScreen([FINE], opening).options[0]!;
+    expect(o.pixelPitchMm).toBe(1.8);
+    expect(o.gobRecommended).toBe(true);
+  });
+
+  it('gobRecommended false at/above 2.5mm', () => {
+    const AT: ConfigProduct = { id: 'g2', model: 'At', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 2.5, pixelPitchVmm: 2.5 };
+    const COARSE: ConfigProduct = { id: 'g3', model: 'Coarse', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 4, pixelPitchVmm: 4 };
+    expect(configureScreen([AT], opening).options[0]!.gobRecommended).toBe(false); // exactly 2.5 → not recommended
+    expect(configureScreen([COARSE], opening).options[0]!.gobRecommended).toBe(false);
+  });
+});
+
 describe('selectTiers (Good/Better/Best — T2)', () => {
   // Three distinct products. "Mid" snaps to an EXACT 1000×1000 fit (500mm cabinets) so it is
   // unambiguously best-fit (recommended); the other two snap to a worse fit, leaving cost/pitch

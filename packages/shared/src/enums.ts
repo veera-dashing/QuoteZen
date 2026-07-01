@@ -66,6 +66,13 @@ export type UserRole = (typeof USER_ROLES)[number];
 export const ORIENTATIONS = ['Landscape', 'Portrait'] as const;
 export type Orientation = (typeof ORIENTATIONS)[number];
 
+/**
+ * LED product environment (W0). Marks a product as suited to an indoor or outdoor install. A product
+ * with no explicit value falls back to a brightness heuristic at config time (bright → outdoor).
+ */
+export const ENVIRONMENTS = ['indoor', 'outdoor'] as const;
+export type Environment = (typeof ENVIRONMENTS)[number];
+
 /** Manual risk-register category (T4 / FR-038–041). */
 export const RISK_CATEGORIES = ['technical', 'commercial', 'delivery'] as const;
 export type RiskCategory = (typeof RISK_CATEGORIES)[number];

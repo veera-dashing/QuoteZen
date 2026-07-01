@@ -3,6 +3,7 @@ import {
   composeScreenTotals,
   configConfidence,
   configureScreen,
+  DEFAULT_OUTDOOR_BRIGHTNESS_NITS,
   estimateInstallHours,
   fixedLine,
   freightWeightKg,
@@ -71,6 +72,16 @@ const loadToleranceBands = async (): Promise<number[]> => {
   return [...new Set(bands)].sort((a, b) => a - b);
 };
 
+/**
+ * Read the `outdoor_brightness_nits` setting (W0) — the brightness at/above which an LED product with
+ * no explicit `environment` is treated as outdoor by the config engine. Falls back to the calc default.
+ */
+const loadOutdoorBrightnessNits = async (): Promise<number> => {
+  const s = await prisma.setting.findUnique({ where: { key: 'outdoor_brightness_nits' } });
+  const n = s?.value != null ? Number(s.value) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_OUTDOOR_BRIGHTNESS_NITS;
+};
+
 /** The smallest band whose value ≥ |deviation%|, or null when the deviation exceeds the largest band. */
 const bandFor = (sizeDeltaPct: number, bands: readonly number[]): number | null => {
   const abs = Math.abs(sizeDeltaPct);
@@ -87,12 +98,23 @@ const bandFor = (sizeDeltaPct: number, bands: readonly number[]): number | null 
  * each carries its manufacturer name + lead time. Options whose size deviation exceeds the largest
  * admin-configured tolerance band are excluded ("show as options only within the allowed bands").
  */
+/** Inputs to the config engine over a quote's opening (W0 adds optional environment + viewing distance). */
+export interface ConfigureInput {
+  desiredWidthMm: number;
+  desiredHeightMm: number;
+  allowRotation?: boolean;
+  /** W0: restrict to indoor/outdoor-suitable products (by product env or brightness fallback). */
+  environment?: 'indoor' | 'outdoor';
+  /** W0: approximate viewing distance (m); excludes products coarser than ≈1mm-per-metre. */
+  viewingDistanceM?: number;
+}
+
 export const configureForQuote = async (
   quoteId: bigint,
-  input: { desiredWidthMm: number; desiredHeightMm: number; allowRotation?: boolean },
+  input: ConfigureInput,
 ): Promise<ConfigureResult> => {
   await getQuote(quoteId);
-  const [products, ratios, toleranceBands] = await Promise.all([
+  const [products, ratios, toleranceBands, outdoorThreshold] = await Promise.all([
     prisma.ledProduct.findMany({
       // P1-11.4: deprecated LED products are retained for old quotes but excluded from NEW configs.
       where: { deprecated: false, minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchH: { not: null } },
@@ -100,6 +122,7 @@ export const configureForQuote = async (
     }),
     prisma.screenRatio.findMany(),
     loadToleranceBands(),
+    loadOutdoorBrightnessNits(),
   ]);
   const cfgProducts: ConfigProduct[] = products.map((p) => ({
     id: p.id.toString(),
@@ -112,6 +135,8 @@ export const configureForQuote = async (
     category: p.serviceCategory,
     serviceAccess: p.serviceAccess,
     brightnessNits: p.brightnessNits,
+    // W0: indoor/outdoor suitability (null → the engine falls back to the brightness heuristic).
+    environment: p.environment === 'indoor' || p.environment === 'outdoor' ? p.environment : null,
     costPerSqmUsd: p.costPerSqmUsd ? Number(p.costPerSqmUsd) : null,
     kgPerSqm: p.kgPerSqm ? Number(p.kgPerSqm) : null,
     // U2: manufacturer priority/name/lead-time from the joined relation (high default when unlinked).
@@ -129,6 +154,10 @@ export const configureForQuote = async (
     desiredHeightMm: input.desiredHeightMm,
     allowRotation: input.allowRotation ?? true,
     ratios: ratioRows,
+    // W0: thread the environment + viewing-distance filters + the outdoor-brightness threshold.
+    environment: input.environment,
+    viewingDistanceM: input.viewingDistanceM,
+    outdoorBrightnessNits: outdoorThreshold,
   });
 
   // U2: annotate with tolerance band; drop options beyond the largest band (noting how many).
@@ -184,6 +213,10 @@ export interface TierOption {
   ratioLabel: string | null;
   fillPercent: string;
   cutCabinetSuggested: boolean;
+  /** W0: horizontal pixel pitch (mm) of the picked product. */
+  pixelPitchMm: number;
+  /** W0: fine-pitch (<2.5mm) → a GOB coating is recommended. Advisory only. */
+  gobRecommended: boolean;
   /** U8: deterministic 0–100 confidence score for this configuration. */
   confidence: number;
   // T3: over/under sizing + aspect-ratio guardrail (guidance, carried through from the config engine).
@@ -207,7 +240,7 @@ export interface TierOption {
 
 export const optionsForQuote = async (
   quoteId: bigint,
-  input: { desiredWidthMm: number; desiredHeightMm: number; allowRotation?: boolean },
+  input: ConfigureInput,
   showCost: boolean,
 ): Promise<{ options: TierOption[]; reasons: string[]; distinctProducts: number }> => {
   const ranked = await configureForQuote(quoteId, input);
@@ -277,6 +310,8 @@ export const optionsForQuote = async (
       ratioLabel: o.ratioLabel,
       fillPercent: o.fillPercent.toString(),
       cutCabinetSuggested: o.cutCabinetSuggested,
+      pixelPitchMm: o.pixelPitchMm,
+      gobRecommended: o.gobRecommended,
       confidence: o.confidence,
       sizeMode: o.sizeMode,
       deltaWidthMm: o.deltaWidthMm,

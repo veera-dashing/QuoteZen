@@ -109,6 +109,8 @@ export const TABLES: TableDef[] = [
       f('vendor'), f('manufacturerId', 'int'), f('model', 'string', true), f('serviceCategory'), f('moduleWMm', 'int'),
       f('moduleHMm', 'int'), f('minCabinetWMm', 'int'), f('minCabinetHMm', 'int'), f('cabinetDepthMm', 'int'),
       f('cabinetType'), f('pixelPitchH', 'decimal'), f('pixelPitchV', 'decimal'), f('brightnessNits', 'int'),
+      // W0: indoor/outdoor suitability (nullable enum). Null → config falls back to a brightness heuristic.
+      f('environment', 'enum', false, ['indoor', 'outdoor']),
       f('powerMaxW', 'int'), f('powerAvgW', 'int'), f('kgPerSqm', 'decimal'), f('costPerSqmUsd', 'decimal'),
       f('modulePrice', 'decimal'), f('volumetricModifier', 'decimal'), f('includesReceivers', 'boolean'),
       f('gobIncluded', 'boolean'), f('packIncluded', 'boolean'), f('serviceAccess'),

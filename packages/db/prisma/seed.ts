@@ -55,6 +55,9 @@ const SETTINGS: Array<{ key: string; label: string; value?: number; valueText?: 
   // required opening (LED is built up from available cabinet sizes, so an exact match isn't always
   // possible). Not brand-related; not used for LCD (fixed-size displays).
   { key: 'size_tolerance_bands', label: 'LED Size Tolerance Bands', valueText: '5,10,25', unit: '%' },
+  // W0 — brightness (nits) at/above which an LED product with no explicit `environment` is treated as
+  // outdoor by the config engine (the brightness fallback). Not used when a product sets `environment`.
+  { key: 'outdoor_brightness_nits', label: 'Outdoor Brightness Threshold', value: 4000, unit: 'nits' },
 ];
 
 // ─── U0: hardware manufacturers (normalised from led_products.vendor) ─────────

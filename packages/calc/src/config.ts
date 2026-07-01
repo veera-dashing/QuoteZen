@@ -57,8 +57,11 @@ export interface ConfigProduct {
   category?: string | null;
   serviceAccess?: string | null;
   brightnessNits?: number | null;
-  /** 'indoor' | 'outdoor' | null — used by validation, carried through here. */
-  environment?: string | null;
+  /**
+   * 'indoor' | 'outdoor' | null (W0). When null, the config engine derives an *effective* environment
+   * from brightness (≥ outdoorBrightnessNits → outdoor, else indoor) for the environment filter.
+   */
+  environment?: 'indoor' | 'outdoor' | null;
   costPerSqmUsd?: number | null;
   kgPerSqm?: number | null;
   rotationAllowed?: boolean;
@@ -83,7 +86,42 @@ export interface ConfigRequest {
   /** Half-cabinet fraction beyond which a cut cabinet is suggested (default 0.25). */
   cutThreshold?: number;
   ratios: readonly ScreenRatioRow[];
+  // ─── W0: environment + viewing-distance filters (both optional; absent → no filtering, unchanged) ───
+  /**
+   * Requested install environment. When set, only products whose EFFECTIVE environment matches are
+   * kept: `product.environment ?? (brightnessNits >= outdoorBrightnessNits ? 'outdoor' : 'indoor')`.
+   * Null/omitted → no environment filter.
+   */
+  environment?: 'indoor' | 'outdoor';
+  /**
+   * Brightness (nits) threshold for the environment fallback (kept in calc so it stays DB-free).
+   * A product with no explicit `environment` and `brightnessNits >= this` is treated as outdoor.
+   * Default {@link DEFAULT_OUTDOOR_BRIGHTNESS_NITS}.
+   */
+  outdoorBrightnessNits?: number;
+  /**
+   * Approximate viewing distance in metres. Applies the "1mm pixel-pitch : 1m distance" rule —
+   * `maxPitchMm = viewingDistanceM` — and EXCLUDES any product whose `pixelPitchHmm` exceeds it
+   * (too coarse → visible pixels at that distance). Null/omitted → no distance filter.
+   */
+  viewingDistanceM?: number;
 }
+
+/** Default outdoor-brightness threshold (nits) for the environment fallback (mirrors the seeded setting). */
+export const DEFAULT_OUTDOOR_BRIGHTNESS_NITS = 4000;
+
+/** Fine-pitch cutoff (mm): pitch below this recommends a GOB (glue-on-board) coating (mirrors validation). */
+export const GOB_RECOMMENDED_PITCH_MM = 2.5;
+
+/** Effective environment of a product: explicit value, else a brightness heuristic (bright → outdoor). */
+export const effectiveEnvironment = (
+  environment: 'indoor' | 'outdoor' | null | undefined,
+  brightnessNits: number | null | undefined,
+  outdoorBrightnessNits: number,
+): 'indoor' | 'outdoor' => {
+  if (environment === 'indoor' || environment === 'outdoor') return environment;
+  return brightnessNits != null && brightnessNits >= outdoorBrightnessNits ? 'outdoor' : 'indoor';
+};
 
 /** Whether this candidate is smaller than, equal to, or larger than the opening (T3 over/under). */
 export type SizeMode = 'under' | 'exact' | 'over';
@@ -102,6 +140,10 @@ export interface ConfigOption {
   resolutionWpx: number;
   resolutionHpx: number;
   totalPixels: number;
+  /** Horizontal pixel pitch (mm) of the chosen product — surfaced for the UI + GOB/viewing-distance logic. */
+  pixelPitchMm: number;
+  /** W0: fine-pitch (< {@link GOB_RECOMMENDED_PITCH_MM}) → a GOB coating is recommended. Advisory only. */
+  gobRecommended: boolean;
   ratioLabel: string | null;
   /** Snapped area ÷ opening area, ×100 (can exceed 100 when oversized). */
   fillPercent: Decimal;
@@ -212,6 +254,8 @@ const buildOption = (
     resolutionWpx,
     resolutionHpx,
     totalPixels: resolutionWpx * resolutionHpx,
+    pixelPitchMm: product.pixelPitchHmm,
+    gobRecommended: product.pixelPitchHmm < GOB_RECOMMENDED_PITCH_MM,
     ratioLabel,
     fillPercent,
     deviationWmm: deltaWidthMm,
@@ -263,11 +307,40 @@ export const configureScreen = (
   if (req.desiredWidthMm <= 0 || req.desiredHeightMm <= 0) {
     return { options: [], reasons: ['Opening width and height must be greater than zero.'] };
   }
-  const usable = products.filter(
+  const complete = products.filter(
     (p) => p.minCabinetWMm > 0 && p.minCabinetHMm > 0 && p.pixelPitchHmm > 0 && p.pixelPitchVmm > 0,
   );
-  if (usable.length === 0) {
+  if (complete.length === 0) {
     return { options: [], reasons: ['No products have complete cabinet/pitch data to configure.'] };
+  }
+
+  // ─── W0 filters (applied before iteration; each records a distinct empty-with-reasons message) ───
+  const outdoorThreshold = req.outdoorBrightnessNits ?? DEFAULT_OUTDOOR_BRIGHTNESS_NITS;
+  let usable = complete;
+
+  // Environment: keep only products whose EFFECTIVE environment matches the request (null → no filter).
+  if (req.environment) {
+    usable = usable.filter(
+      (p) => effectiveEnvironment(p.environment, p.brightnessNits, outdoorThreshold) === req.environment,
+    );
+    if (usable.length === 0) {
+      return {
+        options: [],
+        reasons: [`No ${req.environment} products available for this opening (by product environment or brightness).`],
+      };
+    }
+  }
+
+  // Viewing distance: max acceptable pitch (mm) ≈ distance (m). Exclude products coarser than that.
+  const maxPitchMm = req.viewingDistanceM != null && req.viewingDistanceM > 0 ? req.viewingDistanceM : null;
+  if (maxPitchMm != null) {
+    usable = usable.filter((p) => p.pixelPitchHmm <= maxPitchMm);
+    if (usable.length === 0) {
+      return {
+        options: [],
+        reasons: [`No products fine enough for a ${req.viewingDistanceM}m viewing distance (max pitch ${maxPitchMm}mm).`],
+      };
+    }
   }
 
   const allowRotation = req.allowRotation ?? true;
@@ -306,8 +379,14 @@ export const configureScreen = (
   // Rank (U2): manufacturer sourcing priority FIRST (lower = preferred), so options group by the
   // manufacturer order the user wants to see; WITHIN each manufacturer, the existing best-fit ranking
   // applies — closest area fit, then exact > under/over at equal deviation, then non-rotated preferred,
-  // then a preferred aspect ratio, then fewer cabinets, then model name (stable & explainable).
+  // then a preferred aspect ratio, then fewer cabinets. W0: when a viewing distance was requested, a
+  // MILD "coarsest pitch that still fits (best value)" preference is applied as a low-priority tiebreak
+  // (after all the fit/geometry keys, before the model-name final tiebreak) — it never reorders across
+  // manufacturers or better fits. Finally model name (stable & explainable). Order of keys:
+  //   1. manufacturerPriority  2. area deviation  3. exact>under>over  4. non-rotated
+  //   5. preferred ratio  6. fewer cabinets  7. [W0 viewing-distance] coarsest pitch  8. model name.
   const sizeRank: Record<SizeMode, number> = { exact: 0, under: 1, over: 2 };
+  const preferCoarsest = maxPitchMm != null; // only bias by pitch when the user gave a viewing distance
   deduped.sort((a, b) => {
     if (a.manufacturerPriority !== b.manufacturerPriority) return a.manufacturerPriority - b.manufacturerPriority;
     const da = areaDeviation(a, req);
@@ -317,6 +396,8 @@ export const configureScreen = (
     if (a.rotated !== b.rotated) return a.rotated ? 1 : -1;
     if (a.ratioPreferred !== b.ratioPreferred) return a.ratioPreferred ? -1 : 1;
     if (a.cabinetCount !== b.cabinetCount) return a.cabinetCount - b.cabinetCount;
+    // W0: coarsest pitch first = best value at the requested distance (all remaining fit within maxPitch).
+    if (preferCoarsest && a.pixelPitchMm !== b.pixelPitchMm) return b.pixelPitchMm - a.pixelPitchMm;
     return a.model.localeCompare(b.model);
   });
 
