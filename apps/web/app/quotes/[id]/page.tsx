@@ -853,6 +853,9 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       );
       setOptions(res.options);
       setReasons(res.reasons);
+      // Best-fit and Good/Better/Best are mutually exclusive views — showing one hides the other.
+      setTiers(null);
+      setTierReasons([]);
       // U9: reset the table search/sort when a fresh result set arrives.
       setConfigSearch('');
       setSortKey(null);
@@ -880,6 +883,9 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       setTiers(res.options);
       setTierReasons(res.reasons);
       setDistinctProducts(res.distinctProducts);
+      // Best-fit and Good/Better/Best are mutually exclusive views — showing one hides the other.
+      setOptions(null);
+      setReasons([]);
       const bands = (res.toleranceBands ?? []).slice().sort((a, b) => a - b);
       if (bands.length > 0) {
         setToleranceBands(bands);
