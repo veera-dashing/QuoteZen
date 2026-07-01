@@ -123,6 +123,17 @@ const GOB_OPTIONS: Array<[string, number]> = [
   ['GOB Included in Base Price', 0],
 ];
 
+// LED peripherals (controller input/output cards, multifunction card, sensors, converters).
+const LED_PERIPHERALS: Array<[string, number]> = [
+  ['H-Series Input card (4 x HDMI or 4 x DVI)', 1018],
+  ['H-Series Input card (1 x DP 1.2 (8k x 1k))', 1455],
+  ['H-Series Output card (16xRJ45)', 2039],
+  ['H-Series Output card (2xRJ45 + 1 HDMI Preview)', 1516],
+  ['MFN300 Multifunction Card', 151],
+  ['Light Sensor (NS060-30A - 30m cable)', 200.23],
+  ['Nova CVT310 Multimode Fibre Converters (Need Pair)', 198],
+];
+
 const TRIM_OPTIONS: Array<[string, number, number]> = [
   ['No Trim', 0, 0],
   ['Trim (Sides Only)', 0, 60],
@@ -328,6 +339,9 @@ async function main(): Promise<void> {
   );
   await seedIfEmpty('gobOption', () =>
     prisma.gobOption.createMany({ data: GOB_OPTIONS.map(([name, price]) => ({ name, price })) }),
+  );
+  await seedIfEmpty('ledPeripheral', () =>
+    prisma.ledPeripheral.createMany({ data: LED_PERIPHERALS.map(([name, price]) => ({ name, price })) }),
   );
   await seedIfEmpty('trimOption', () =>
     prisma.trimOption.createMany({
