@@ -20,6 +20,8 @@ interface LedScreen {
   // Full-edit pre-fill (V4): the panel + geometry inputs finalised at add time.
   ledProductId?: string | null; desiredWidthMm?: number | null; desiredHeightMm?: number | null;
   rotateCabinets?: boolean; aspectRatioId?: string | null;
+  // The attached LED product (model) + its manufacturer, for the "Manufacturer - Model" row label.
+  ledProduct?: { model: string; manufacturer?: { name: string } | null } | null;
   components?: LedComponent[];
   // Secondary options/services (Form 2) — raw FK scalars + housing/notes, used to pre-fill the editor.
   gobId?: string | null; frameId?: string | null; trimId?: string | null; hangingBarId?: string | null;
@@ -34,6 +36,8 @@ interface LcdItem {
 }
 interface LcdScreen {
   id: string; screenName: string | null; priceTotal: string | null;
+  // The attached display (model) for the row label.
+  display?: { model: string } | null;
   // Full-edit pre-fill (V4).
   orientation?: string | null; displayId?: string | null;
   installMethodId?: string | null; serviceHoursId?: string | null; warrantyId?: string | null;
@@ -1934,6 +1938,20 @@ function ScreenBreakdownTable({
   );
 }
 
+// Row label for the screens list: prefer the user's own screen name, else "Manufacturer - Model"
+// (e.g. "LEDFul - IAF250 / WALL1.9 COB") for LED, or the display model for LCD.
+function ledScreenLabel(s: LedScreen): string {
+  const named = s.screenName?.trim();
+  if (named) return named;
+  const model = s.ledProduct?.model?.trim();
+  if (!model) return 'LED screen';
+  const mfr = s.ledProduct?.manufacturer?.name?.trim();
+  return mfr ? `${mfr} - ${model}` : model;
+}
+function lcdScreenLabel(s: LcdScreen): string {
+  return s.screenName?.trim() || s.display?.model?.trim() || 'LCD screen';
+}
+
 // Merged "Select Screens" step (U1): a LED/LCD type selector drives which add-flow shows; below, a
 // combined list of every screen on the quote (LED + LCD), each labelled by type, with per-screen
 // controls (LED: qty/duplicate/reorder/delete + expandable Options & services editor; LCD as today).
@@ -2103,7 +2121,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
             <div className="list-row">
               <div>
                 <span className="pill" style={{ marginRight: 6 }}>LED</span>
-                <b>{s.screenName || 'LED screen'}</b>{' '}
+                <b>{ledScreenLabel(s)}</b>{' '}
                 <span className="muted">
                   {[
                     s.resolutionWpx && s.resolutionHpx ? `${s.resolutionWpx}×${s.resolutionHpx}px` : '',
@@ -2160,7 +2178,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
             <div className="list-row">
               <div>
                 <span className="pill" style={{ marginRight: 6 }}>LCD</span>
-                <b>{s.screenName || 'LCD screen'}</b>
+                <b>{lcdScreenLabel(s)}</b>
               </div>
               <div className="row-actions" style={{ alignItems: 'center' }}>
                 <span>{cur} {Number(s.priceTotal ?? 0).toLocaleString()}</span>

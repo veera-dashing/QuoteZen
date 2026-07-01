@@ -15,7 +15,7 @@ export const quoteInclude = {
         include: { controller: true, ledPeripheral: true, mediaplayer: true, peripheral: true },
       },
       costBreakdown: true,
-      ledProduct: true,
+      ledProduct: { include: { manufacturer: true } },
       aspectRatio: true,
       warranty: true,
       serviceHours: true,
