@@ -2556,6 +2556,249 @@ interface Version {
   createdBy?: { name: string };
 }
 
+// The immutable rule-set a version froze (snapshot.ruleSet). Every field is optional so OLD
+// snapshots (created before this feature) render defensively — missing sections are skipped.
+interface RuleSet {
+  markups?: Record<string, number>;
+  freight?: Record<string, number>;
+  addOns?: Record<string, number>;
+  rates?: Record<string, number>;
+  financialBumpers?: Record<string, number | null>;
+  marginFloor?: number;
+  minGrossMargin?: number;
+  walkAwayMargin?: number;
+  discountCapPct?: number;
+  discountNoteThresholdPct?: number;
+  discount?: { pct?: number; source?: string; scope?: string };
+  clientTier?: { name?: string; preferredFreight?: string; defaultDiscountPct?: number } | null;
+  anomalyRules?: Array<{ key?: string; label?: string; enabled?: boolean; severity?: string; paramNum?: number | null }>;
+  manufacturerPriorities?: Array<{ name?: string; priority?: number }>;
+  capturedAt?: string;
+}
+
+// The full quote-tree snapshot a version captured. Only the fields this modal reads are typed;
+// the rest of the tree is intentionally left loose (it's an immutable historical artifact).
+interface VersionSnapshot {
+  grandTotal?: string | number | null;
+  createdAt?: string;
+  createdBy?: { name?: string } | string | null;
+  ledScreens?: unknown[];
+  lcdScreens?: unknown[];
+  ruleSet?: RuleSet;
+}
+
+interface VersionView {
+  revisionNo: number;
+  label: string | null;
+  snapshot: VersionSnapshot;
+}
+
+// camelCase / snake_case key → "Title Case" human label.
+function titleCase(key: string): string {
+  const spaced = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .trim();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+// n → "28%" (0 decimals) or "12.5%" (1 decimal only when needed).
+function pct(n: number): string {
+  const v = n * 100;
+  return `${v.toFixed(v % 1 ? 1 : 0)}%`;
+}
+
+// Read-only modal showing one version's captured rule-set + a contents summary. Mirrors
+// PreviewModal (click-away scrim + ✕). Renders `ruleSet` generically so it tolerates whatever
+// keys a given snapshot froze — missing sections are skipped, never crashing on undefined.
+function VersionViewModal({ view, cur, onClose }: { view: VersionView; cur: string; onClose: () => void }) {
+  const { snapshot } = view;
+  const rs = snapshot.ruleSet;
+
+  // Esc closes (PreviewModal is click/✕ only; we extend it here to satisfy the spec's Esc note).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const money = (v: unknown): string => `${cur} ${Number(v ?? 0).toLocaleString()}`;
+  const createdBy = typeof snapshot.createdBy === 'string'
+    ? snapshot.createdBy
+    : snapshot.createdBy?.name;
+  const ledCount = snapshot.ledScreens?.length ?? 0;
+  const lcdCount = snapshot.lcdScreens?.length ?? 0;
+
+  // Scalar top-level rule fields, in a stable order with human labels. Margin/discount fractions
+  // (< 1) are shown as percentages; everything else as-is.
+  const scalarRows: Array<[string, number | undefined]> = [
+    ['Min gross margin', rs?.minGrossMargin],
+    ['Walk-away margin', rs?.walkAwayMargin],
+    ['Margin floor', rs?.marginFloor],
+    ['Discount cap', rs?.discountCapPct],
+    ['Note threshold', rs?.discountNoteThresholdPct],
+  ];
+  const scalars = scalarRows.filter(([, v]) => typeof v === 'number') as Array<[string, number]>;
+
+  // A titled 2-column key/value sub-block for an object group (markups, freight, …).
+  const ObjBlock = ({ title, obj, asPct }: { title: string; obj: Record<string, unknown> | undefined; asPct?: (k: string) => boolean }) => {
+    if (!obj || Object.keys(obj).length === 0) return null;
+    return (
+      <div style={{ marginTop: 12 }}>
+        <h4 style={{ margin: '0 0 6px' }}>{title}</h4>
+        <table style={{ width: '100%', fontSize: 13 }}>
+          <tbody>
+            {Object.entries(obj).map(([k, val]) => {
+              const showPct = asPct?.(k) && typeof val === 'number';
+              return (
+                <tr key={k}>
+                  <td className="muted" style={{ paddingRight: 12 }}>{titleCase(k)}</td>
+                  <td>{val == null ? '—' : showPct ? pct(val as number) : String(val)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+      }}
+    >
+      <div
+        className="card"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 640, width: '100%', margin: 0, maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}
+      >
+        <button className="ghost" onClick={onClose} aria-label="Close" style={{ position: 'absolute', top: 8, right: 8 }}>✕</button>
+        <h3 style={{ marginTop: 0 }}>Version v{view.revisionNo}{view.label ? ` — ${view.label}` : ''}</h3>
+
+        {/* Summary */}
+        <div style={{ marginBottom: 8 }}>
+          <h4 style={{ margin: '0 0 6px' }}>Summary</h4>
+          <table style={{ width: '100%', fontSize: 13 }}>
+            <tbody>
+              <tr><td className="muted" style={{ paddingRight: 12 }}>Label</td><td>{view.label ?? '—'}</td></tr>
+              <tr><td className="muted">Grand total</td><td>{money(snapshot.grandTotal)}</td></tr>
+              {createdBy && <tr><td className="muted">Created by</td><td>{createdBy}</td></tr>}
+              {snapshot.createdAt && <tr><td className="muted">Created at</td><td>{new Date(snapshot.createdAt).toLocaleString()}</td></tr>}
+              {rs?.capturedAt && <tr><td className="muted">Rules captured</td><td>{new Date(rs.capturedAt).toLocaleString()}</td></tr>}
+              <tr>
+                <td className="muted">Contents</td>
+                <td>
+                  {ledCount} LED + {lcdCount} LCD screen{ledCount + lcdCount === 1 ? '' : 's'}
+                  {rs?.discount && typeof rs.discount.pct === 'number'
+                    ? ` · discount ${pct(rs.discount.pct)}${rs.discount.source ? ` (${rs.discount.source}` : ''}${rs.discount.scope ? `, ${rs.discount.scope})` : rs.discount.source ? ')' : ''}`
+                    : ''}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Rules in force */}
+        <h4 style={{ margin: '12px 0 6px' }}>Rules in force at this version</h4>
+        {!rs && <p className="muted">This version predates rule-set capture — no rules were frozen.</p>}
+        {rs && (
+          <>
+            {scalars.length > 0 && (
+              <table style={{ width: '100%', fontSize: 13 }}>
+                <tbody>
+                  {scalars.map(([label, v]) => (
+                    <tr key={label}>
+                      <td className="muted" style={{ paddingRight: 12 }}>{label}</td>
+                      <td>{v < 1 ? pct(v) : String(v)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <ObjBlock title="Markups" obj={rs.markups} />
+            <ObjBlock title="Freight" obj={rs.freight} />
+            <ObjBlock title="Add-ons" obj={rs.addOns} asPct={(k) => k.toLowerCase().endsWith('pct')} />
+            <ObjBlock title="Financial bumpers" obj={rs.financialBumpers as Record<string, unknown> | undefined} />
+            <ObjBlock title="Exchange rates" obj={rs.rates} />
+
+            {rs.discount && (
+              <div style={{ marginTop: 12 }}>
+                <h4 style={{ margin: '0 0 6px' }}>Resolved discount</h4>
+                <table style={{ width: '100%', fontSize: 13 }}>
+                  <tbody>
+                    <tr><td className="muted" style={{ paddingRight: 12 }}>Pct</td><td>{typeof rs.discount.pct === 'number' ? pct(rs.discount.pct) : '—'}</td></tr>
+                    <tr><td className="muted">Source</td><td>{rs.discount.source ?? '—'}</td></tr>
+                    <tr><td className="muted">Scope</td><td>{rs.discount.scope ?? '—'}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ marginTop: 12 }}>
+              <h4 style={{ margin: '0 0 6px' }}>Client tier</h4>
+              {rs.clientTier == null
+                ? <p className="muted" style={{ margin: 0 }}>No tier</p>
+                : (
+                  <table style={{ width: '100%', fontSize: 13 }}>
+                    <tbody>
+                      <tr><td className="muted" style={{ paddingRight: 12 }}>Name</td><td>{rs.clientTier.name ?? '—'}</td></tr>
+                      <tr><td className="muted">Preferred freight</td><td>{rs.clientTier.preferredFreight ?? '—'}</td></tr>
+                      <tr><td className="muted">Default discount</td><td>{typeof rs.clientTier.defaultDiscountPct === 'number' ? pct(rs.clientTier.defaultDiscountPct) : '—'}</td></tr>
+                    </tbody>
+                  </table>
+                )}
+            </div>
+
+            {rs.anomalyRules && rs.anomalyRules.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <h4 style={{ margin: '0 0 6px' }}>Anomaly rules</h4>
+                <table style={{ width: '100%', fontSize: 13 }}>
+                  <thead>
+                    <tr><th style={{ textAlign: 'left' }}>Rule</th><th style={{ textAlign: 'left' }}>Severity</th><th style={{ textAlign: 'left' }}>Enabled</th><th style={{ textAlign: 'left' }}>Param</th></tr>
+                  </thead>
+                  <tbody>
+                    {rs.anomalyRules.map((r, i) => (
+                      <tr key={r.key ?? i}>
+                        <td>{r.label ?? r.key ?? '—'}</td>
+                        <td style={{ color: r.severity === 'block' ? 'var(--danger)' : r.severity === 'warn' ? 'var(--warn, #d97706)' : undefined }}>{r.severity ?? '—'}</td>
+                        <td>{r.enabled ? '✓' : '✗'}</td>
+                        <td>{r.paramNum ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {rs.manufacturerPriorities && rs.manufacturerPriorities.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <h4 style={{ margin: '0 0 6px' }}>Manufacturer priorities</h4>
+                <table style={{ width: '100%', fontSize: 13 }}>
+                  <thead>
+                    <tr><th style={{ textAlign: 'left' }}>Manufacturer</th><th style={{ textAlign: 'left' }}>Priority</th></tr>
+                  </thead>
+                  <tbody>
+                    {[...rs.manufacturerPriorities]
+                      .sort((a, b) => (a.priority ?? Infinity) - (b.priority ?? Infinity))
+                      .map((m, i) => (
+                        <tr key={m.name ?? i}><td>{m.name ?? '—'}</td><td>{m.priority ?? '—'}</td></tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // One field-level difference between two version snapshots. `from`/`to` is null when the
 // path exists in only one snapshot (a field/screen added or removed structurally).
 interface DiffEntry { path: string; from: unknown | null; to: unknown | null }
@@ -2612,6 +2855,10 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const [diffPair, setDiffPair] = useState<{ a: number; b: number } | null>(null);
   const [diffBusy, setDiffBusy] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
+  // View a single version's full captured rule-set + contents (read-only modal).
+  const [versionView, setVersionView] = useState<VersionView | null>(null);
+  const [versionViewBusy, setVersionViewBusy] = useState<number | null>(null);
+  const [versionViewError, setVersionViewError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [validation, setValidation] = useState<QuoteValidation | null>(null);
   // Two-stage Review & Approval (T1): history + per-stage comment drafts + busy flag.
@@ -2902,6 +3149,18 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
     await api(`/quotes/${quote.id}/versions`, { method: 'POST', body: JSON.stringify({ label: `Saved ${new Date().toLocaleString()}` }) });
     loadVersions();
     loadAudit();
+  };
+  const viewVersion = async (rev: number) => {
+    setVersionViewBusy(rev);
+    setVersionViewError(null);
+    try {
+      const v = await api<VersionView>(`/quotes/${quote.id}/versions/${rev}`);
+      setVersionView(v);
+    } catch (e) {
+      setVersionViewError(e instanceof Error ? e.message : 'Could not load version');
+    } finally {
+      setVersionViewBusy(null);
+    }
   };
   const rollback = async (rev: number) => {
     if (!window.confirm(`Roll back to version ${rev}? This creates a new version; history is preserved.`)) return;
@@ -3594,14 +3853,21 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
                     <td>{v.label ?? '—'}</td>
                     <td className="cell-num">{cur} {Number(v.grandTotal ?? 0).toLocaleString()}</td>
                     <td className="muted">{v.createdBy?.name ?? '—'}</td>
-                    <td className="actions"><button className="ghost" onClick={() => rollback(v.revisionNo)}>Roll back</button></td>
+                    <td className="actions">
+                      <button className="ghost" onClick={() => viewVersion(v.revisionNo)} disabled={versionViewBusy === v.revisionNo}>
+                        {versionViewBusy === v.revisionNo ? 'Loading…' : 'View'}
+                      </button>{' '}
+                      <button className="ghost" onClick={() => rollback(v.revisionNo)}>Roll back</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
+        {versionViewError && <div className="error" style={{ marginTop: 10 }}>{versionViewError}</div>}
       </div>
+      {versionView && <VersionViewModal view={versionView} cur={cur} onClose={() => setVersionView(null)} />}
 
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Compare versions</h3>

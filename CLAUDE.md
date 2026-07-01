@@ -632,3 +632,27 @@ the recommended options. Both priority values are now admin-maintained in Refere
 - ✅ **Web** — the ranked configurations table gains a sortable **"Model pri."** column (`ConfigOption.modelPriority`).
 - **Not changed:** Value/Premium tiers still rank by cost/sqm and pitch by design (different axes); only the
   best-fit/Recommended ordering honours the priorities.
+
+### Block 19 — quote history: full rule capture in version snapshots + a rules viewer
+Quote history already existed (Review step: **Change history** field-level audit, **Versions** immutable save-points,
+**Compare versions** diff; rollback is history-preserving — a restore creates a NEW version, never overwrites; snapshots
+are insert-only `quote_revisions.snapshot` JSON, unique per revision, `restoredFrom` lineage). Two gaps closed so a
+version is a COMPLETE, tamper-proof record of the rules that produced it, and those rules are viewable.
+- ✅ **Fuller rule capture (backend)** — `versioning.ts` `captureRuleSet(quote)` now freezes, alongside the existing
+  markups/freight/addOns/rates/marginFloor: **margin bands** (`minGrossMargin`/`walkAwayMargin`), **discount policy**
+  (`discountCapPct`/`discountNoteThresholdPct`), the **resolved quote discount** (`{pct,source,scope}` via
+  `resolveDiscount`, as `/price` does), **clientTier** (`{name,preferredFreight,defaultDiscountPct}|null`), **all
+  anomaly rules** (`[{key,label,enabled,severity,paramNum}]` — a later toggle can't rewrite history), **financial
+  bumpers** (`{leadTimeBufferDays,audUsdRate,humanInTheLoop}`), and **manufacturerPriorities** (`[{name,priority}]`;
+  per-product led_products priorities deliberately excluded — 177 rows, and the chosen screens are already in the
+  snapshot tree). Reuses existing getters (no duplicated constants); defensive (missing setting → null, never throws);
+  one `Promise.all`, no N+1. `SnapshotRuleSet` fully typed. `rollbackToVersion`/`diffVersions`/`listVersions`/
+  `getVersionSnapshot` unchanged (diff now naturally surfaces the new `ruleSet.*` paths). `versioning-ruleset.test.ts`.
+- ✅ **Version rules viewer (web)** — the Versions panel gains a **"View"** button per revision → modal (mirrors the
+  preview-modal scrim/✕/Esc pattern) over `GET /quotes/:id/versions/:rev`. Shows a **Summary** (label, grand total,
+  created/captured at, LED+LCD screen counts, resolved discount w/ source+scope) and **"Rules in force at this
+  version"** — a generic renderer: scalar bands as %/values, object groups (markups/freight/add-ons/bumpers/rates/
+  discount/clientTier) as key/value tables, and array groups (anomaly rules w/ block=red·warn=amber + enabled ✓/✗ +
+  param; manufacturer priorities) as small tables. Tolerates pre-capture snapshots (missing keys skipped). Read-only.
+- **Already met (no change):** (a) see history, (c) restore-as-active (history-preserving rollback), (d) immutable
+  separate instance per state.

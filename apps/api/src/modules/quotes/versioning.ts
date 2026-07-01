@@ -1,8 +1,21 @@
 import { prisma } from '@quotezen/db';
 import type { Prisma } from '@quotezen/db';
 import type { PricingConfig } from '@quotezen/calc';
+import type { DiscountScope } from '@quotezen/shared';
 import { recordAudit } from '../../services/audit.js';
-import { getQuote, getMarginFloor, recomputeQuote, type Actor } from './service.js';
+import {
+  getQuote,
+  getMarginFloor,
+  getMinGrossMargin,
+  getWalkAwayMargin,
+  getDiscountCapPct,
+  getDiscountNoteThresholdPct,
+  getDefaultDiscountPct,
+  resolveDiscount,
+  recomputeQuote,
+  type Actor,
+  type DiscountSource,
+} from './service.js';
 import { loadPricingConfig } from '../../lib/pricing-config.js';
 import type { QuoteWithChildren } from './repository.js';
 
@@ -17,13 +30,72 @@ import type { QuoteWithChildren } from './repository.js';
  * rollback ignores it (it only restores the screen tree); diff naturally surfaces `ruleSet.*` changes.
  */
 
-/** The rule values that priced a quote, captured into a version snapshot for auditability. */
+/** The resolved effective discount for the quote, as of capture time (mirrors `/price`). */
+export interface SnapshotDiscount {
+  /** Fraction 0..1. */
+  pct: number;
+  source: DiscountSource;
+  scope: DiscountScope;
+}
+
+/** The client's tier (Z6) as of capture time, or null when the quote has no client/tier. */
+export interface SnapshotClientTier {
+  name: string;
+  preferredFreight: string | null;
+  defaultDiscountPct: number | null;
+}
+
+/** One anomaly rule (Z4) row, snapshotted so a later toggle can't rewrite history. */
+export interface SnapshotAnomalyRule {
+  key: string;
+  label: string;
+  enabled: boolean;
+  severity: string;
+  paramNum: number | null;
+}
+
+/** The Z1 financial bumpers (non-margin/discount) as of capture time. */
+export interface SnapshotFinancialBumpers {
+  leadTimeBufferDays: number | null;
+  audUsdRate: number | null;
+  humanInTheLoop: number | null;
+}
+
+/** A manufacturer's governance priority (compact — per-product priorities are NOT captured). */
+export interface SnapshotManufacturerPriority {
+  name: string;
+  priority: number;
+}
+
+/**
+ * The full governance rule-set in force when a version was captured, embedded immutably into the
+ * snapshot so a later edit to any setting/rule can never silently change what a saved version means.
+ * The existing pricing fields (markups/freight/addOns/rates/marginFloor/capturedAt) are unchanged;
+ * the rest capture the margin bands, discount policy + the quote's resolved effective discount, the
+ * client tier, the anomaly-rule table, the financial bumpers, and manufacturer priorities.
+ */
 export interface SnapshotRuleSet {
   markups: PricingConfig['markups'];
   freight: PricingConfig['freight'];
   addOns: PricingConfig['addOns'];
   rates: PricingConfig['rates'];
   marginFloor: number;
+  /** Z3 margin bands (fraction 0..1). */
+  minGrossMargin: number;
+  walkAwayMargin: number;
+  /** Quote-discount policy (fraction 0..1). */
+  discountCapPct: number;
+  discountNoteThresholdPct: number;
+  /** The effective discount resolved for THIS quote (as `/price` does). */
+  discount: SnapshotDiscount;
+  /** The quote's client tier (Z6), or null. */
+  clientTier: SnapshotClientTier | null;
+  /** ALL anomaly-rule rows (Z4), enabled or not. */
+  anomalyRules: SnapshotAnomalyRule[];
+  /** Z1 financial bumpers. */
+  financialBumpers: SnapshotFinancialBumpers;
+  /** Governance manufacturer priorities (Z6/U0) — small list, all rows. */
+  manufacturerPriorities: SnapshotManufacturerPriority[];
   capturedAt: string;
 }
 
@@ -31,15 +103,83 @@ export interface SnapshotRuleSet {
 const toSnapshot = (quote: QuoteWithChildren, ruleSet: SnapshotRuleSet): Prisma.InputJsonValue =>
   JSON.parse(JSON.stringify({ ...quote, ruleSet })) as Prisma.InputJsonValue;
 
-/** Capture the live pricing rules + margin floor as an immutable record on a version. */
-export const captureRuleSet = async (capturedAt: Date = new Date()): Promise<SnapshotRuleSet> => {
-  const [config, marginFloor] = await Promise.all([loadPricingConfig(), getMarginFloor()]);
+/** A numeric `settings` value by key, or `null` when the row is absent (defensive — never throws). */
+const settingNum = async (key: string): Promise<number | null> => {
+  const s = await prisma.setting.findUnique({ where: { key } });
+  return s?.value != null ? Number(s.value) : null;
+};
+
+/**
+ * Capture the full governance rule-set in force as an immutable record on a version. Extends the
+ * original pricing capture (markups/freight/addOns/rates/marginFloor) with the Z-series governance:
+ * margin bands, discount policy + the quote's resolved effective discount, client tier, anomaly
+ * rules, financial bumpers, and manufacturer priorities. Every new field is captured defensively
+ * (a missing setting → sensible fallback / null, never a throw); the result is pure JSON.
+ */
+export const captureRuleSet = async (
+  quote: QuoteWithChildren,
+  capturedAt: Date = new Date(),
+): Promise<SnapshotRuleSet> => {
+  const [
+    config,
+    marginFloor,
+    minGrossMargin,
+    walkAwayMargin,
+    discountCapPct,
+    discountNoteThresholdPct,
+    defaultDiscountPct,
+    anomalyRows,
+    manufacturers,
+    leadTimeBufferDays,
+    audUsdRate,
+    humanInTheLoop,
+  ] = await Promise.all([
+    loadPricingConfig(),
+    getMarginFloor(),
+    getMinGrossMargin(),
+    getWalkAwayMargin(),
+    getDiscountCapPct(),
+    getDiscountNoteThresholdPct(),
+    getDefaultDiscountPct(),
+    prisma.anomalyRule.findMany({ orderBy: { key: 'asc' } }),
+    prisma.manufacturer.findMany({ orderBy: [{ priority: 'asc' }, { name: 'asc' }] }),
+    settingNum('lead_time_buffer_days'),
+    settingNum('aud_usd_rate'),
+    settingNum('human_in_the_loop'),
+  ]);
+
+  const discount = resolveDiscount(quote, defaultDiscountPct);
+
+  const tier = quote.client?.clientTier ?? null;
+  const clientTier: SnapshotClientTier | null = tier
+    ? {
+        name: tier.name,
+        preferredFreight: tier.preferredFreight ?? null,
+        defaultDiscountPct: tier.defaultDiscountPct != null ? Number(tier.defaultDiscountPct) : null,
+      }
+    : null;
+
   return {
     markups: config.markups,
     freight: config.freight,
     addOns: config.addOns,
     rates: config.rates,
     marginFloor,
+    minGrossMargin,
+    walkAwayMargin,
+    discountCapPct,
+    discountNoteThresholdPct,
+    discount: { pct: discount.pct, source: discount.source, scope: discount.scope },
+    clientTier,
+    anomalyRules: anomalyRows.map((r) => ({
+      key: r.key,
+      label: r.label,
+      enabled: r.enabled,
+      severity: r.severity,
+      paramNum: r.paramNum != null ? Number(r.paramNum) : null,
+    })),
+    financialBumpers: { leadTimeBufferDays, audUsdRate, humanInTheLoop },
+    manufacturerPriorities: manufacturers.map((m) => ({ name: m.name, priority: m.priority })),
     capturedAt: capturedAt.toISOString(),
   };
 };
@@ -51,7 +191,7 @@ export const createVersion = async (
   restoredFrom?: number,
 ) => {
   const quote = await getQuote(quoteId);
-  const ruleSet = await captureRuleSet();
+  const ruleSet = await captureRuleSet(quote);
   return prisma.$transaction(async (tx) => {
     const last = await tx.quoteRevision.findFirst({
       where: { quoteId },
