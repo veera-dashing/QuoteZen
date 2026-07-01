@@ -522,3 +522,14 @@ size-tolerance bands, and Good/Better/Best tiers (those are the LED "lego" flow)
   Details with auto-save + version badge; `?step=n` deep-links a step). `DetailsStep` takes `quote:
   Quote | null` and branches create/edit off one shared body (nulls stripped for the create schema);
   auto-save/optimistic-lock only run in edit mode.
+- ✅ **LCD form + pricing faithful to the `(LCD 1)` workbook tab** — reconciled against the source tab
+  (extracted with openpyxl in formula mode). The item breakdown now shows the tab's columns per line
+  (**Description · Cost · Sell(list) · Qty · Price · Margin**; Cost + Margin admin-gated, BR-081) with
+  per-section subtotals, and the **quoted total is the fixed-margin total, not the sum of line sells**:
+  `priceTotal = ROUND(Σ(cost×qty) / (1 − lcd_margin), −1)` (tab G54; canonical sample cost 7085 → **10,120**;
+  the list sells sum to 10,169 — the deliberate tab discrepancy). Per-line **Sell** = `display_catalog.sell`
+  (list) for catalog rows, `cost × service_markup` (1.65) for manual rows. Section subtotals mirror the tab's
+  per-section fixed-margin analysis (G51/G52/G53). `lcdScreenDiscountedSell` returns `priceTotal ×
+  (Σ discounted cost / Σ cost)` — SYNC, so with no discount the screen sell == the tab total and a per-line
+  discount lowers it proportionally (keeps `computeMargin`/`computeQuoteTotals`/`priceQuote`/V2 coherent).
+  `lcd-tab-pricing.test.ts` + updated S2/x2/v3 expectations. 227 tests green (9 shared + 103 calc + 115 api).
