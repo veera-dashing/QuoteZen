@@ -1,8 +1,10 @@
 import {
   canFinalise,
   validateScreen,
+  validateLcdScreen,
   type ValidationFinding,
   type ValidationInput,
+  type LcdValidationInput,
 } from '@quotezen/calc';
 import { getQuote } from './service.js';
 import type { QuoteWithChildren } from './repository.js';
@@ -56,14 +58,37 @@ const ledScreenToInput = (
   };
 };
 
+/** Build the calc validation input for one stored LCD screen from its loaded items. */
+const lcdScreenToInput = (
+  screen: QuoteWithChildren['lcdScreens'][number],
+): LcdValidationInput => ({
+  orientation: screen.orientation ?? null,
+  items: screen.items.map((i) => ({
+    itemType: i.itemType,
+    displayId: i.displayId != null ? i.displayId.toString() : null,
+    // `addLcdScreen` snapshots the display's model into `description`; fall back to the joined
+    // display model when present. If neither is available the built-in-player check stays
+    // cannot_evaluate — never a false warning.
+    description: i.description ?? i.display?.model ?? null,
+  })),
+});
+
 export const validateQuote = async (id: bigint): Promise<QuoteValidation> => {
   const quote = await getQuote(id);
 
-  const screens: ScreenValidation[] = quote.ledScreens.map((s) => ({
+  const ledScreens: ScreenValidation[] = quote.ledScreens.map((s) => ({
     screenId: s.id.toString(),
     screenName: s.screenName ?? 'LED screen',
     findings: validateScreen(ledScreenToInput(s)),
   }));
+
+  const lcdScreens: ScreenValidation[] = quote.lcdScreens.map((s) => ({
+    screenId: s.id.toString(),
+    screenName: s.screenName ?? 'LCD screen',
+    findings: validateLcdScreen(lcdScreenToInput(s)),
+  }));
+
+  const screens = [...ledScreens, ...lcdScreens];
 
   const all = screens.flatMap((s) => s.findings);
   const counts = {

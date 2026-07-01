@@ -108,3 +108,103 @@ export const validateScreen = (input: ValidationInput): ValidationFinding[] => {
 /** True when no finding blocks finalisation. */
 export const canFinalise = (findings: readonly ValidationFinding[]): boolean =>
   !findings.some((f) => f.severity === 'error');
+
+// ─── LCD screen validation (X1) ───────────────────────────────────────────────
+/**
+ * One persisted LCD line — a subset of `quote_lcd_items`. Only the fields the deterministic rules
+ * read are required; everything else is ignored.
+ */
+export interface LcdValidationItem {
+  itemType: 'display' | 'mediaplayer' | 'bracket' | 'install' | 'labour' | 'location_fee';
+  displayId?: string | number | bigint | null;
+  /** Snapshotted display model/description text (from `displayCatalog.model`) — drives the built-in-player check. */
+  description?: string | null;
+}
+
+export interface LcdValidationInput {
+  /** 'P' | 'L' | null — matches the persisted LCD orientation. */
+  orientation?: string | null;
+  items?: LcdValidationItem[];
+}
+
+/** Case-insensitive signals that a display has a built-in playback source (no separate mediaplayer needed). */
+const BUILTIN_PLAYER_SIGNALS = ['chromecast', 'android', 'built-in', 'built in'];
+
+const hasBuiltInPlayerSignal = (text: string): boolean => {
+  const t = text.toLowerCase();
+  return BUILTIN_PLAYER_SIGNALS.some((sig) => t.includes(sig));
+};
+
+/**
+ * Deterministic conflict/validation rules for one persisted LCD screen. Same finding shape,
+ * severities and `canFinalise` semantics as the LED engine — partial data never yields a false
+ * error (uses `cannot_evaluate` when the needed input is absent).
+ */
+export const validateLcdScreen = (input: LcdValidationInput): ValidationFinding[] => {
+  const findings: ValidationFinding[] = [];
+  const items = input.items ?? [];
+
+  // ── Orientation specified (independent of item state) ──
+  if (input.orientation == null || input.orientation === '') {
+    findings.push({
+      rule: 'LCD_NO_ORIENTATION',
+      severity: 'warning',
+      message: 'Screen orientation not specified.',
+    });
+  }
+
+  // A display line must reference a real panel (fixed-size LCD).
+  const displayItems = items.filter((i) => i.itemType === 'display');
+  const displayWithPanel = displayItems.find((i) => i.displayId != null);
+
+  if (items.length === 0) {
+    // Nothing to check yet — not an error.
+    findings.push({
+      rule: 'LCD_DISPLAY_REQUIRED',
+      severity: 'cannot_evaluate',
+      message: 'No LCD items entered yet — cannot check for a display panel.',
+    });
+    return findings;
+  }
+
+  if (!displayWithPanel) {
+    findings.push({
+      rule: 'LCD_DISPLAY_REQUIRED',
+      severity: 'error',
+      message: 'LCD screen has no display panel selected.',
+    });
+    // Downstream rules assume a display exists; skip them when none is present.
+    return findings;
+  }
+
+  // ── Mediaplayer / built-in playback source ──
+  const hasMediaplayer = items.some((i) => i.itemType === 'mediaplayer');
+  if (!hasMediaplayer) {
+    const desc = displayWithPanel.description;
+    if (desc == null || desc === '') {
+      findings.push({
+        rule: 'LCD_NO_MEDIAPLAYER',
+        severity: 'cannot_evaluate',
+        message: 'No mediaplayer selected and the display model is unknown — cannot confirm the playback source.',
+      });
+    } else if (!hasBuiltInPlayerSignal(desc)) {
+      findings.push({
+        rule: 'LCD_NO_MEDIAPLAYER',
+        severity: 'warning',
+        message: 'No mediaplayer selected and the display has no built-in player — confirm playback source.',
+      });
+    }
+  }
+
+  // ── Bracket / mount ──
+  const hasBracket = items.some((i) => i.itemType === 'bracket');
+  if (!hasBracket) {
+    findings.push({
+      rule: 'LCD_NO_BRACKET',
+      severity: 'warning',
+      message: 'No bracket / mount selected — confirm mounting method.',
+    });
+  }
+
+  return findings;
+};
