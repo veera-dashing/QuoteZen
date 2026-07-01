@@ -436,13 +436,19 @@ describe('per-screen input fields round-trip (S0)', () => {
 
 describe('LCD-1 faithful pricing (S2)', () => {
   const round2 = (n: number) => Math.round(n * 100) / 100;
-  const sellAtMargin = (cost: number) => round2(cost / (1 - 0.3)); // lcd_margin = 0.3 (F12)
+  const round10 = (n: number) => Math.round(n / 10) * 10;
+  const grossFixed = (cost: number) => (cost > 0 ? round10(cost / (1 - 0.3)) : 0); // tab G54/G51-53
 
-  it('prices catalog + manual items at fixed margin, applies out-of-hours uplift, persists subtotals', async () => {
-    // A catalog display with a known total_cost so we can assert the server-resolved (authoritative) price.
-    const display = await prisma.displayCatalog.findFirst({ where: { deprecated: false, totalCost: { not: null } } });
+  it('shows list sells per line, applies out-of-hours uplift, and quotes the fixed-margin total', async () => {
+    // A catalog display with a known total_cost AND list sell so we can assert the (LCD 1) tab behaviour:
+    // the line shows the LIST sell (col D), the headline total is the fixed-margin gross-up of COST (G54).
+    const display = await prisma.displayCatalog.findFirst({
+      where: { deprecated: false, totalCost: { not: null }, sell: { not: null } },
+    });
     expect(display).toBeTruthy();
     const displayCost = Number(display!.totalCost);
+    const displaySell = Number(display!.sell); // LCDRef list sell (col D)
+    const serviceMarkup = Number((await prisma.setting.findUnique({ where: { key: 'service_markup' } }))?.value ?? 1.65);
 
     const outOfHours = await prisma.serviceHoursOption.findFirst({ where: { name: { not: 'Business Hours' } } });
     expect(outOfHours).toBeTruthy();
@@ -475,19 +481,20 @@ describe('LCD-1 faithful pricing (S2)', () => {
     });
     expect(lcd.statusCode).toBe(201);
     const screen = lcd.json() as {
-      items: Array<{ itemType: string; displayId: string | null; unitCost: string; unitSell: string; description: string | null }>;
+      items: Array<{ itemType: string; displayId: string | null; qty: string; unitCost: string; unitSell: string; description: string | null }>;
       priceScreenMediaplayer: string; priceBracketShroud: string; priceServices: string; priceTotal: string;
     };
 
-    // Catalog price is resolved server-side (ignores client-sent prices) at the fixed margin.
+    // Catalog cost is resolved server-side (ignores client-sent prices); the line SELL is the LCDRef
+    // LIST sell (col D), NOT a margin gross-up — faithful to the tab's item breakdown.
     const displayItem = screen.items.find((i) => i.itemType === 'display')!;
     expect(Number(displayItem.unitCost)).toBe(round2(displayCost));
-    expect(Number(displayItem.unitSell)).toBe(sellAtMargin(displayCost));
+    expect(Number(displayItem.unitSell)).toBe(round2(displaySell));
 
-    // Manual rows keep their cost; sell = cost grossed up by the margin.
+    // Manual rows keep their cost; the LINE sell = Cost × service markup (1.65), tab D=C*'Ref Data'!F16.
     const installItem = screen.items.find((i) => i.itemType === 'install' && i.description === 'Installation, Per hour')!;
     expect(Number(installItem.unitCost)).toBe(95);
-    expect(Number(installItem.unitSell)).toBe(sellAtMargin(95));
+    expect(Number(installItem.unitSell)).toBe(round2(95 * serviceMarkup));
 
     // Out-of-hours uplift is a labour-cost calc: only the 'install' row (per-hour, $95) counts as hours
     // (labour 'Consumables' is excluded — workbook K28:K29 are install rows). hours = 95/95 = 1 →
@@ -500,14 +507,20 @@ describe('LCD-1 faithful pricing (S2)', () => {
     expect(Number(upliftItem!.unitCost)).toBe(upliftCost);
     expect(Number(upliftItem!.unitSell)).toBe(upliftSell);
 
-    // Section subtotals + grand total (G54: rounded to nearest 10).
-    const expectScreenMp = sellAtMargin(displayCost) * 2;
-    expect(Number(screen.priceScreenMediaplayer)).toBeCloseTo(expectScreenMp, 2);
+    // Section subtotals = per-section fixed-margin values over COST (tab analysis G51/G52/G53), and the
+    // headline total = fixed-margin gross-up of TOTAL cost (G54) — NOT the sum of the line list-sells.
+    const hardwareCost = displayCost * 2;
+    const servicesCost = 95 + 30 + upliftCost;
+    const totalCost = hardwareCost + servicesCost;
+    expect(Number(screen.priceScreenMediaplayer)).toBe(grossFixed(hardwareCost));
     expect(Number(screen.priceBracketShroud)).toBe(0);
-    const expectServices = sellAtMargin(95) + sellAtMargin(30) + upliftSell;
-    expect(Number(screen.priceServices)).toBeCloseTo(expectServices, 2);
-    const expectTotal = Math.round((expectScreenMp + expectServices) / 10) * 10;
-    expect(Number(screen.priceTotal)).toBe(expectTotal);
+    expect(Number(screen.priceServices)).toBe(grossFixed(servicesCost));
+    expect(Number(screen.priceTotal)).toBe(grossFixed(totalCost));
+
+    // The line list-sells generally do NOT equal the headline total — this is the intentional tab
+    // behaviour (the tab reconciles via its analysis block). Assert they differ for this data.
+    const sumLineSells = screen.items.reduce((a, i) => a + Number(i.unitSell) * Number(i.qty), 0);
+    expect(round2(sumLineSells)).not.toBe(Number(screen.priceTotal));
   });
 
   it('does NOT add an out-of-hours uplift for Business Hours', async () => {

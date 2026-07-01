@@ -13,7 +13,9 @@ import { loadConfig } from '../../config.js';
  */
 const JOB_PREFIX = `TESTX2-${process.pid}-`;
 const round2 = (n: number) => Math.round(n * 100) / 100;
-const sellAtMargin = (cost: number) => round2(cost / (1 - 0.3)); // lcd_margin = 0.3 (F12)
+const sellAtMargin = (cost: number) => round2(cost / (1 - 0.3)); // lcd_margin = 0.3 (F12) — auto-line SELLs
+// Fixed-margin section/total gross-up over COST, rounded to nearest $10 (tab G51-54).
+const grossFixed = (cost: number) => (cost > 0 ? Math.round(cost / (1 - 0.3) / 10) * 10 : 0);
 
 let app: FastifyInstance;
 let token: string;
@@ -115,10 +117,10 @@ describe('X2 — LCD extended warranty pricing', () => {
     expect(Number(warrantyItem!.unitCost)).toBe(expectCost);
     expect(Number(warrantyItem!.unitSell)).toBe(sellAtMargin(expectCost));
 
-    // Warranty is grouped into services + folded into the grand total (rounded to $10).
-    expect(Number(screen.priceServices)).toBeCloseTo(sellAtMargin(expectCost), 2);
-    const expectTotal = Math.round(sellAtMargin(expectCost) / 10) * 10;
-    expect(Number(screen.priceTotal)).toBe(expectTotal);
+    // Warranty is grouped into services; the section subtotal + grand total are the fixed-margin
+    // gross-up of COST rounded to $10 (tab G53/G54) — here the only cost is the warranty cost.
+    expect(Number(screen.priceServices)).toBe(grossFixed(expectCost));
+    expect(Number(screen.priceTotal)).toBe(grossFixed(expectCost));
   });
 
   it('adds NO warranty line for a standard (3yr) warranty (extraYears 0)', async () => {

@@ -76,20 +76,29 @@ const ledScreenDiscountedSell = (overrides: Map<string, OverrideRow>, s: LedScre
 };
 
 /**
- * A LCD screen's effective sell after per-line discounts (V2):
- *   Σ over item rows of item.unitSell × item.qty × (1 − (item.discountPct ?? 0)).
- * (No screen-level override target for LCD.)
+ * A LCD screen's effective sell that rolls into the quote totals.
+ *
+ * FAITHFUL TO THE (LCD 1) TAB: the screen's quoted price is the stored **fixed-margin total**
+ * (`priceTotal` = ROUND(Σcost / (1 − lcdMargin), −1) = tab G54), NOT the sum of the line list-sells
+ * (which are reference and don't reconcile to it). So the rollup starts from `priceTotal`, then scales
+ * it by the per-line COST-discount fraction (V2) so per-line discounts still lower the screen price
+ * proportionally — with no discount it returns `priceTotal` exactly.
+ *   frac = Σ(cost × qty × (1 − disc)) / Σ(cost × qty)   (1 when there are no discounts / no cost)
+ *   sell = priceTotal × frac
+ * (No screen-level override target for LCD.) This stays SYNC (no settings read): it derives entirely
+ * from stored columns, so computeMargin / computeQuoteTotals / priceQuote all stay coherent.
  */
 const lcdScreenDiscountedSell = (s: LcdScreen): Decimal => {
-  let total = d(0);
+  const priceTotal = d(dec(s.priceTotal));
+  let fullCost = d(0);
+  let discCost = d(0);
   for (const i of s.items) {
-    if (i.unitSell) {
-      total = total.plus(
-        d(i.unitSell.toString()).times(Number(i.qty)).times(d(1).minus(lineDisc(i.discountPct))),
-      );
-    }
+    const ext = d(dec(i.unitCost)).times(Number(i.qty));
+    fullCost = fullCost.plus(ext);
+    discCost = discCost.plus(ext.times(d(1).minus(lineDisc(i.discountPct))));
   }
-  return round(total);
+  const frac = fullCost.greaterThan(0) ? discCost.div(fullCost) : d(1);
+  return round(priceTotal.times(frac));
 };
 
 /** True when any LED cost line or LCD item on the quote carries a per-line discount (V2). */

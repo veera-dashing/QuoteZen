@@ -1069,6 +1069,9 @@ const computeLcdScreenPricing = async (input: LcdScreenInput): Promise<LcdPricin
   const oohRateCost = await settingNum('out_of_hours_rate_cost', 50);
   const oohRateSell = await settingNum('out_of_hours_rate_sell', 80);
   const standardWarrantyYears = await settingNum('standard_warranty_years', 3);
+  // Manual-row list Sell = Cost × service markup ('Reference Data'!F16 = 1.65). Catalog rows use the
+  // LCDRef list Sell (display_catalog.sell) instead — see the per-line resolution below.
+  const serviceMarkup = await settingNum('service_markup', 1.65);
 
   // X2: strip prior server-generated lines BEFORE resolving so create AND re-edit regenerate cleanly
   // (no duplication). Dropped: any warranty line (all warranty lines are auto), the auto install-method
@@ -1088,17 +1091,28 @@ const computeLcdScreenPricing = async (input: LcdScreenInput): Promise<LcdPricin
   for (const i of items) {
     const qty = Number(i.qty ?? 1);
     let cost = Number(i.unitCost ?? 0);
+    // Faithful to the (LCD 1) tab: the item breakdown shows the LIST Sell per line (col D), NOT a
+    // margin gross-up. For a catalog row that is `display_catalog.sell`; for a manual row it is the
+    // client-sent price, else Cost × service markup (tab D=C*'Reference Data'!F16, F16=1.65). Note the
+    // line sells are REFERENCE — they do NOT sum to the headline total, which is the fixed-margin total
+    // computed below (tab G54). See CLAUDE.md.
     let sell: number | null = i.unitSell !== undefined ? Number(i.unitSell) : null;
     let description = i.description ?? null;
     if (i.displayId) {
       const row = await prisma.displayCatalog.findUnique({ where: { id: BigInt(i.displayId) } });
       if (row) {
         cost = Number(row.totalCost ?? row.usd ?? 0);
-        sell = null; // recompute from margin below
+        // Catalog line: list Sell from LCDRef; fall back to the margin gross-up only if `sell` is null.
+        sell = row.sell != null ? Number(row.sell) : null;
         if (!description) description = row.model;
       }
     }
-    const unitSell = sell !== null ? sell : round(applyMargin(cost, margin)).toNumber();
+    const unitSell =
+      sell !== null
+        ? sell
+        : i.displayId
+          ? round(applyMargin(cost, margin)).toNumber() // catalog w/ no list sell → fixed-margin fallback
+          : round(cost * serviceMarkup).toNumber(); // manual row → Cost × service markup (1.65)
     resolved.push({
       displayId: i.displayId ? BigInt(i.displayId) : undefined,
       itemType: i.itemType,
@@ -1164,20 +1178,31 @@ const computeLcdScreenPricing = async (input: LcdScreenInput): Promise<LcdPricin
     }
   }
 
-  const ext = (r: LcdResolvedLine) => r.unitSell * r.qty;
-  const sumWhere = (pred: (r: LcdResolvedLine) => boolean) =>
-    round(resolved.filter(pred).reduce((a, r) => a + ext(r), 0)).toNumber();
-  const priceScreenMediaplayer = sumWhere((r) => r.itemType === 'display' || r.itemType === 'mediaplayer');
-  const priceBracketShroud = sumWhere((r) => r.itemType === 'bracket');
-  const priceServices = sumWhere(
+  // THE HEADLINE QUOTED TOTAL is NOT the sum of line sells — it is the total COST grossed at the fixed
+  // LCD margin and rounded to the nearest $10 (tab G54 = ROUND(H46/(1−I54), −1), I54 = lcd_margin). The
+  // line list-sells are reference and generally do NOT equal this total — the tab reconciles via its
+  // per-section analysis block (G51/G52/G53), which we mirror below.
+  const grossFixed = (cost: number): number =>
+    cost > 0 ? round(round(applyMargin(cost, margin).dividedBy(10), 0).toNumber() * 10).toNumber() : 0;
+  const costWhere = (pred: (r: LcdResolvedLine) => boolean) =>
+    round(resolved.filter(pred).reduce((a, r) => a + r.unitCost * r.qty, 0)).toNumber();
+  const hardwareCost = costWhere((r) => r.itemType === 'display' || r.itemType === 'mediaplayer');
+  const bracketCost = costWhere((r) => r.itemType === 'bracket');
+  const servicesCost = costWhere(
     (r) =>
       r.itemType === 'install' ||
       r.itemType === 'labour' ||
       r.itemType === 'location_fee' ||
       r.itemType === 'warranty',
   );
-  const totalSell = resolved.reduce((a, r) => a + ext(r), 0);
-  const priceTotal = round(round(totalSell / 10, 0).toNumber() * 10).toNumber();
+  const totalCost = round(resolved.reduce((a, r) => a + r.unitCost * r.qty, 0)).toNumber();
+  // Section subtotals = per-section fixed-margin values (tab analysis G51/G52/G53). These ≈ sum to
+  // priceTotal (rounding aside), matching the tab's analysis block.
+  const priceScreenMediaplayer = grossFixed(hardwareCost);
+  const priceBracketShroud = grossFixed(bracketCost);
+  const priceServices = grossFixed(servicesCost);
+  // priceTotal = ROUND(totalCost / (1 − lcdMargin), nearest $10) — the number the customer sees (G54).
+  const priceTotal = grossFixed(totalCost);
 
   return { resolved, priceScreenMediaplayer, priceBracketShroud, priceServices, priceTotal };
 };

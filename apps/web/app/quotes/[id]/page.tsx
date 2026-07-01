@@ -1701,15 +1701,32 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     setLines((ls) => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   const removeLine = (idx: number) => setLines((ls) => ls.filter((_, i) => i !== idx));
 
-  // Live preview totals (server is authoritative; this mirrors the same fixed-margin gross-up).
-  const MARGIN = 0.3; // lcd_margin (Reference Data F12) — display-only preview
-  const sellOf = (l: LcdLine): number => {
-    if (l.manual) return Math.round((l.unitCost ?? 0) / (1 - MARGIN));
+  // Live preview (server is authoritative). FAITHFUL TO THE (LCD 1) TAB:
+  //  • each LINE shows the LIST Sell — catalog `sell` for a catalog row, Cost × service markup for a
+  //    manual row — NOT a margin gross-up; Price = Sell × Qty; Margin = (Sell − Cost)/Sell;
+  //  • the HEADLINE total is the total COST grossed at the fixed LCD margin, rounded to $10 (tab G54):
+  //    ROUND(Σ(cost×qty) / (1 − margin), −1). The line prices are reference and do NOT sum to it.
+  const isAdmin = getRole() === 'admin';
+  const MARGIN = 0.3; // lcd_margin (Reference Data F12) — display-only preview (server is authoritative)
+  const SERVICE_MARKUP = 1.65; // Reference Data F16 — manual-row list sell = Cost × markup
+  const costOf = (l: LcdLine): number => {
+    if (l.manual) return Number(l.unitCost ?? 0);
     const row = catalog.find((x) => x.id === l.displayId);
-    const cost = Number(row?.totalCost ?? row?.usd ?? 0);
-    return Math.round(cost / (1 - MARGIN));
+    return Number(row?.totalCost ?? row?.usd ?? 0);
   };
-  const grand = Math.round(lines.reduce((a, l) => a + sellOf(l) * l.qty, 0) / 10) * 10;
+  const sellOf = (l: LcdLine): number => {
+    if (l.manual) return Math.round(costOf(l) * SERVICE_MARKUP * 100) / 100;
+    const row = catalog.find((x) => x.id === l.displayId);
+    // Catalog list sell; fall back to the margin gross-up only when the catalog row has no list sell.
+    return row?.sell != null ? Number(row.sell) : Math.round(costOf(l) / (1 - MARGIN));
+  };
+  const marginOf = (l: LcdLine): number => {
+    const s = sellOf(l);
+    return s > 0 ? (s - costOf(l)) / s : 0;
+  };
+  // priceTotal = ROUND(Σ cost×qty / (1 − margin), nearest $10) — mirrors the server (tab G54).
+  const totalCost = lines.reduce((a, l) => a + costOf(l) * l.qty, 0);
+  const grand = totalCost > 0 ? Math.round(totalCost / (1 - MARGIN) / 10) * 10 : 0;
 
   const save = async () => {
     setBusy(true);
@@ -1816,18 +1833,35 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                 <button key={tpl.description} onClick={() => addManual(def, tpl)} title={`$${tpl.unitCost} cost`}>+ {tpl.description}</button>
               ))}
             </div>
+            {secLines.length > 0 && (
+              <div className="list-row muted" style={{ gap: 8, alignItems: 'center', fontSize: 12, fontWeight: 600 }}>
+                <span style={{ flex: 1 }}>Description</span>
+                {isAdmin && <span style={{ width: 90, textAlign: 'right' }}>Cost</span>}
+                <span style={{ width: 90, textAlign: 'right' }}>Sell</span>
+                <span style={{ width: 64, textAlign: 'right' }}>Qty</span>
+                <span style={{ width: 100, textAlign: 'right' }}>Price</span>
+                {isAdmin && <span style={{ width: 64, textAlign: 'right' }}>Margin</span>}
+                <span style={{ width: 24 }} />
+              </div>
+            )}
             {secLines.map(({ l, i }) => (
               <div className="list-row" key={i} style={{ gap: 8, alignItems: 'center' }}>
                 {l.manual ? (
-                  <>
-                    <input style={{ flex: 1 }} value={l.description} placeholder="Description" onChange={(e) => updateLine(i, { description: e.target.value })} />
-                    <input style={{ width: 90 }} type="number" value={l.unitCost ?? 0} title="Unit cost" onChange={(e) => updateLine(i, { unitCost: Number(e.target.value) })} />
-                  </>
+                  <input style={{ flex: 1 }} value={l.description} placeholder="Description" onChange={(e) => updateLine(i, { description: e.target.value })} />
                 ) : (
                   <span style={{ flex: 1 }}>{l.description}</span>
                 )}
+                {isAdmin && (
+                  l.manual ? (
+                    <input style={{ width: 90, textAlign: 'right' }} type="number" value={l.unitCost ?? 0} title="Unit cost" onChange={(e) => updateLine(i, { unitCost: Number(e.target.value) })} />
+                  ) : (
+                    <span style={{ width: 90, textAlign: 'right' }}>{costOf(l).toLocaleString()}</span>
+                  )
+                )}
+                <span style={{ width: 90, textAlign: 'right' }}>{sellOf(l).toLocaleString()}</span>
                 <input style={{ width: 64 }} type="number" min="1" value={l.qty} onChange={(e) => updateLine(i, { qty: Number(e.target.value) || 1 })} />
                 <span style={{ width: 100, textAlign: 'right' }}>{quote.currency?.code} {(sellOf(l) * l.qty).toLocaleString()}</span>
+                {isAdmin && <span style={{ width: 64, textAlign: 'right' }}>{(marginOf(l) * 100).toFixed(0)}%</span>}
                 <button onClick={() => removeLine(i)} aria-label="Remove">✕</button>
               </div>
             ))}
@@ -1837,9 +1871,12 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
 
       <div className="card">
         <div className="list-row" style={{ fontWeight: 600 }}>
-          <span>Screen total (at fixed margin, rounded)</span>
+          <span>Total (fixed 30% margin)</span>
           <span>{quote.currency?.code} {grand.toLocaleString()}</span>
         </div>
+        <p className="muted" style={{ margin: '2px 0 8px', fontSize: 12 }}>
+          Line prices are list reference; the quote uses the fixed-margin total — ROUND(Σ cost ÷ (1 − 30%), $10). Server is authoritative.
+        </p>
         <div className="step-actions">
           <button className="primary" onClick={save} disabled={busy || lines.length === 0}>
             {busy ? 'Saving…' : isEditing ? 'Save changes' : '+ Add LCD screen'}

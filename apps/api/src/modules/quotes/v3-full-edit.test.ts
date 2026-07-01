@@ -191,14 +191,10 @@ describe('V3 — PUT LCD screen (full re-edit)', () => {
     expect(Number(updated.priceTotal)).not.toBe(priceBefore);
     expect(Number(updated.priceTotal)).toBeGreaterThan(0);
 
-    // Rolls into the quote equipment total. Note: the LCD rollup sums the raw extended line sells
-    // (Σ unitSell × qty), while the stored priceTotal is the G54 $10-rounded figure — so compare the
-    // total against the summed line sells (the same basis recompute uses), not the rounded priceTotal.
+    // Rolls into the quote equipment total. FAITHFUL TO THE (LCD 1) TAB: the LCD rollup uses the stored
+    // fixed-margin total (priceTotal = G54), NOT the sum of the line list-sells — with no per-line
+    // discount the screen sell equals priceTotal exactly.
     const quote = (await app.inject({ method: 'GET', url: `/quotes/${quoteId}`, headers: auth() })).json();
-    const lineSells = (updated.items as Array<{ unitSell: string; qty: number }>).reduce(
-      (a, i) => a + Number(i.unitSell) * Number(i.qty),
-      0,
-    );
-    expect(Number(quote.totalEquipment)).toBeCloseTo(lineSells, 1);
+    expect(Number(quote.totalEquipment)).toBeCloseTo(Number(updated.priceTotal), 1);
   });
 });
