@@ -760,8 +760,11 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
         {/* U2: user-facing "Allowed size tolerance" — a segmented filter over the returned bands. */}
         {toleranceBands.length > 0 && (options || tiers) && (
           <div style={{ marginTop: 14 }}>
-            <label style={{ display: 'block', marginBottom: 4 }}>Allowed size tolerance</label>
-            <p className="muted" style={{ margin: '0 0 6px' }}>Show only panels within this % of the opening.</p>
+            <label style={{ display: 'block', marginBottom: 4 }}>Allowed size tolerance <span className="muted" style={{ fontWeight: 400 }}>(LED build buffer)</span></label>
+            <p className="muted" style={{ margin: '0 0 6px' }}>
+              LED screens are built up from whole cabinets, so an exact match to the opening isn’t always
+              possible. Show only builds whose size lands within this % of the required opening.
+            </p>
             <div role="group" style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
               {toleranceBands.map((b) => (
                 <button

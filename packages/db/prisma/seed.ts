@@ -51,8 +51,10 @@ const SETTINGS: Array<{ key: string; label: string; value?: number; valueText?: 
   { key: 'out_of_hours_rate_sell', label: 'Out-of-Hours Uplift Sell (per hour)', value: 80, unit: '$' },
   // U0 — client discount system default (fraction 0..1); new clients inherit this when none is set.
   { key: 'default_client_discount_pct', label: 'Default Client Discount %', value: 0, unit: 'fraction' },
-  // U0 — size-tolerance bands (% comma-separated) for over/under-sizing guidance; applied in a later feature.
-  { key: 'size_tolerance_bands', label: 'Size Tolerance Bands', valueText: '5,10,25', unit: '%' },
+  // LED ONLY — size-tolerance bands (% CSV): how far the whole-cabinet LED build may differ from the
+  // required opening (LED is built up from available cabinet sizes, so an exact match isn't always
+  // possible). Not brand-related; not used for LCD (fixed-size displays).
+  { key: 'size_tolerance_bands', label: 'LED Size Tolerance Bands', valueText: '5,10,25', unit: '%' },
 ];
 
 // ─── U0: hardware manufacturers (normalised from led_products.vendor) ─────────
