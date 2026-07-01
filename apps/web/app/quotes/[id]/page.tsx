@@ -396,6 +396,9 @@ interface ConfigOption {
   manufacturerName: string | null;
   leadTimeDays: number | null;
   toleranceBand: number;
+  // W0: pixel pitch (mm) + a fine-pitch GOB recommendation flag (from env/viewing-distance selection).
+  pixelPitchMm: number;
+  gobRecommended: boolean;
 }
 
 // Good / Better / Best tiered option (T2): a ranked config + tier label/rationale + supply price.
@@ -464,12 +467,13 @@ function withinBand<T extends Pick<ConfigOption, 'sizeMode' | 'toleranceBand'>>(
 type ConfigSortKey =
   | 'model' | 'manufacturerName' | 'leadTimeDays' | 'size' | 'sizeDeltaPct'
   | 'toleranceBand' | 'resolution' | 'ratioLabel' | 'fillPercent' | 'cabinetCount'
-  | 'cutCabinetSuggested' | 'confidence';
+  | 'cutCabinetSuggested' | 'confidence' | 'pixelPitchMm';
 
 // The human header labels shown in the table (also used as the clickable sort targets).
 const CONFIG_COLUMNS: Array<{ key: ConfigSortKey; label: string; num?: boolean }> = [
   { key: 'model', label: 'Product' },
   { key: 'manufacturerName', label: 'Manufacturer' },
+  { key: 'pixelPitchMm', label: 'Pitch (mm)', num: true },
   { key: 'leadTimeDays', label: 'Lead (d)', num: true },
   { key: 'size', label: 'Size (mm)' },
   { key: 'sizeDeltaPct', label: 'Sizing' },
@@ -499,6 +503,7 @@ function configSortValue(o: ConfigOption, key: ConfigSortKey): number | string |
     case 'manufacturerName': return o.manufacturerName ?? null;
     case 'ratioLabel': return o.ratioLabel ?? null;
     case 'leadTimeDays': return o.leadTimeDays ?? null;
+    case 'pixelPitchMm': return o.pixelPitchMm ?? null;
     case 'size': return o.widthMm * 100000 + o.heightMm; // width primary, height tiebreak
     case 'sizeDeltaPct': return Number(o.sizeDeltaPct);
     case 'toleranceBand': return o.toleranceBand;
@@ -689,6 +694,11 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const [w, setW] = useState(editScreen?.desiredWidthMm != null ? String(editScreen.desiredWidthMm) : '1120');
   const [h, setH] = useState(editScreen?.desiredHeightMm != null ? String(editScreen.desiredHeightMm) : '1920');
   const [rotate, setRotate] = useState(editScreen ? !!editScreen.rotateCabinets : true);
+  // W0: query-only selection drivers (not persisted on the screen) — environment + viewing distance.
+  // These narrow/rank the suggestions server-side (brightness fallback + max-pitch filter). Kept
+  // across configure() and loadTiers().
+  const [environment, setEnvironment] = useState('');
+  const [viewingDistanceM, setViewingDistanceM] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [options, setOptions] = useState<ConfigOption[] | null>(null);
@@ -819,13 +829,23 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const onOrientationChange = (v: string) => { setOrientation(v); recalcDim('w', w, v, aspectRatioId); };
   const onRatioChange = (v: string) => { setAspectRatioId(v); recalcDim('w', w, orientation, v); };
 
+  // W0: the selection query body shared by configure() and loadTiers(). Environment + viewing
+  // distance are optional and only sent when set.
+  const selectionBody = () => ({
+    desiredWidthMm: Number(w),
+    desiredHeightMm: Number(h),
+    allowRotation: rotate,
+    ...(environment ? { environment } : {}),
+    ...(Number(viewingDistanceM) > 0 ? { viewingDistanceM: Number(viewingDistanceM) } : {}),
+  });
+
   const configure = async () => {
     setBusy(true);
     setErr(null);
     try {
       const res = await api<{ options: ConfigOption[]; reasons: string[]; toleranceBands?: number[] }>(
         `/quotes/${quote.id}/screens/configure`,
-        { method: 'POST', body: JSON.stringify({ desiredWidthMm: Number(w), desiredHeightMm: Number(h), allowRotation: rotate }) },
+        { method: 'POST', body: JSON.stringify(selectionBody()) },
       );
       setOptions(res.options);
       setReasons(res.reasons);
@@ -851,7 +871,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     try {
       const res = await api<{ options: TierOption[]; reasons: string[]; distinctProducts: number; toleranceBands?: number[] }>(
         `/quotes/${quote.id}/screens/options`,
-        { method: 'POST', body: JSON.stringify({ desiredWidthMm: Number(w), desiredHeightMm: Number(h), allowRotation: rotate }) },
+        { method: 'POST', body: JSON.stringify(selectionBody()) },
       );
       setTiers(res.options);
       setTierReasons(res.reasons);
@@ -1037,6 +1057,47 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         <p className="muted" style={{ marginTop: 4 }}>
           Pick orientation + an aspect ratio and one dimension auto-fills the other (still editable).
         </p>
+        {/* W0: environment + viewing distance + GOB drive the suggestions. */}
+        <h4 style={{ margin: '14px 0 4px' }}>Environment &amp; suitability</h4>
+        <div className="grid3">
+          <div>
+            <label>Viewing distance (m)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.5"
+              value={viewingDistanceM}
+              onChange={(e) => setViewingDistanceM(e.target.value)}
+              placeholder="optional"
+            />
+            <p className="muted" style={{ margin: '2px 0 0', fontSize: 12 }}>
+              Filters to panels sharp at this distance (max pitch ≈ distance in metres).
+            </p>
+          </div>
+          <div>
+            <label>Environment</label>
+            <SearchSelect
+              value={environment}
+              onChange={setEnvironment}
+              allowEmpty
+              placeholder="Any"
+              options={[{ value: 'indoor', label: 'Indoor' }, { value: 'outdoor', label: 'Outdoor' }]}
+            />
+          </div>
+          <div>
+            <label>GOB (fine pitch)</label>
+            <SearchSelect
+              value={selectedOpts.gobId}
+              onChange={(v) => setSelectedOpts((p) => ({ ...p, gobId: v }))}
+              allowEmpty
+              placeholder="Select GOB…"
+              options={(optionRows.gobId ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
+            />
+            <p className="muted" style={{ margin: '2px 0 0', fontSize: 12 }}>
+              GOB (glass-on-board) protects fine-pitch (&lt;2.5mm) screens.
+            </p>
+          </div>
+        </div>
         {err && <div className="error">{err}</div>}
         <div className="step-actions">
           <button className="primary" onClick={configure} disabled={busy}>
@@ -1113,10 +1174,25 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                       {t.label}
                     </div>
                     <p className="muted" style={{ marginTop: 0 }}>{t.rationale}</p>
-                    <div style={{ fontWeight: 600 }}>{t.model}{t.rotated ? ' (rot)' : ''}</div>
+                    <div style={{ fontWeight: 600 }}>
+                      {t.model}{t.rotated ? ' (rot)' : ''}
+                      {t.gobRecommended && (
+                        <span
+                          title="Fine pitch — GOB recommended"
+                          style={{
+                            marginLeft: 6, padding: '0 6px', borderRadius: 10, fontSize: 11, fontWeight: 700,
+                            background: 'var(--accent-bg, rgba(79,70,229,0.12))', color: 'var(--accent, #4f46e5)',
+                            cursor: 'help', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          GOB
+                        </span>
+                      )}
+                    </div>
                     <table style={{ width: '100%', fontSize: 13, margin: '8px 0' }}>
                       <tbody>
                         <tr><td className="muted">Manufacturer</td><td>{t.manufacturerName ?? '—'}</td></tr>
+                        <tr><td className="muted">Pitch (mm)</td><td>{t.pixelPitchMm != null ? t.pixelPitchMm : '—'}</td></tr>
                         <tr><td className="muted">Lead time</td><td>{t.leadTimeDays != null ? `${t.leadTimeDays} d` : '—'}</td></tr>
                         <tr><td className="muted">Size (mm)</td><td>{t.widthMm}×{t.heightMm}</td></tr>
                         <tr><td className="muted">Resolution</td><td>{t.resolutionWpx}×{t.resolutionHpx}</td></tr>
@@ -1219,8 +1295,23 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                 <tbody>
                   {capped.map((o, i) => (
                     <tr key={`${o.productId}-${o.rotated}-${o.sizeMode}-${i}`}>
-                      <td>{o.model}{o.rotated ? ' (rot)' : ''}</td>
+                      <td>
+                        {o.model}{o.rotated ? ' (rot)' : ''}
+                        {o.gobRecommended && (
+                          <span
+                            title="Fine pitch — GOB recommended"
+                            style={{
+                              marginLeft: 6, padding: '0 6px', borderRadius: 10, fontSize: 11, fontWeight: 700,
+                              background: 'var(--accent-bg, rgba(79,70,229,0.12))', color: 'var(--accent, #4f46e5)',
+                              cursor: 'help', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            GOB
+                          </span>
+                        )}
+                      </td>
                       <td>{o.manufacturerName ?? '—'}</td>
+                      <td className="cell-num">{o.pixelPitchMm != null ? o.pixelPitchMm : '—'}</td>
                       <td className="cell-num">{o.leadTimeDays ?? '—'}</td>
                       <td>{o.widthMm}×{o.heightMm}</td>
                       <td>
@@ -1330,10 +1421,12 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
 
         <h4 style={{ margin: '16px 0 4px' }}>Options &amp; services</h4>
         <p className="muted" style={{ marginTop: 0 }}>
-          Frame, trim, GOB, install, freight, warranty and more — all optional; each is priced with the screen.
+          Frame, trim, install, freight, warranty and more — all optional; each is priced with the screen.
+          {selectedOpts.gobId && ' GOB is set in the Environment & suitability section above.'}
         </p>
         <div className="grid3">
-          {LED_OPTION_TABLES.map((t) => (
+          {/* GOB is its own up-front control in the first section (single source: selectedOpts.gobId). */}
+          {LED_OPTION_TABLES.filter((t) => t.key !== 'gobId').map((t) => (
             <div key={t.key}>
               <label>{t.label}</label>
               <SearchSelect
