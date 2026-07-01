@@ -67,6 +67,14 @@ const SETTINGS: Array<{ key: string; label: string; value?: number; valueText?: 
   // warranty is charged only for years beyond this baseline (extraYears × WarrantyOption.perYearCost).
   // Upserted in the SETTINGS loop below, so a re-seed ensures this key on the live DB (idempotent).
   { key: 'standard_warranty_years', label: 'Standard Warranty Baseline (years)', value: 3, unit: 'yr' },
+  // Z1 — Financial Bumpers (engine constraints & systemic rules). Upserted in the SETTINGS loop, so a
+  // re-seed lands them on the live DB. Not wired to guardrails yet (later blocks reconcile with
+  // margin_floor / discount_cap_pct). `human_in_the_loop` is a numeric bool (>0 = On).
+  { key: 'min_gross_margin', label: 'Minimum Gross Margin', value: 0.28, unit: 'fraction' }, // System blocks send below this threshold.
+  { key: 'walk_away_margin', label: 'Walk-away Margin', value: 0.22, unit: 'fraction' }, // Hard floor — requires Director approval.
+  { key: 'lead_time_buffer_days', label: 'Lead-time Buffer (days)', value: 3, unit: 'days' }, // Added to vendor lead-time on every quote.
+  { key: 'aud_usd_rate', label: 'AUD:USD Assumption', value: 0.71, unit: 'rate' }, // Auto-fed from RBA daily (manual for now).
+  { key: 'human_in_the_loop', label: 'Human-in-the-loop', value: 1, unit: 'bool' }, // AI never emails client directly (1 = on).
 ];
 
 // ─── U0: hardware manufacturers (normalised from led_products.vendor) ─────────
@@ -77,6 +85,53 @@ const MANUFACTURERS: Array<{ name: string; priority: number; leadTimeDays: numbe
   { name: 'LEDFul', priority: 1, leadTimeDays: 45 },
   { name: 'ZonePro', priority: 2, leadTimeDays: 60 },
   { name: 'Muxwave', priority: 3, leadTimeDays: 60 },
+];
+
+// ─── Z1: anomaly-detection rules (admin-configurable; block vs warn) ──────────
+// Upserted by key so a re-seed keeps them in sync. Nothing consumes these yet (Z1 = schema/seed/
+// registry only); later blocks evaluate them against a quote. paramNum carries the rule's threshold.
+const ANOMALY_RULES: Array<{
+  key: string;
+  label: string;
+  severity: 'block' | 'warn';
+  description: string;
+  paramNum: number | null;
+}> = [
+  {
+    key: 'nonstandard_cabinet',
+    label: 'Non-standard cabinet size',
+    severity: 'block',
+    description: 'Block quote — request product manager review',
+    paramNum: null,
+  },
+  {
+    key: 'discount_over_cap_aplus',
+    label: 'Discount > 12% on A+',
+    severity: 'warn',
+    description: 'Warn — manager note required',
+    paramNum: 12,
+  },
+  {
+    key: 'outdoor_low_nit',
+    label: 'Outdoor screen at <2,500nit',
+    severity: 'warn',
+    description: 'Warn — confirm sun exposure with photo',
+    paramNum: 2500,
+  },
+  {
+    key: 'air_freight_short_lead',
+    label: 'Air freight + lead time <5 wk',
+    severity: 'block',
+    description: 'Block — change freight method or push go-live',
+    paramNum: 5,
+  },
+  {
+    key: 'custom_engineering',
+    label: 'Custom engineering required',
+    severity: 'warn',
+    description: 'Flag for engineer review (+$1,590 baseline)',
+    paramNum: 1590,
+  },
 ];
 
 const SEAFREIGHT: Array<{ label: string; value: number; currency?: string }> = [
@@ -293,18 +348,22 @@ async function main(): Promise<void> {
   console.warn('Seeding reference data…');
 
   // Roles + demo users
-  const roleNames = ['admin', 'sales', 'viewer'];
+  const roleNames = ['admin', 'sales', 'viewer', 'director', 'manager'];
   for (const name of roleNames) {
     await prisma.role.upsert({ where: { name }, update: {}, create: { name } });
   }
   const adminRole = await prisma.role.findUniqueOrThrow({ where: { name: 'admin' } });
   const salesRole = await prisma.role.findUniqueOrThrow({ where: { name: 'sales' } });
   const viewerRole = await prisma.role.findUniqueOrThrow({ where: { name: 'viewer' } });
+  const directorRole = await prisma.role.findUniqueOrThrow({ where: { name: 'director' } });
+  const managerRole = await prisma.role.findUniqueOrThrow({ where: { name: 'manager' } });
   const passwordHash = await bcrypt.hash('demo', 10);
   const demoUsers: Array<[string, string, bigint]> = [
     ['admin@quotezen.local', 'Demo Admin', adminRole.id],
     ['sales@quotezen.local', 'Demo Sales', salesRole.id],
     ['viewer@quotezen.local', 'Demo Viewer', viewerRole.id],
+    ['director@quotezen.local', 'Demo Director', directorRole.id],
+    ['manager@quotezen.local', 'Demo Manager', managerRole.id],
   ];
   for (const [email, name, roleId] of demoUsers) {
     await prisma.user.upsert({
@@ -464,6 +523,16 @@ async function main(): Promise<void> {
     linked += res.count;
   }
   console.warn(`  manufacturers: ${allManufacturers.length} present; linked ${linked} led_products by vendor`);
+
+  // ── Z1: anomaly rules (upsert by key, so a re-seed keeps them in sync) ──
+  for (const r of ANOMALY_RULES) {
+    await prisma.anomalyRule.upsert({
+      where: { key: r.key },
+      update: { label: r.label, severity: r.severity, description: r.description, paramNum: r.paramNum },
+      create: { key: r.key, label: r.label, severity: r.severity, description: r.description, paramNum: r.paramNum },
+    });
+  }
+  console.warn(`  anomalyRule: ${ANOMALY_RULES.length} upserted`);
 
   console.warn('Seed complete.');
 }

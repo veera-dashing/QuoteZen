@@ -744,10 +744,32 @@ model Client {
    * pricing yet — U0 only stores it + defaults it from the setting at client create.
    */
   discountPct            Decimal? @map("discount_pct") @db.Decimal(5, 4)
+  /**
+   * Commercial client tier (Z1). Free-text nullable String ('A' | 'A+' | 'B' | 'C' | null) rather than
+   * an enum, for flexibility. Not applied to pricing/guardrails yet — later blocks reconcile it.
+   */
+  tier                   String?  @map("tier")
 
   quotes Quote[]
 
   @@map("clients")
+}
+
+// ── Z1: engine constraints & systemic rules — anomaly detection rules ──
+// Admin-configurable rules that later blocks will evaluate against a quote (block vs warn). Z1 is
+// schema + seed + admin-registry only; nothing consumes these rows yet.
+model AnomalyRule {
+  id          BigInt   @id @default(autoincrement())
+  key         String   @unique
+  label       String
+  description String?
+  enabled     Boolean  @default(true)
+  severity    String   @default("warn") // 'block' | 'warn'
+  paramNum    Decimal? @map("param_num") @db.Decimal(12, 2)
+  paramText   String?  @map("param_text")
+  deprecated  Boolean  @default(false)
+
+  @@map("anomaly_rules")
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

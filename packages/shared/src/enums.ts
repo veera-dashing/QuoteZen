@@ -59,7 +59,7 @@ export type LedComponentType = (typeof LED_COMPONENT_TYPES)[number];
 export const AUDIT_ACTIONS = ['create', 'update', 'delete', 'status_change'] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
-export const USER_ROLES = ['admin', 'sales', 'viewer'] as const;
+export const USER_ROLES = ['admin', 'sales', 'viewer', 'director', 'manager'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
 /** LED screen orientation (LED-1 E10). */

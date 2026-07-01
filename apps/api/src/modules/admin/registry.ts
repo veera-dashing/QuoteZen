@@ -41,6 +41,8 @@ const f = (name: string, type: FieldType = 'string', required = false, options?:
 
 const TIER = ['low', 'high'];
 const SCREEN = ['LCD', 'LED'];
+const CLIENT_TIER = ['A', 'A+', 'B', 'C'];
+const ANOMALY_SEVERITY = ['block', 'warn'];
 
 /**
  * Shared "deprecated" flag (P1-08.4 / P1-11.4): catalog/lookup rows feeding NEW quotes carry this.
@@ -312,12 +314,25 @@ export const TABLES: TableDef[] = [
     resource: 'clients', model: 'client', label: 'Clients', group: 'Clients',
     titleField: 'name', searchFields: ['name', 'marginNote', 'preferredProductFamily'],
     fields: [
-      f('name', 'string', true), f('defaultMargin', 'decimal'), f('discountPct', 'decimal'),
+      f('name', 'string', true), f('tier', 'enum', false, CLIENT_TIER),
+      f('defaultMargin', 'decimal'), f('discountPct', 'decimal'),
       f('preferredProductFamily'),
       f('preferredPitchMm', 'decimal'), f('excludedComponents'), f('marginNote', 'text'),
       f('ledScreenNote', 'text'), f('gobNote', 'text'), f('mediaplayerNote', 'text'), f('ratioNote', 'text'),
     ],
-    listFields: ['name', 'defaultMargin', 'preferredProductFamily'],
+    listFields: ['name', 'tier', 'defaultMargin', 'preferredProductFamily'],
+  },
+
+  // ── System: anomaly rules (Z1) ──
+  {
+    resource: 'anomaly-rules', model: 'anomalyRule', label: 'Anomaly Rules', group: 'System',
+    titleField: 'label', searchFields: ['key', 'label', 'description'],
+    fields: [
+      f('key', 'string', true), f('label', 'string', true), f('description', 'text'),
+      f('enabled', 'boolean'), f('severity', 'enum', false, ANOMALY_SEVERITY),
+      f('paramNum', 'decimal'), f('paramText'),
+    ],
+    listFields: ['label', 'severity', 'enabled', 'paramNum'],
   },
 ];
 
