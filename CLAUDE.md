@@ -411,3 +411,23 @@ docker run -d --name quotezen-pg -e POSTGRES_USER=quotezen -e POSTGRES_PASSWORD=
   -e POSTGRES_DB=quotezen -p 5433:5432 postgres:16-alpine
 # packages/db/.env → DATABASE_URL=...localhost:5433/quotezen
 ```
+
+### Block 11 — cancel, screen re-edit, per-line discount + cost-breakdown drawer
+From live UX feedback on the quote flow. 188 tests green (9 shared + 85 calc + 94 api).
+- ✅ **Cancel in new-quote** — the create form has a Cancel (→ /quotes).
+- ✅ **V2 — per-line discount + discount mode** — migration: `quote_led_cost_breakdown.discount_pct`
+  + `quote_lcd_items.discount_pct` + `quotes.discount_mode` (`stack`|`item_only`, default stack).
+  Per-line discounts fold into the screen effective sell + rollup + `computeMargin` (a pinned C-override
+  still wins); the quote/client discount layers per `discountMode` (stack = both; item_only = quote
+  discount suppressed when any line discount exists) — a per-quote user choice; the margin-floor
+  guardrail fires off the fully-discounted margin. `PATCH /quotes/:id/led-lines/:id/discount` +
+  `/lcd-items/:id/discount`; `/price` returns per-line discountPct + effectiveSell + discountMode.
+- ✅ **V3 — full re-edit endpoints** — `PUT /quotes/:id/led-screens/:id` (updateLedScreenFull) +
+  `PUT …/lcd-screens/:id` (updateLcdScreen) rewrite all inputs + re-price via the shared
+  `computeLedScreenPricing` / factored `computeLcdScreenPricing` (create + update price identically);
+  preserve id/sortOrder/qty; audited.
+- ✅ **V4 — web** — ✎ Edit on every screen row re-opens the add form pre-filled (LED + LCD) → Save
+  changes via PUT. 📊 quote-wide **Cost breakdown** right-drawer over `/price`: every screen's lines
+  (Label/Qty/Cost admin-only/Sell/Disc%/Effective) + licences + totals; per-line discount % PATCHes
+  led-lines/lcd-items by section type (live refetch); Stack vs Per-item-only discount-mode toggle
+  (409-safe). Viewer read-only.
