@@ -22,6 +22,10 @@ export const quoteInclude = {
       installMethod: true,
       frame: true,
       gob: true,
+      // Z4 — anomaly rules read the selected freight option (air-freight check) and engineering option
+      // (custom-engineering check); both are minimal single-relation includes.
+      freightOption: true,
+      engineering: true,
     },
   },
   lcdScreens: {

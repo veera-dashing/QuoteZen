@@ -12,7 +12,7 @@ import type { UserRole } from '@quotezen/shared';
 import { diffFields, recordAudit } from '../../services/audit.js';
 import { CAPTURE_STATUSES, captureKbEntry } from './kb.js';
 import { assertIssueReviews } from './reviews.js';
-import { collectScreenErrors, validateQuote } from './validate.js';
+import { collectAllErrors, validateQuote } from './validate.js';
 import {
   findCurrencyByCode,
   findQuoteById,
@@ -114,7 +114,7 @@ const hasLineDiscounts = (quote: QuoteWithChildren): boolean => {
  * per-line discount exists (per-line discounts only); otherwise (`stack`, default) it applies on top
  * of the already-per-line-discounted base. Returns the same shape as `resolveDiscount`.
  */
-const resolveModedDiscount = (quote: QuoteWithChildren, defaultDiscountPct: number): ResolvedDiscount => {
+export const resolveModedDiscount = (quote: QuoteWithChildren, defaultDiscountPct: number): ResolvedDiscount => {
   const resolved = resolveDiscount(quote, defaultDiscountPct);
   const mode = (quote.discountMode as DiscountMode) ?? 'stack';
   if (mode === 'item_only' && hasLineDiscounts(quote)) {
@@ -577,8 +577,10 @@ export const changeStatus = async (
   // Supersedes the single `margin_floor` gate (P1-19g.2). The audit note reuses the `margin_guardrail`
   // change field. Layered with the validation guardrail (below), which is unchanged.
   let guardrailNote: string | null = null;
-  // Validation guardrail (P1-15.3): block finalisation when any error-severity conflict exists,
-  // unless the actor is an admin (override, audited). Layered alongside the margin guardrail.
+  // Validation guardrail (P1-15.3 + Z4): block finalisation when any error-severity conflict exists —
+  // per-screen validation errors OR anomaly BLOCK findings ('block' → 'error'). A non-APPROVER is
+  // blocked; an APPROVER (admin/director/manager, consistent with Z3) may override (audited). Layered
+  // alongside the margin guardrail.
   let validationNote: string | null = null;
   if (FINALISED_STATUSES.includes(status)) {
     const [minGross, walkAway] = await Promise.all([getMinGrossMargin(), getWalkAwayMargin()]);
@@ -617,11 +619,12 @@ export const changeStatus = async (
 
     const validation = await validateQuote(id);
     if (!validation.canFinalise) {
-      const errors = collectScreenErrors(validation);
-      if (!isAdmin(actor)) {
+      // Z4 — errors now include anomaly BLOCK findings, not just per-screen validation errors.
+      const errors = collectAllErrors(validation);
+      if (!isApprover(actor)) {
         throw new AppError(
           'conflict',
-          `Quote has ${errors.length} unresolved validation error(s): ${errors.map((e) => e.message).join(' ')} Resolve them or request admin approval.`,
+          `Quote has ${errors.length} unresolved validation error(s): ${errors.map((e) => e.message).join(' ')} Resolve them or request manager/director approval.`,
           { errors: errors.map((e) => ({ rule: e.rule, message: e.message })) },
         );
       }

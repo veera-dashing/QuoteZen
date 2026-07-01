@@ -7,6 +7,7 @@ import {
   type LcdValidationInput,
 } from '@quotezen/calc';
 import { getQuote } from './service.js';
+import { evaluateAnomalies, type AnomalyFinding } from './anomaly.js';
 import type { QuoteWithChildren } from './repository.js';
 
 /**
@@ -28,6 +29,12 @@ export interface QuoteValidation {
   canFinalise: boolean;
   counts: { error: number; warning: number; cannotEvaluate: number };
   screens: ScreenValidation[];
+  /**
+   * Z4 — configurable anomaly-rule findings (quote-level; some carry a `screenId`). Folded into
+   * `counts` and `canFinalise` alongside the per-screen findings — a 'block' rule ('error') gates
+   * finalisation just like a per-screen error.
+   */
+  anomalies: AnomalyFinding[];
 }
 
 /** Build the calc validation input for one stored LED screen from its loaded relations. */
@@ -90,21 +97,43 @@ export const validateQuote = async (id: bigint): Promise<QuoteValidation> => {
 
   const screens = [...ledScreens, ...lcdScreens];
 
-  const all = screens.flatMap((s) => s.findings);
+  // Z4 — configurable anomaly rules (DB-driven; disabled rules produce nothing). Their severity is
+  // already 'error' | 'warning' (block → error, warn → warning), so they fold into the same tallies.
+  const anomalies = await evaluateAnomalies(quote);
+
+  const screenFindings = screens.flatMap((s) => s.findings);
   const counts = {
-    error: all.filter((f) => f.severity === 'error').length,
-    warning: all.filter((f) => f.severity === 'warning').length,
-    cannotEvaluate: all.filter((f) => f.severity === 'cannot_evaluate').length,
+    error:
+      screenFindings.filter((f) => f.severity === 'error').length +
+      anomalies.filter((a) => a.severity === 'error').length,
+    warning:
+      screenFindings.filter((f) => f.severity === 'warning').length +
+      anomalies.filter((a) => a.severity === 'warning').length,
+    cannotEvaluate: screenFindings.filter((f) => f.severity === 'cannot_evaluate').length,
   };
+
+  // canFinalise = no error-severity finding across BOTH per-screen findings AND anomalies.
+  const noAnomalyErrors = !anomalies.some((a) => a.severity === 'error');
 
   return {
     quoteId: quote.id.toString(),
-    canFinalise: canFinalise(all),
+    canFinalise: canFinalise(screenFindings) && noAnomalyErrors,
     counts,
     screens,
+    anomalies,
   };
 };
 
-/** Collect every error-severity finding across a quote — used to gate finalisation server-side. */
+/** Collect every error-severity per-screen finding across a quote. */
 export const collectScreenErrors = (validation: QuoteValidation): ValidationFinding[] =>
   validation.screens.flatMap((s) => s.findings.filter((f) => f.severity === 'error'));
+
+/**
+ * Collect every error-severity finding that gates finalisation — per-screen errors AND anomaly BLOCK
+ * ('error') findings (Z4). Each is normalised to `{ rule, message }`; used by `changeStatus` so the
+ * validation guardrail gates on anomalies too.
+ */
+export const collectAllErrors = (validation: QuoteValidation): Array<{ rule: string; message: string }> => [
+  ...collectScreenErrors(validation).map((f) => ({ rule: f.rule, message: f.message })),
+  ...validation.anomalies.filter((a) => a.severity === 'error').map((a) => ({ rule: a.rule, message: a.message })),
+];

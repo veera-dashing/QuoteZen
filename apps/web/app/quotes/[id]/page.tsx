@@ -2534,10 +2534,12 @@ interface Version {
 interface DiffEntry { path: string; from: unknown | null; to: unknown | null }
 
 interface ValidationFinding { rule: string; severity: 'error' | 'warning' | 'cannot_evaluate'; message: string }
+interface AnomalyFinding { rule: string; severity: 'error' | 'warning'; message: string; screenId?: string }
 interface QuoteValidation {
   canFinalise: boolean;
   counts: { error: number; warning: number; cannotEvaluate: number };
   screens: Array<{ screenId: string; screenName: string; findings: ValidationFinding[] }>;
+  anomalies: AnomalyFinding[];
 }
 
 interface PriceLine {
@@ -3357,7 +3359,7 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Validation</h3>
         {!validation && <p className="muted">Checking…</p>}
-        {validation && validation.screens.length === 0 && (
+        {validation && validation.screens.length === 0 && validation.anomalies.length === 0 && (
           <p className="muted">No LED screens to validate.</p>
         )}
         {validation && validation.screens.length > 0 && (
@@ -3406,6 +3408,30 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
               ),
             )}
           </>
+        )}
+        {/* Z4 — configurable anomaly-rule findings (block → red / error, warn → amber / warning). */}
+        {validation && validation.anomalies.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <b>Anomaly rules</b>
+            {validation.anomalies.map((a, i) => (
+              <div
+                key={i}
+                style={{
+                  marginTop: 4,
+                  fontSize: 13,
+                  color: a.severity === 'error' ? 'var(--danger, #dc2626)' : 'var(--warn, #d97706)',
+                }}
+              >
+                <span
+                  title={a.severity === 'error' ? 'Block — prevents finalisation' : 'Warning — advisory, does not block'}
+                  style={{ cursor: 'help' }}
+                >
+                  {a.severity === 'error' ? '⛔' : '⚠️'}
+                </span>{' '}
+                <span className="muted">[{a.rule}]</span> {a.message}
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
