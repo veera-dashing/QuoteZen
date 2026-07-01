@@ -229,6 +229,29 @@ const buildOption = (
   };
 };
 
+/**
+ * U8 — deterministic configuration "confidence" score (0–100, integer).
+ *
+ * A pure, explainable heuristic over fields already on a {@link ConfigOption}, so the same option
+ * always yields the same score (no randomness, no IO). It rewards a build that closely matches the
+ * requested opening, lands on a preferred aspect ratio, and stays near the requested size:
+ *
+ *   score = 100
+ *         − min(40, |fillPercent − 100|)     // how far the built area is from filling the opening
+ *         − (ratioPreferred ? 0 : 20)        // penalty for a non-preferred aspect ratio (BR-033)
+ *         − min(25, |sizeDeltaPct| × 2)      // penalty for over/under sizing vs the opening
+ *
+ * The result is clamped to [0, 100] and rounded to a whole number. An exact fit on a preferred ratio
+ * scores 100; a poor fill / non-preferred ratio / large size delta drives it toward the floor.
+ */
+export const configConfidence = (opt: ConfigOption): number => {
+  const fillPenalty = Math.min(40, Math.abs(opt.fillPercent.toNumber() - 100));
+  const ratioPenalty = opt.ratioPreferred ? 0 : 20;
+  const sizePenalty = Math.min(25, Math.abs(opt.sizeDeltaPct.toNumber()) * 2);
+  const score = 100 - fillPenalty - ratioPenalty - sizePenalty;
+  return Math.max(0, Math.min(100, Math.round(score)));
+};
+
 /** Absolute area deviation from the opening — the primary ranking key (smaller is better). */
 const areaDeviation = (o: ConfigOption, req: ConfigRequest): number =>
   Math.abs(o.widthMm * o.heightMm - req.desiredWidthMm * req.desiredHeightMm);

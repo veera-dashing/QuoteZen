@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import { useParams } from 'next/navigation';
 import { api, ApiError, downloadFile, getRole, uploadFile } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
@@ -353,12 +353,16 @@ interface ConfigOption {
   rotated: boolean;
   widthMm: number;
   heightMm: number;
+  cabinetsWide: number;
+  cabinetsHigh: number;
   cabinetCount: number;
   resolutionWpx: number;
   resolutionHpx: number;
   ratioLabel: string | null;
   fillPercent: string;
   cutCabinetSuggested: boolean;
+  // U8: deterministic 0–100 confidence score for this configuration.
+  confidence: number;
   // T3: over/under sizing + aspect-ratio guardrail (guidance only).
   sizeMode: 'under' | 'exact' | 'over';
   deltaWidthMm: number;
@@ -434,6 +438,151 @@ function withinBand<T extends Pick<ConfigOption, 'sizeMode' | 'toleranceBand'>>(
   return rows.filter((o) => o.sizeMode === 'exact' || o.toleranceBand <= band);
 }
 
+// U8: what CabinetPreview needs from an option (both ConfigOption + TierOption satisfy this).
+type PreviewOption = Pick<
+  ConfigOption,
+  | 'model' | 'widthMm' | 'heightMm' | 'cabinetsWide' | 'cabinetsHigh'
+  | 'deltaWidthMm' | 'deltaHeightMm' | 'resolutionWpx' | 'resolutionHpx'
+  | 'ratioLabel' | 'fillPercent' | 'confidence' | 'rotated'
+>;
+
+// U8 — read-only cabinet / LED-screen visual preview for one configuration. Renders an SVG grid of
+// cabinetsWide × cabinetsHigh cabinet cells scaled to the built aspect, overlays the *requested
+// opening* (built − delta) as a dashed rectangle from the top-left origin, and colours each cabinet
+// teal (inside the opening) or amber (build buffer / over-cabinets). No Col/Row/Rotate editing.
+function CabinetPreview({ option }: { option: PreviewOption }) {
+  const cols = Math.max(1, option.cabinetsWide);
+  const rows = Math.max(1, option.cabinetsHigh);
+  const builtW = option.widthMm || 1;
+  const builtH = option.heightMm || 1;
+  // Requested opening = built − delta (deltaWidthMm/Height = built − requested, signed).
+  const openingWmm = Math.max(0, builtW - (option.deltaWidthMm ?? 0));
+  const openingHmm = Math.max(0, builtH - (option.deltaHeightMm ?? 0));
+
+  // Scale the drawing so the LONGER built axis fits a fixed box; keep the built aspect ratio.
+  const BOX = 320; // px, longest side of the drawn grid
+  const scale = BOX / Math.max(builtW, builtH);
+  const gridW = builtW * scale;
+  const gridH = builtH * scale;
+  const cabWmm = builtW / cols;
+  const cabHmm = builtH / rows;
+  const cabW = gridW / cols;
+  const cabH = gridH / rows;
+  const gap = 1.5;
+
+  // How many whole cabinets fall inside the opening rectangle (from the origin).
+  const openCols = Math.max(0, Math.floor(openingWmm / cabWmm + 1e-6));
+  const openRows = Math.max(0, Math.floor(openingHmm / cabHmm + 1e-6));
+
+  // Opening rectangle in px (may exceed the grid when the build is UNDER the opening).
+  const openW = openingWmm * scale;
+  const openH = openingHmm * scale;
+
+  const teal = 'var(--ok, #5eead4)';
+  const tealStroke = 'var(--ok, #0d9488)';
+  const amber = 'var(--warn, #fcd34d)';
+  const amberStroke = 'var(--warn, #b45309)';
+
+  // Pad the viewBox so the (possibly larger) dashed opening isn't clipped.
+  const vw = Math.max(gridW, openW) + 4;
+  const vh = Math.max(gridH, openH) + 4;
+
+  const cells: ReactElement[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const inOpening = c < openCols && r < openRows;
+      cells.push(
+        <rect
+          key={`${r}-${c}`}
+          x={2 + c * cabW + gap / 2}
+          y={2 + r * cabH + gap / 2}
+          width={Math.max(0, cabW - gap)}
+          height={Math.max(0, cabH - gap)}
+          rx={2}
+          fill={inOpening ? teal : amber}
+          fillOpacity={0.55}
+          stroke={inOpening ? tealStroke : amberStroke}
+          strokeWidth={1}
+        />,
+      );
+    }
+  }
+
+  const two = (mm: number) => (mm / 1000).toFixed(2);
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 8 }}>
+        Preview — {option.model}{option.rotated ? ' (rotated)' : ''}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+        <svg
+          viewBox={`0 0 ${vw} ${vh}`}
+          style={{ maxWidth: '100%', width: BOX, height: 'auto', display: 'block' }}
+          role="img"
+          aria-label={`Cabinet grid ${cols}×${rows} with requested opening overlay`}
+        >
+          {cells}
+          {/* Requested opening — dashed rectangle from the top-left origin. */}
+          <rect
+            x={2}
+            y={2}
+            width={openW}
+            height={openH}
+            fill="none"
+            stroke="var(--accent, #4f46e5)"
+            strokeWidth={1.5}
+            strokeDasharray="6 4"
+            rx={2}
+          />
+        </svg>
+      </div>
+      <div style={{ display: 'flex', gap: 16, justifyContent: 'center', fontSize: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+        <span><span style={{ display: 'inline-block', width: 10, height: 10, background: teal, opacity: 0.7, borderRadius: 2, marginRight: 4 }} />In opening</span>
+        <span><span style={{ display: 'inline-block', width: 10, height: 10, background: amber, opacity: 0.7, borderRadius: 2, marginRight: 4 }} />Build buffer / over</span>
+        <span><span style={{ display: 'inline-block', width: 14, height: 0, borderTop: '2px dashed var(--accent, #4f46e5)', marginRight: 4, verticalAlign: 'middle' }} />Requested opening</span>
+      </div>
+      <table style={{ width: '100%', fontSize: 13 }}>
+        <tbody>
+          <tr><td className="muted">Built size</td><td>{two(builtW)} × {two(builtH)} m ({cols}×{rows} cabinets)</td></tr>
+          <tr><td className="muted">Resolution</td><td>{option.resolutionWpx} × {option.resolutionHpx} px</td></tr>
+          <tr><td className="muted">Aspect · fit</td><td>{option.ratioLabel ?? '—'} · {Math.round(Number(option.fillPercent))}%</td></tr>
+          <tr><td className="muted">Confidence</td><td><b>{option.confidence}%</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// A simple fixed-overlay modal: click-away on the backdrop + a ✕ button both close it.
+function PreviewModal({ option, onClose }: { option: PreviewOption; onClose: () => void }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+      }}
+    >
+      <div
+        className="card"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 420, width: '100%', margin: 0, maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}
+      >
+        <button
+          className="ghost"
+          onClick={onClose}
+          aria-label="Close preview"
+          style={{ position: 'absolute', top: 8, right: 8 }}
+        >
+          ✕
+        </button>
+        <CabinetPreview option={option} />
+      </div>
+    </div>
+  );
+}
+
 // Form 1 (U1): select & finalise an LED panel — opening size + orientation/ratio + configure /
 // Good-Better-Best / specific-product selection + components + rotate. Adds the screen (POST
 // /led-screens) with panel + geometry + components only; secondary options/services are set
@@ -457,6 +606,8 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const [tiers, setTiers] = useState<TierOption[] | null>(null);
   const [tierReasons, setTierReasons] = useState<string[]>([]);
   const [distinctProducts, setDistinctProducts] = useState(0);
+  // U8: the option currently shown in the read-only cabinet-preview modal (null = closed).
+  const [preview, setPreview] = useState<PreviewOption | null>(null);
   // The "Screen selection" accordion is open until a product is selected, then collapses to a
   // compact summary; the user can re-open it any time to pick a different product.
   const [accordionOpen, setAccordionOpen] = useState(true);
@@ -687,6 +838,8 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
 
   return (
     <div>
+      {/* U8: read-only cabinet preview for the option the user clicked "Preview" on. */}
+      {preview && <PreviewModal option={preview} onClose={() => setPreview(null)} />}
       {/* Screen-selection accordion: collapses to a compact summary once a product is selected. */}
       {!accordionOpen && productId ? (
         <div className="card">
@@ -858,9 +1011,14 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
                         )}
                       </tbody>
                     </table>
-                    <button className="primary" onClick={() => selectProduct(t.productId, t.rotated)} disabled={busy} style={{ width: '100%' }}>
-                      Select this option
-                    </button>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="primary" onClick={() => selectProduct(t.productId, t.rotated)} disabled={busy} style={{ flex: 1 }}>
+                        Select this option
+                      </button>
+                      <button className="ghost" onClick={() => setPreview(t)} type="button">
+                        👁 Preview
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -921,6 +1079,9 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
                       <td className="cell-num">{o.cabinetCount}</td>
                       <td>{o.cutCabinetSuggested ? '⚠️' : '—'}</td>
                       <td className="actions">
+                        <button className="ghost" onClick={() => setPreview(o)} type="button" style={{ marginRight: 4 }}>
+                          👁 Preview
+                        </button>
                         <button className="primary" onClick={() => selectProduct(o.productId, o.rotated)} disabled={busy}>
                           Select
                         </button>

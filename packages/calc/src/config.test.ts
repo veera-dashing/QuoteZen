@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { configureScreen, PREFERRED_RATIO_LABELS, selectTiers, type ConfigProduct } from './config.js';
+import { configConfidence, configureScreen, PREFERRED_RATIO_LABELS, selectTiers, type ConfigProduct } from './config.js';
 import type { ScreenRatioRow } from './geometry.js';
 
 const RATIOS: ScreenRatioRow[] = [
@@ -88,6 +88,41 @@ describe('configureScreen', () => {
     const res = configureScreen([PRODUCTS[2]!], { desiredWidthMm: 1000, desiredHeightMm: 1000, ratios: RATIOS });
     expect(res.options).toEqual([]);
     expect(res.reasons[0]).toMatch(/complete cabinet/);
+  });
+});
+
+describe('configConfidence (U8)', () => {
+  it('scores an exact fit on a preferred ratio at 100', () => {
+    // 1000×1000 on the 500² cabinet → exact 100% fill, 1:1 (preferred), 0 size delta → 100.
+    const res = configureScreen([PRODUCTS[1]!], { desiredWidthMm: 1000, desiredHeightMm: 1000, ratios: RATIOS });
+    const opt = res.options[0]!;
+    expect(opt.fillPercent.toString()).toBe('100');
+    expect(opt.ratioPreferred).toBe(true);
+    expect(configConfidence(opt)).toBe(100);
+  });
+
+  it('penalises a non-preferred ratio and an over/under size delta (lower score)', () => {
+    // 900×1100 on a 320×160 cabinet → non-exact fill + non-preferred ratio + a size delta → well below 100.
+    const res = configureScreen([PRODUCTS[0]!], { desiredWidthMm: 900, desiredHeightMm: 1100, ratios: RATIOS });
+    const opt = res.options.find((o) => !o.ratioPreferred || !o.sizeDeltaPct.isZero()) ?? res.options[0]!;
+    const score = configConfidence(opt);
+    expect(score).toBeLessThan(100);
+    // A build that is non-preferred (−20) alone already caps it under 100; combined penalties push lower.
+    if (!opt.ratioPreferred) expect(score).toBeLessThanOrEqual(80);
+    expect(score).toBeGreaterThanOrEqual(0);
+  });
+
+  it('clamps to [0,100] for an extreme mismatch', () => {
+    // Force every penalty to max: |fill−100| ≥ 40, non-preferred (−20), |sizeDelta|×2 ≥ 25.
+    // A tiny opening vs a large cabinet → huge over-fill.
+    const res = configureScreen([PRODUCTS[1]!], { desiredWidthMm: 100, desiredHeightMm: 100, ratios: RATIOS });
+    const opt = res.options[0]!;
+    const score = configConfidence(opt);
+    expect(score).toBeGreaterThanOrEqual(0);
+    expect(score).toBeLessThanOrEqual(100);
+    // 500×500 built for a 100×100 opening → fill = 2500% (|−100|=2400 → cap 40); sizeDelta huge (cap 25);
+    // 1:1 is preferred so no ratio penalty → 100 − 40 − 0 − 25 = 35.
+    expect(score).toBe(35);
   });
 });
 

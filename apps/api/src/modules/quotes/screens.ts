@@ -1,6 +1,7 @@
 import { prisma } from '@quotezen/db';
 import {
   composeScreenTotals,
+  configConfidence,
   configureScreen,
   estimateInstallHours,
   fixedLine,
@@ -38,6 +39,8 @@ export type ConfigOptionWithBand = ConfigOption & {
   toleranceBand: number;
   /** Always true on returned options — out-of-band candidates are excluded from the result. */
   withinTolerance: boolean;
+  /** U8: deterministic 0–100 confidence score for this configuration (fill/ratio/size heuristic). */
+  confidence: number;
 };
 
 /** Result of {@link configureForQuote} — ranked options carrying manufacturer/lead-time + band data. */
@@ -137,7 +140,7 @@ export const configureForQuote = async (
       excluded += 1;
       continue;
     }
-    within.push({ ...o, toleranceBand: band, withinTolerance: true });
+    within.push({ ...o, toleranceBand: band, withinTolerance: true, confidence: configConfidence(o) });
   }
   const reasons = [...ranked.reasons];
   if (excluded > 0) {
@@ -173,12 +176,16 @@ export interface TierOption {
   rotated: boolean;
   widthMm: number;
   heightMm: number;
+  cabinetsWide: number;
+  cabinetsHigh: number;
   cabinetCount: number;
   resolutionWpx: number;
   resolutionHpx: number;
   ratioLabel: string | null;
   fillPercent: string;
   cutCabinetSuggested: boolean;
+  /** U8: deterministic 0–100 confidence score for this configuration. */
+  confidence: number;
   // T3: over/under sizing + aspect-ratio guardrail (guidance, carried through from the config engine).
   sizeMode: 'under' | 'exact' | 'over';
   deltaWidthMm: number;
@@ -262,12 +269,15 @@ export const optionsForQuote = async (
       rotated: o.rotated,
       widthMm: o.widthMm,
       heightMm: o.heightMm,
+      cabinetsWide: o.cabinetsWide,
+      cabinetsHigh: o.cabinetsHigh,
       cabinetCount: o.cabinetCount,
       resolutionWpx: o.resolutionWpx,
       resolutionHpx: o.resolutionHpx,
       ratioLabel: o.ratioLabel,
       fillPercent: o.fillPercent.toString(),
       cutCabinetSuggested: o.cutCabinetSuggested,
+      confidence: o.confidence,
       sizeMode: o.sizeMode,
       deltaWidthMm: o.deltaWidthMm,
       deltaHeightMm: o.deltaHeightMm,
