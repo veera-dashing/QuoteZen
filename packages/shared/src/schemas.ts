@@ -170,7 +170,7 @@ export type UpdateLedScreenInput = z.infer<typeof updateLedScreenSchema>;
 // ─── LCD screen config (the LCD-1 questionnaire) ──────────────────────────────
 export const lcdItemSchema = z.object({
   displayId: idSchema.optional(),
-  itemType: z.enum(['display', 'mediaplayer', 'bracket', 'install', 'labour', 'location_fee']),
+  itemType: z.enum(['display', 'mediaplayer', 'bracket', 'install', 'labour', 'location_fee', 'warranty']),
   description: z.string().max(200).optional(),
   qty: qtySchema,
   unitCost: moneySchema.optional(),

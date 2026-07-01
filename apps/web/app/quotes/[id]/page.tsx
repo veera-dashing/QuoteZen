@@ -1487,7 +1487,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
 // rows (filtered by category keyword) to one of the lcdItemSchema itemTypes; the Configuration / Seen
 // Labour / Location sections also allow fixed/manual rows (e.g. Parking 50, Travel 75). The server
 // resolves catalog prices authoritatively and applies the fixed LCD margin + out-of-hours uplift.
-type LcdItemType = 'display' | 'mediaplayer' | 'bracket' | 'install' | 'labour' | 'location_fee';
+type LcdItemType = 'display' | 'mediaplayer' | 'bracket' | 'install' | 'labour' | 'location_fee' | 'warranty';
 interface LcdSectionDef {
   key: string;
   title: string;
@@ -1536,7 +1536,16 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const [screenName, setScreenName] = useState(editScreen?.screenName ?? '');
   // Pre-fill line items from the screen's stored items (V4 edit). Manual = no displayId.
   const [lines, setLines] = useState<LcdLine[]>(
-    () => (editScreen?.items ?? []).map((it) => {
+    // X2: exclude SERVER-GENERATED auto lines from the editable sections — the warranty line, the auto
+    // install-method labour line ("Installation — …") and the Out-of-Hours uplift line. They are
+    // regenerated server-side from warrantyId/installMethodId/serviceHoursId on save (the server also
+    // strips them defensively), so surfacing them as manual rows here would confuse + double-count on edit.
+    () => (editScreen?.items ?? []).filter((it) => {
+      if (it.itemType === 'warranty') return false;
+      const d = it.description ?? '';
+      if (it.itemType === 'install' && (d.startsWith('Installation — ') || /^Out of Hours uplift/i.test(d))) return false;
+      return true;
+    }).map((it) => {
       const manual = it.displayId == null;
       const sectionKey = LCD_SECTIONS.find((d) => d.itemType === it.itemType)?.key ?? it.itemType;
       return {

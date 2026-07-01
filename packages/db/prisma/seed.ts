@@ -58,6 +58,10 @@ const SETTINGS: Array<{ key: string; label: string; value?: number; valueText?: 
   // W0 — brightness (nits) at/above which an LED product with no explicit `environment` is treated as
   // outdoor by the config engine (the brightness fallback). Not used when a product sets `environment`.
   { key: 'outdoor_brightness_nits', label: 'Outdoor Brightness Threshold', value: 4000, unit: 'nits' },
+  // X2 — the standard warranty baseline (years) already baked into a display's catalog cost. Extended
+  // warranty is charged only for years beyond this baseline (extraYears × WarrantyOption.perYearCost).
+  // Upserted in the SETTINGS loop below, so a re-seed ensures this key on the live DB (idempotent).
+  { key: 'standard_warranty_years', label: 'Standard Warranty Baseline (years)', value: 3, unit: 'yr' },
 ];
 
 // ─── U0: hardware manufacturers (normalised from led_products.vendor) ─────────
@@ -154,9 +158,12 @@ const SCREEN_RATIOS: Array<[number, number, string]> = [
   [0.0, 0.29, '1:4'],
 ];
 
-const WARRANTIES: Array<[string, number]> = [
-  ['Standard (3 year)', 3],
-  ['Extended (5 year)', 5],
+// [name, years, perYearCost]. X2: perYearCost is the cost per EXTRA year beyond the standard baseline
+// (`standard_warranty_years`, 3). $150/yr is a PLACEHOLDER commercial rate — admins adjust it in the
+// warranty-options CRUD. Standard = 0 (the 3-year cover is baked into the display's catalog cost).
+const WARRANTIES: Array<[string, number, number]> = [
+  ['Standard (3 year)', 3, 0],
+  ['Extended (5 year)', 5, 150],
 ];
 
 const SERVICE_HOURS = ['Business Hours', 'Out of Hours (Before Midnight on a weekday)', 'Out of Hours'];
@@ -175,6 +182,17 @@ const ACCESS_EQUIPMENT: Array<[string, number]> = [
   ['Scissor (Outdoor Day)', 700],
   ['Crane Hire (Day)', 2200],
   ['Semi Hire (Day)', 1000],
+];
+
+// [name, defaultHours]. X2: defaultHours is PLACEHOLDER install labour (drives the auto install-labour
+// line on an LCD screen: defaultHours × the method's hourlyRateCost, or the install_hourly_cost setting
+// $95 when null). hourly_rate_cost is left null here → uses the $95 setting. Admins tune both in the CRUD.
+// NOTE: EXISTING RDS install-method rows keep default_hours=0 (migration default) until an admin edits
+// them, so no existing quote reprices — only FRESH seeds get these placeholders.
+const INSTALL_METHODS: Array<[string, number]> = [
+  ['Wall Mount', 4],
+  ['Ceiling Mount', 4],
+  ['Freestanding', 4],
 ];
 
 const MEDIAPLAYERS: Array<[string, string, number]> = [
@@ -326,13 +344,20 @@ async function main(): Promise<void> {
     }),
   );
   await seedIfEmpty('warrantyOption', () =>
-    prisma.warrantyOption.createMany({ data: WARRANTIES.map(([name, years]) => ({ name, years })) }),
+    prisma.warrantyOption.createMany({
+      data: WARRANTIES.map(([name, years, perYearCost]) => ({ name, years, perYearCost })),
+    }),
   );
   await seedIfEmpty('serviceHoursOption', () =>
     prisma.serviceHoursOption.createMany({ data: SERVICE_HOURS.map((name) => ({ name })) }),
   );
   await seedIfEmpty('engineeringOption', () =>
     prisma.engineeringOption.createMany({ data: ENGINEERING.map(([name, price]) => ({ name, price })) }),
+  );
+  await seedIfEmpty('installMethod', () =>
+    prisma.installMethod.createMany({
+      data: INSTALL_METHODS.map(([name, defaultHours]) => ({ name, defaultHours })),
+    }),
   );
   await seedIfEmpty('accessEquipment', () =>
     prisma.accessEquipment.createMany({

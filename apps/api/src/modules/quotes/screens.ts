@@ -1068,9 +1068,24 @@ const computeLcdScreenPricing = async (input: LcdScreenInput): Promise<LcdPricin
   const installHourlyCost = await settingNum('install_hourly_cost', 95);
   const oohRateCost = await settingNum('out_of_hours_rate_cost', 50);
   const oohRateSell = await settingNum('out_of_hours_rate_sell', 80);
+  const standardWarrantyYears = await settingNum('standard_warranty_years', 3);
+
+  // X2: strip prior server-generated lines BEFORE resolving so create AND re-edit regenerate cleanly
+  // (no duplication). Dropped: any warranty line (all warranty lines are auto), the auto install-method
+  // labour line ("Installation — …") and the Out-of-Hours uplift line. This also fixes a latent re-edit
+  // double-count of the OOH line — it is regenerated below after this strip.
+  const items = input.items.filter((i) => {
+    if (i.itemType === 'warranty') return false;
+    if (i.itemType === 'install') {
+      const d = i.description ?? '';
+      if (d.startsWith('Installation — ')) return false;
+      if (/^Out of Hours uplift/i.test(d)) return false;
+    }
+    return true;
+  });
 
   const resolved: LcdResolvedLine[] = [];
-  for (const i of input.items) {
+  for (const i of items) {
     const qty = Number(i.qty ?? 1);
     let cost = Number(i.unitCost ?? 0);
     let sell: number | null = i.unitSell !== undefined ? Number(i.unitSell) : null;
@@ -1094,6 +1109,25 @@ const computeLcdScreenPricing = async (input: LcdScreenInput): Promise<LcdPricin
     });
   }
 
+  // X2: install-method labour line — pushed BEFORE the OOH block so it feeds the uplift hours (install
+  // labour incurs the out-of-hours uplift when service hours ≠ Business Hours). rate = the method's own
+  // hourly rate, else the install_hourly_cost setting ($95).
+  if (input.installMethodId) {
+    const method = await prisma.installMethod.findUnique({ where: { id: BigInt(input.installMethodId) } });
+    const defaultHours = method ? Number(method.defaultHours) : 0;
+    if (method && defaultHours > 0) {
+      const rate = method.hourlyRateCost != null ? Number(method.hourlyRateCost) : installHourlyCost;
+      const unitCost = round(defaultHours * rate).toNumber();
+      resolved.push({
+        itemType: 'install',
+        description: `Installation — ${method.name} (${defaultHours} hrs @ $${rate}/hr)`,
+        qty: 1,
+        unitCost,
+        unitSell: round(applyMargin(unitCost, margin)).toNumber(),
+      });
+    }
+  }
+
   if (outOfHours && installHourlyCost > 0) {
     const upliftHours = resolved
       .filter((r) => r.itemType === 'install' && !/site attendance/i.test(r.description ?? ''))
@@ -1109,13 +1143,38 @@ const computeLcdScreenPricing = async (input: LcdScreenInput): Promise<LcdPricin
     }
   }
 
+  // X2: extended-warranty line — charged only for years BEYOND the standard baseline (the first N years'
+  // warranty is baked into the display catalog cost). Added AFTER the OOH block so it never feeds the
+  // uplift-hours calc (warranty is not install labour; the OOH filter is itemType==='install' only).
+  if (input.warrantyId) {
+    const warranty = await prisma.warrantyOption.findUnique({ where: { id: BigInt(input.warrantyId) } });
+    if (warranty) {
+      const extraYears = Math.max(0, warranty.years - standardWarrantyYears);
+      const perYearCost = Number(warranty.perYearCost);
+      if (extraYears > 0 && perYearCost > 0) {
+        const unitCost = round(extraYears * perYearCost).toNumber();
+        resolved.push({
+          itemType: 'warranty',
+          description: `Extended warranty (+${extraYears} yr @ $${perYearCost}/yr)`,
+          qty: 1,
+          unitCost,
+          unitSell: round(applyMargin(unitCost, margin)).toNumber(),
+        });
+      }
+    }
+  }
+
   const ext = (r: LcdResolvedLine) => r.unitSell * r.qty;
   const sumWhere = (pred: (r: LcdResolvedLine) => boolean) =>
     round(resolved.filter(pred).reduce((a, r) => a + ext(r), 0)).toNumber();
   const priceScreenMediaplayer = sumWhere((r) => r.itemType === 'display' || r.itemType === 'mediaplayer');
   const priceBracketShroud = sumWhere((r) => r.itemType === 'bracket');
   const priceServices = sumWhere(
-    (r) => r.itemType === 'install' || r.itemType === 'labour' || r.itemType === 'location_fee',
+    (r) =>
+      r.itemType === 'install' ||
+      r.itemType === 'labour' ||
+      r.itemType === 'location_fee' ||
+      r.itemType === 'warranty',
   );
   const totalSell = resolved.reduce((a, r) => a + ext(r), 0);
   const priceTotal = round(round(totalSell / 10, 0).toNumber() * 10).toNumber();

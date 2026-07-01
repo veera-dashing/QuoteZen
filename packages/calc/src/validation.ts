@@ -115,7 +115,7 @@ export const canFinalise = (findings: readonly ValidationFinding[]): boolean =>
  * read are required; everything else is ignored.
  */
 export interface LcdValidationItem {
-  itemType: 'display' | 'mediaplayer' | 'bracket' | 'install' | 'labour' | 'location_fee';
+  itemType: 'display' | 'mediaplayer' | 'bracket' | 'install' | 'labour' | 'location_fee' | 'warranty';
   displayId?: string | number | bigint | null;
   /** Snapshotted display model/description text (from `displayCatalog.model`) — drives the built-in-player check. */
   description?: string | null;

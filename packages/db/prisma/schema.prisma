@@ -56,6 +56,7 @@ enum LcdItemType {
   install
   labour
   location_fee
+  warranty
 }
 
 enum HypervsnRateCard {
@@ -427,6 +428,10 @@ model InstallMethod {
   name            String
   wallRequirement String? @map("wall_requirement")
   powerDataNote   String? @map("power_data_note")
+  /** X2: default install labour hours for this method (0 ⇒ no auto labour line). */
+  defaultHours    Decimal  @default(0) @map("default_hours") @db.Decimal(12, 2)
+  /** X2: hourly labour cost rate for this method; null ⇒ fall back to the `install_hourly_cost` setting ($95). */
+  hourlyRateCost  Decimal? @map("hourly_rate_cost") @db.Decimal(12, 2)
   deprecated      Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]
@@ -450,6 +455,8 @@ model WarrantyOption {
   id    BigInt @id @default(autoincrement())
   name  String
   years Int
+  /** X2: extended-warranty cost per YEAR beyond the standard baseline (the first N years are baked into the display cost). */
+  perYearCost Decimal @default(0) @map("per_year_cost") @db.Decimal(12, 2)
   deprecated Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]

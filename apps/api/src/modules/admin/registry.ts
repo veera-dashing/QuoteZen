@@ -169,8 +169,8 @@ export const TABLES: TableDef[] = [
   {
     resource: 'install-methods', model: 'installMethod', label: 'Install Methods', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('wallRequirement', 'text'), f('powerDataNote', 'text'), DEPRECATED],
-    listFields: ['name', 'deprecated'],
+    fields: [f('name', 'string', true), f('wallRequirement', 'text'), f('powerDataNote', 'text'), f('defaultHours', 'decimal'), f('hourlyRateCost', 'decimal'), DEPRECATED],
+    listFields: ['name', 'defaultHours', 'deprecated'],
   },
   {
     resource: 'access-equipment', model: 'accessEquipment', label: 'Access Equipment', group: 'LED',
@@ -181,8 +181,8 @@ export const TABLES: TableDef[] = [
   {
     resource: 'warranties', model: 'warrantyOption', label: 'Warranties', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('years', 'int', true), DEPRECATED],
-    listFields: ['name', 'years', 'deprecated'],
+    fields: [f('name', 'string', true), f('years', 'int', true), f('perYearCost', 'decimal'), DEPRECATED],
+    listFields: ['name', 'years', 'perYearCost', 'deprecated'],
   },
   {
     resource: 'service-hours', model: 'serviceHoursOption', label: 'Service Hours', group: 'LED',
