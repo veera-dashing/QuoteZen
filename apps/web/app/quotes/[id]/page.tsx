@@ -1857,7 +1857,7 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
 }
 
 // The full PriceResult shape (mirrors service.ts priceQuote). Shared by the Review "Itemised price"
-// card and the V4 cost-breakdown drawer.
+// card and the inline per-screen cost breakdown in Select Screens.
 interface PriceResult {
   costVisible: boolean;
   sections: PriceSection[];
@@ -1873,229 +1873,63 @@ interface PriceResult {
   };
 }
 
-// V4 Part B — a right-side cost-breakdown drawer. Shows every priced section (LED/LCD/licences) with
-// per-line cost (admin-only) / sell / editable discount % / effective sell, a quote-wide discount-mode
-// toggle, and the totals block. Writers can edit discounts + mode; viewers get a read-only view.
-function CostBreakdownDrawer({ quote, onChange, onClose }: { quote: Quote; onChange: () => Promise<void>; onClose: () => void }) {
-  const role = getRole();
-  const canWrite = role !== 'viewer';
-  const cur = quote.currency?.code ?? '';
-  const [price, setPrice] = useState<PriceResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  // Per-line discount inputs keyed by line id, shown as a % string (empty = cleared).
-  const [discDraft, setDiscDraft] = useState<Record<string, string>>({});
-  const [modeBusy, setModeBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setErr(null);
-    try {
-      const p = await api<PriceResult>(`/quotes/${quote.id}/price`, { method: 'POST' });
-      setPrice(p);
-      // Seed the draft inputs from the returned per-line discountPct fractions.
-      const seed: Record<string, string> = {};
-      for (const sec of p.sections) for (const l of sec.lines) {
-        seed[l.id] = l.discountPct != null ? String(Math.round(l.discountPct * 1000) / 10) : '';
-      }
-      setDiscDraft(seed);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Pricing failed');
-    } finally {
-      setLoading(false);
-    }
-  }, [quote.id]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  // Persist a per-line discount. Routes by section type: LED cost-breakdown line vs LCD item.
-  const commitDiscount = async (type: 'led' | 'lcd' | 'licence', lineId: string, raw: string) => {
-    if (type === 'licence') return;
-    const trimmed = raw.trim();
-    let pct: number | null;
-    if (trimmed === '') pct = null;
-    else {
-      const n = Number(trimmed);
-      if (!Number.isFinite(n) || n < 0 || n > 100) { setErr('Discount must be 0–100%.'); return; }
-      pct = n / 100; // fraction 0..1
-    }
-    setErr(null);
-    const path = type === 'led'
-      ? `/quotes/${quote.id}/led-lines/${lineId}/discount`
-      : `/quotes/${quote.id}/lcd-items/${lineId}/discount`;
-    try {
-      await api(path, { method: 'PATCH', body: JSON.stringify({ discountPct: pct }) });
-      await load();      // refetch price → effective sells + totals update live.
-      await onChange();  // refresh parent quote totals (LED step, header).
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Discount update failed');
-    }
-  };
-
-  // Toggle the quote-wide discount mode (stack vs item_only) via updateQuote; refetch after.
-  const setMode = async (mode: 'stack' | 'item_only') => {
-    if (mode === (price?.discountMode ?? quote.discountMode ?? 'stack')) return;
-    setModeBusy(true);
-    setErr(null);
-    try {
-      await api(`/quotes/${quote.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ discountMode: mode, expectedVersion: quote.lockVersion }),
-      });
-      await onChange();  // refresh quote (advances lockVersion for the next mode change).
-      await load();
-    } catch (e) {
-      // A 409 means the quote moved; refetching realigns the lock token, so just reload.
-      if (e instanceof ApiError && e.code === 'conflict') { await onChange(); await load(); setErr('Quote changed elsewhere — reloaded.'); }
-      else setErr(e instanceof Error ? e.message : 'Could not change discount mode');
-    } finally {
-      setModeBusy(false);
-    }
-  };
-
-  const mode = price?.discountMode ?? quote.discountMode ?? 'stack';
-
+// Inline per-screen cost-breakdown table (moved out of the old right-side drawer so the breakdown sits
+// next to each screen in the list). Renders one price section's lines with cost (admin-only) / sell /
+// editable per-line discount % / effective sell. The price fetch + discount-commit live in the parent
+// (SelectScreensStep) so a single /price load feeds every row.
+function ScreenBreakdownTable({
+  section, cur, costVisible, canWrite, discDraft, setDiscDraft, commitDiscount,
+}: {
+  section: PriceSection;
+  cur: string;
+  costVisible: boolean;
+  canWrite: boolean;
+  discDraft: Record<string, string>;
+  setDiscDraft: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  commitDiscount: (type: 'led' | 'lcd' | 'licence', lineId: string, raw: string) => void;
+}) {
+  if (section.lines.length === 0) return <p className="muted" style={{ margin: '6px 0 0' }}>No priced lines yet.</p>;
   return (
-    <div
-      onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1200, display: 'flex', justifyContent: 'flex-end' }}
-    >
-      <div
-        className="card"
-        onClick={(e) => e.stopPropagation()}
-        style={{ margin: 0, width: 'min(760px, 96vw)', height: '100%', maxHeight: '100%', overflowY: 'auto', borderRadius: 0, boxSizing: 'border-box' }}
-      >
-        <div className="topbar" style={{ position: 'sticky', top: 0, background: 'var(--card, var(--bg))', zIndex: 1, paddingBottom: 8 }}>
-          <h3 style={{ margin: 0 }}>Cost breakdown</h3>
-          <span style={{ display: 'flex', gap: 8 }}>
-            <button className="ghost" onClick={() => void load()} disabled={loading}>{loading ? 'Loading…' : '↻ Refresh'}</button>
-            <button className="ghost" onClick={onClose} aria-label="Close">✕</button>
-          </span>
-        </div>
-
-        {err && <div className="error" style={{ marginTop: 8 }}>{err}</div>}
-        {loading && !price && <p className="muted">Loading price…</p>}
-
-        {price && (
-          <>
-            {/* Discount-mode segmented control (writers only). */}
-            {canWrite && (
-              <div style={{ margin: '10px 0 14px' }}>
-                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Discount mode</label>
-                <div role="group" style={{ display: 'inline-flex', gap: 4 }}>
-                  <button className={mode === 'stack' ? 'primary' : 'ghost'} disabled={modeBusy} onClick={() => setMode('stack')} type="button">
-                    Stack (item + quote discount)
-                  </button>
-                  <button className={mode === 'item_only' ? 'primary' : 'ghost'} disabled={modeBusy} onClick={() => setMode('item_only')} type="button">
-                    Per-item only
-                  </button>
-                </div>
-                <p className="muted" style={{ margin: '6px 0 0' }}>
-                  {mode === 'stack'
-                    ? 'Per-line discounts and the quote/client discount both apply (they stack).'
-                    : 'Only per-line discounts apply; the quote/client discount is suppressed while any line discount exists.'}
-                </p>
-              </div>
-            )}
-            {!canWrite && <p className="muted" style={{ marginTop: 8 }}>Read-only role — discounts and mode are view-only.</p>}
-            {!price.costVisible && <p className="muted">Cost hidden for your role.</p>}
-
-            {price.sections.length === 0 && <p className="muted">No priced lines yet.</p>}
-            {price.sections.map((sec, si) => (
-              <div key={si} style={{ marginBottom: 16 }}>
-                <div className="topbar">
-                  <b>{sec.name} <span className="muted">· {sec.type.toUpperCase()}</span></b>
-                  <span>{cur} {Number(sec.total).toLocaleString()}</span>
-                </div>
-                <div className="table-wrap" style={{ marginTop: 6 }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Label</th>
-                        <th className="cell-num">Qty</th>
-                        {price.costVisible && <th className="cell-num">Cost</th>}
-                        <th className="cell-num">Sell</th>
-                        <th className="cell-num">Disc %</th>
-                        <th className="cell-num">Effective sell</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sec.lines.map((l) => (
-                        <tr key={l.id}>
-                          <td>{l.label} <span className="muted">{l.category ? `· ${l.category}` : ''}</span></td>
-                          <td className="cell-num">{l.qty}</td>
-                          {price.costVisible && <td className="cell-num">{cur} {Number(l.cost ?? 0).toLocaleString()}</td>}
-                          <td className="cell-num">{cur} {Number(l.sell ?? 0).toLocaleString()}</td>
-                          <td className="cell-num">
-                            {canWrite && sec.type !== 'licence' ? (
-                              <input
-                                type="number" min={0} max={100} step="0.5"
-                                value={discDraft[l.id] ?? ''}
-                                placeholder="—"
-                                style={{ width: 68, textAlign: 'right' }}
-                                onChange={(e) => setDiscDraft((p) => ({ ...p, [l.id]: e.target.value }))}
-                                onBlur={(e) => commitDiscount(sec.type, l.id, e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                title="Per-line discount %. Clear to remove."
-                              />
-                            ) : (
-                              <span>{l.discountPct != null ? `${(l.discountPct * 100).toFixed(l.discountPct * 100 % 1 ? 1 : 0)}%` : '—'}</span>
-                            )}
-                          </td>
-                          <td className="cell-num">{cur} {Number(l.effectiveSell).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))}
-
-            {price.licences.length > 0 && (
-              <div style={{ marginBottom: 16 }}>
-                <b>Licences</b>
-                <div className="table-wrap" style={{ marginTop: 6 }}>
-                  <table>
-                    <thead><tr><th>Screen type</th><th>Tier</th><th className="cell-num">Qty</th><th>Interactive</th><th className="cell-num">Annual</th></tr></thead>
-                    <tbody>
-                      {price.licences.map((l, li) => (
-                        <tr key={li}>
-                          <td>{l.screenType}</td><td className="muted">{l.tier}</td><td className="cell-num">{l.qty}</td>
-                          <td>{l.isInteractive ? 'Yes' : 'No'}</td><td className="cell-num">{cur} {Number(l.annual).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            <div className="totals">
-              <div className="stat"><div className="label">Equipment</div><div className="value">{cur} {Number(price.totals.equipment).toLocaleString()}</div></div>
-              <div className="stat"><div className="label">Services</div><div className="value">{cur} {Number(price.totals.services).toLocaleString()}</div></div>
-              <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(price.totals.recurring).toLocaleString()}</div></div>
-              {price.discount && price.discount.pct > 0 && (
-                <div className="stat">
-                  <div className="label">Discount ({(price.discount.pct * 100).toFixed(price.discount.pct * 100 % 1 ? 1 : 0)}% · {price.discount.scope === 'recurring' ? 'per renewal' : 'one-off'})</div>
-                  <div className="value" style={{ color: 'var(--danger, #dc2626)' }}>− {cur} {Number(price.discount.amount).toLocaleString()}</div>
-                </div>
-              )}
-              <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(price.totals.grandTotal).toLocaleString()}</div></div>
-              {price.totals.margin != null && (() => {
-                const margin = Number(price.totals.margin);
-                const floor = price.totals.marginFloor;
-                const below = floor != null && margin < floor;
-                return (
-                  <>
-                    <div className="stat"><div className="label">Margin</div><div className="value" style={below ? { color: 'var(--danger, #dc2626)' } : undefined}>{(margin * 100).toFixed(1)}%{below ? ' ⛔' : ''}</div></div>
-                    {floor != null && <div className="stat"><div className="label">Margin floor</div><div className="value">{(floor * 100).toFixed(1)}%</div></div>}
-                  </>
-                );
-              })()}
-            </div>
-          </>
-        )}
-      </div>
+    <div className="table-wrap" style={{ marginTop: 6 }}>
+      <table>
+        <thead>
+          <tr>
+            <th>Label</th>
+            <th className="cell-num">Qty</th>
+            {costVisible && <th className="cell-num">Cost</th>}
+            <th className="cell-num">Sell</th>
+            <th className="cell-num">Disc %</th>
+            <th className="cell-num">Effective sell</th>
+          </tr>
+        </thead>
+        <tbody>
+          {section.lines.map((l) => (
+            <tr key={l.id}>
+              <td>{l.label} <span className="muted">{l.category ? `· ${l.category}` : ''}</span></td>
+              <td className="cell-num">{l.qty}</td>
+              {costVisible && <td className="cell-num">{cur} {Number(l.cost ?? 0).toLocaleString()}</td>}
+              <td className="cell-num">{cur} {Number(l.sell ?? 0).toLocaleString()}</td>
+              <td className="cell-num">
+                {canWrite && section.type !== 'licence' ? (
+                  <input
+                    type="number" min={0} max={100} step="0.5"
+                    value={discDraft[l.id] ?? ''}
+                    placeholder="—"
+                    style={{ width: 68, textAlign: 'right' }}
+                    onChange={(e) => setDiscDraft((p) => ({ ...p, [l.id]: e.target.value }))}
+                    onBlur={(e) => commitDiscount(section.type, l.id, e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                    title="Per-line discount %. Clear to remove."
+                  />
+                ) : (
+                  <span>{l.discountPct != null ? `${(l.discountPct * 100).toFixed(l.discountPct * 100 % 1 ? 1 : 0)}%` : '—'}</span>
+                )}
+              </td>
+              <td className="cell-num">{cur} {Number(l.effectiveSell).toLocaleString()}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -2109,9 +1943,80 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
   const [expanded, setExpanded] = useState<string | null>(null);
   // V4 Part A — which screen (if any) is being full-edited in-place, by type + id.
   const [editing, setEditing] = useState<{ type: 'LED' | 'LCD'; id: string } | null>(null);
-  // V4 Part B — cost-breakdown drawer open state.
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const cur = quote.currency?.code ?? '';
+
+  // Inline cost breakdown (moved out of the old drawer): a single /price load feeds every row's
+  // expandable breakdown + the bottom quote-totals summary. Keyed set of open breakdown rows.
+  const [price, setPrice] = useState<PriceResult | null>(null);
+  const [priceErr, setPriceErr] = useState<string | null>(null);
+  const [discDraft, setDiscDraft] = useState<Record<string, string>>({});
+  const [modeBusy, setModeBusy] = useState(false);
+  const [bkOpen, setBkOpen] = useState<Set<string>>(new Set());
+  const toggleBk = (key: string) =>
+    setBkOpen((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+
+  const loadPrice = useCallback(async () => {
+    try {
+      const p = await api<PriceResult>(`/quotes/${quote.id}/price`, { method: 'POST' });
+      setPrice(p);
+      const seed: Record<string, string> = {};
+      for (const sec of p.sections) for (const l of sec.lines) {
+        seed[l.id] = l.discountPct != null ? String(Math.round(l.discountPct * 1000) / 10) : '';
+      }
+      setDiscDraft(seed);
+      setPriceErr(null);
+    } catch (e) {
+      setPriceErr(e instanceof Error ? e.message : 'Pricing failed');
+    }
+  }, [quote.id]);
+
+  // Reload the breakdown whenever the parent refetches the quote (add/edit/qty/delete/discount).
+  useEffect(() => { void loadPrice(); }, [loadPrice, quote]);
+
+  const sectionFor = (type: 'led' | 'lcd', id: string): PriceSection | null =>
+    price?.sections.find((s) => s.type === type && s.screenId === id) ?? null;
+
+  // Persist a per-line discount; routes by section type (LED cost-breakdown line vs LCD item).
+  const commitDiscount = async (type: 'led' | 'lcd' | 'licence', lineId: string, raw: string) => {
+    if (type === 'licence') return;
+    const trimmed = raw.trim();
+    let pct: number | null;
+    if (trimmed === '') pct = null;
+    else {
+      const n = Number(trimmed);
+      if (!Number.isFinite(n) || n < 0 || n > 100) { setPriceErr('Discount must be 0–100%.'); return; }
+      pct = n / 100;
+    }
+    setPriceErr(null);
+    const path = type === 'led'
+      ? `/quotes/${quote.id}/led-lines/${lineId}/discount`
+      : `/quotes/${quote.id}/lcd-items/${lineId}/discount`;
+    try {
+      await api(path, { method: 'PATCH', body: JSON.stringify({ discountPct: pct }) });
+      await onChange(); // refetch quote → the effect above reloads price + totals.
+    } catch (e) {
+      setPriceErr(e instanceof Error ? e.message : 'Discount update failed');
+    }
+  };
+
+  // Quote-wide discount mode (stack vs item_only) via updateQuote (optimistic lock).
+  const setMode = async (mode: 'stack' | 'item_only') => {
+    if (mode === (price?.discountMode ?? quote.discountMode ?? 'stack')) return;
+    setModeBusy(true);
+    setPriceErr(null);
+    try {
+      await api(`/quotes/${quote.id}`, { method: 'PATCH', body: JSON.stringify({ discountMode: mode, expectedVersion: quote.lockVersion }) });
+      await onChange();
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'conflict') { await onChange(); setPriceErr('Quote changed elsewhere — reloaded.'); }
+      else setPriceErr(e instanceof Error ? e.message : 'Could not change discount mode');
+    } finally {
+      setModeBusy(false);
+    }
+  };
+
+  const mode = price?.discountMode ?? quote.discountMode ?? 'stack';
+  const costVisible = price?.costVisible ?? false;
 
   // Resolve the currently-edited screen record (kept in sync with the refetched quote).
   const editLed = editing?.type === 'LED' ? quote.ledScreens.find((s) => s.id === editing.id) : undefined;
@@ -2151,13 +2056,10 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
 
   return (
     <div>
-      {drawerOpen && <CostBreakdownDrawer quote={quote} onChange={onChange} onClose={() => setDrawerOpen(false)} />}
-
       <div className="card">
         <div className="topbar">
           <h3 style={{ margin: 0 }}>Select Screens</h3>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="ghost" onClick={() => setDrawerOpen(true)}>📊 Cost breakdown</button>
             {canWrite && !editing && (
               <>
                 <button className={screenType === 'LED' ? 'primary' : 'ghost'} onClick={() => setScreenType('LED')}>LED</button>
@@ -2169,7 +2071,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
         <p className="muted" style={{ marginTop: 0 }}>
           {editing
             ? `Editing a ${editing.type} screen below — Save changes or Cancel edit to return to the add flow.`
-            : `Pick a screen type, then add screens with the ${screenType} flow below. All screens on this quote appear in the combined list.`}
+            : `Pick a screen type, then add screens with the ${screenType} flow below. All screens on this quote appear in the combined list — expand a row's Cost breakdown to see its priced lines.`}
         </p>
       </div>
 
@@ -2229,6 +2131,9 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
                 <button className="ghost" onClick={() => setExpanded(expanded === s.id ? null : s.id)}>
                   {expanded === s.id ? '▴ Options & services' : '▾ Options & services'}
                 </button>
+                <button className="ghost" onClick={() => toggleBk(`led-${s.id}`)}>
+                  {bkOpen.has(`led-${s.id}`) ? '▴ Cost breakdown' : '▾ Cost breakdown'}
+                </button>
                 {canWrite && (
                   <button
                     className={editing?.type === 'LED' && editing.id === s.id ? 'primary' : 'ghost'}
@@ -2242,29 +2147,120 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
               </div>
             </div>
             {expanded === s.id && <LedOptionsEditor quote={quote} screen={s} onChange={onChange} />}
+            {bkOpen.has(`led-${s.id}`) && (
+              sectionFor('led', s.id)
+                ? <ScreenBreakdownTable section={sectionFor('led', s.id)!} cur={cur} costVisible={costVisible} canWrite={canWrite} discDraft={discDraft} setDiscDraft={setDiscDraft} commitDiscount={commitDiscount} />
+                : <p className="muted" style={{ margin: '6px 0 0' }}>{priceErr ?? 'Loading breakdown…'}</p>
+            )}
           </div>
         ))}
 
         {quote.lcdScreens.map((s) => (
-          <div className="list-row" key={`lcd-${s.id}`}>
-            <div>
-              <span className="pill" style={{ marginRight: 6 }}>LCD</span>
-              <b>{s.screenName || 'LCD screen'}</b>
-            </div>
-            <div className="row-actions" style={{ alignItems: 'center' }}>
-              <span>{cur} {Number(s.priceTotal ?? 0).toLocaleString()}</span>
-              {canWrite && (
-                <button
-                  className={editing?.type === 'LCD' && editing.id === s.id ? 'primary' : 'ghost'}
-                  onClick={() => startEdit('LCD', s.id)}
-                >
-                  ✎ Edit
+          <div key={`lcd-${s.id}`} style={{ borderBottom: '1px solid var(--border)', paddingBottom: 10, marginBottom: 10 }}>
+            <div className="list-row">
+              <div>
+                <span className="pill" style={{ marginRight: 6 }}>LCD</span>
+                <b>{s.screenName || 'LCD screen'}</b>
+              </div>
+              <div className="row-actions" style={{ alignItems: 'center' }}>
+                <span>{cur} {Number(s.priceTotal ?? 0).toLocaleString()}</span>
+                <button className="ghost" onClick={() => toggleBk(`lcd-${s.id}`)}>
+                  {bkOpen.has(`lcd-${s.id}`) ? '▴ Cost breakdown' : '▾ Cost breakdown'}
                 </button>
-              )}
+                {canWrite && (
+                  <button
+                    className={editing?.type === 'LCD' && editing.id === s.id ? 'primary' : 'ghost'}
+                    onClick={() => startEdit('LCD', s.id)}
+                  >
+                    ✎ Edit
+                  </button>
+                )}
+              </div>
             </div>
+            {bkOpen.has(`lcd-${s.id}`) && (
+              sectionFor('lcd', s.id)
+                ? <ScreenBreakdownTable section={sectionFor('lcd', s.id)!} cur={cur} costVisible={costVisible} canWrite={canWrite} discDraft={discDraft} setDiscDraft={setDiscDraft} commitDiscount={commitDiscount} />
+                : <p className="muted" style={{ margin: '6px 0 0' }}>{priceErr ?? 'Loading breakdown…'}</p>
+            )}
           </div>
         ))}
       </div>
+
+      {/* Quote-wide totals + discount mode (moved from the old drawer to sit under the list). */}
+      {totalScreens > 0 && (
+        <div className="card">
+          <div className="topbar">
+            <h3 style={{ margin: 0 }}>Quote totals</h3>
+            <button className="ghost" onClick={() => void loadPrice()}>↻ Refresh</button>
+          </div>
+          {priceErr && <div className="error" style={{ marginTop: 8 }}>{priceErr}</div>}
+          {!price && !priceErr && <p className="muted">Loading price…</p>}
+          {price && (
+            <>
+              {canWrite ? (
+                <div style={{ margin: '4px 0 12px' }}>
+                  <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Discount mode</label>
+                  <div role="group" style={{ display: 'inline-flex', gap: 4 }}>
+                    <button className={mode === 'stack' ? 'primary' : 'ghost'} disabled={modeBusy} onClick={() => setMode('stack')} type="button">Stack (item + quote discount)</button>
+                    <button className={mode === 'item_only' ? 'primary' : 'ghost'} disabled={modeBusy} onClick={() => setMode('item_only')} type="button">Per-item only</button>
+                  </div>
+                  <p className="muted" style={{ margin: '6px 0 0' }}>
+                    {mode === 'stack'
+                      ? 'Per-line discounts and the quote/client discount both apply (they stack).'
+                      : 'Only per-line discounts apply; the quote/client discount is suppressed while any line discount exists.'}
+                  </p>
+                </div>
+              ) : (
+                <p className="muted" style={{ marginTop: 4 }}>Read-only role — discounts and mode are view-only.</p>
+              )}
+              {!price.costVisible && <p className="muted">Cost hidden for your role.</p>}
+
+              {price.licences.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <b>Licences</b>
+                  <div className="table-wrap" style={{ marginTop: 6 }}>
+                    <table>
+                      <thead><tr><th>Screen type</th><th>Tier</th><th className="cell-num">Qty</th><th>Interactive</th><th className="cell-num">Annual</th></tr></thead>
+                      <tbody>
+                        {price.licences.map((l, li) => (
+                          <tr key={li}>
+                            <td>{l.screenType}</td><td className="muted">{l.tier}</td><td className="cell-num">{l.qty}</td>
+                            <td>{l.isInteractive ? 'Yes' : 'No'}</td><td className="cell-num">{cur} {Number(l.annual).toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              <div className="totals">
+                <div className="stat"><div className="label">Equipment</div><div className="value">{cur} {Number(price.totals.equipment).toLocaleString()}</div></div>
+                <div className="stat"><div className="label">Services</div><div className="value">{cur} {Number(price.totals.services).toLocaleString()}</div></div>
+                <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(price.totals.recurring).toLocaleString()}</div></div>
+                {price.discount && price.discount.pct > 0 && (
+                  <div className="stat">
+                    <div className="label">Discount ({(price.discount.pct * 100).toFixed(price.discount.pct * 100 % 1 ? 1 : 0)}% · {price.discount.scope === 'recurring' ? 'per renewal' : 'one-off'})</div>
+                    <div className="value" style={{ color: 'var(--danger, #dc2626)' }}>− {cur} {Number(price.discount.amount).toLocaleString()}</div>
+                  </div>
+                )}
+                <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(price.totals.grandTotal).toLocaleString()}</div></div>
+                {price.totals.margin != null && (() => {
+                  const margin = Number(price.totals.margin);
+                  const floor = price.totals.marginFloor;
+                  const below = floor != null && margin < floor;
+                  return (
+                    <>
+                      <div className="stat"><div className="label">Margin</div><div className="value" style={below ? { color: 'var(--danger, #dc2626)' } : undefined}>{(margin * 100).toFixed(1)}%{below ? ' ⛔' : ''}</div></div>
+                      {floor != null && <div className="stat"><div className="label">Margin floor</div><div className="value">{(floor * 100).toFixed(1)}%</div></div>}
+                    </>
+                  );
+                })()}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2366,7 +2362,7 @@ interface PriceLine {
   discountPct: number | null; effectiveSell: string;
 }
 interface PriceSection {
-  type: 'led' | 'lcd' | 'licence'; name: string; lines: PriceLine[]; total: string;
+  type: 'led' | 'lcd' | 'licence'; name: string; screenId?: string; lines: PriceLine[]; total: string;
   overridden?: boolean; targetId?: string; computedTotal?: string;
 }
 interface OverrideSummary {
@@ -2375,7 +2371,7 @@ interface OverrideSummary {
   createdBy: { id: string; name: string } | null; createdAt: string;
 }
 interface OverrideResult { override: OverrideSummary; warning: string | null }
-// (PriceResult is declared above, near the CostBreakdownDrawer, and reused by ReviewStep.)
+// (PriceResult is declared above, near ScreenBreakdownTable, and reused by ReviewStep.)
 
 // Two-stage Review & Approval (T1 / BR-001). A review is a reviewer's decision at one stage,
 // recorded against the revision (lockVersion) it was signed off on; history is preserved.

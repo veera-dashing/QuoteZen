@@ -542,6 +542,8 @@ export interface PriceLine {
 export interface PriceSection {
   type: 'led' | 'lcd' | 'licence';
   name: string;
+  /** The screen id this section prices (LED/LCD sections) so the UI can match it to a list row. */
+  screenId?: string;
   lines: PriceLine[];
   /** Effective (pinned) total — the value that rolls into the quote totals. */
   total: string;
@@ -593,6 +595,7 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
     sections.push({
       type: 'led',
       name: s.screenName ?? 'LED screen',
+      screenId: s.id.toString(),
       total: eff.overridden ? eff.value : ledScreenDiscountedSell(ovMap, s).toString(),
       overridden: eff.overridden,
       targetId: s.id.toString(),
@@ -616,6 +619,7 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
     sections.push({
       type: 'lcd',
       name: s.screenName ?? 'LCD display',
+      screenId: s.id.toString(),
       // V2 — effective sell after per-line discounts (what rolls into totals).
       total: lcdScreenDiscountedSell(s).toString(),
       computedTotal: dec(s.priceTotal),
