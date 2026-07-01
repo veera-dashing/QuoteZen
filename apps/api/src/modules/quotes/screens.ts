@@ -61,6 +61,25 @@ export interface ConfigureResult {
  */
 const DEFAULT_TOLERANCE_BANDS = [5, 10, 25];
 
+/** Read a numeric setting by key (fallback when unset). Mirrors the local reads used elsewhere. */
+const settingNum = async (key: string, fallback: number): Promise<number> => {
+  const s = await prisma.setting.findUnique({ where: { key } });
+  return s?.value != null ? Number(s.value) : fallback;
+};
+
+/**
+ * Z3 — Lead-time buffer (days, default 3): added to every configured option's manufacturer lead time
+ * so the QUOTED lead time already includes Seen's build/handling buffer. Read from the live
+ * `lead_time_buffer_days` setting (the calc engine stays pure — the buffer is applied in this API
+ * layer where the settings are read). When an option has no manufacturer lead time (`null`), it is
+ * left null (we can't buffer an unknown base) — consistent across configure + options.
+ */
+const loadLeadTimeBuffer = async (): Promise<number> => settingNum('lead_time_buffer_days', 3);
+
+/** Add the lead-time buffer to an option's manufacturer lead time (null stays null). */
+const applyLeadTimeBuffer = <T extends { leadTimeDays: number | null }>(opt: T, buffer: number): T =>
+  opt.leadTimeDays != null ? { ...opt, leadTimeDays: opt.leadTimeDays + buffer } : opt;
+
 /** Read + parse the `size_tolerance_bands` setting (CSV → sorted ascending positive numbers). */
 const loadToleranceBands = async (): Promise<number[]> => {
   const s = await prisma.setting.findUnique({ where: { key: 'size_tolerance_bands' } });
@@ -114,7 +133,7 @@ export const configureForQuote = async (
   input: ConfigureInput,
 ): Promise<ConfigureResult> => {
   await getQuote(quoteId);
-  const [products, ratios, toleranceBands, outdoorThreshold] = await Promise.all([
+  const [products, ratios, toleranceBands, outdoorThreshold, leadTimeBuffer] = await Promise.all([
     prisma.ledProduct.findMany({
       // P1-11.4: deprecated LED products are retained for old quotes but excluded from NEW configs.
       where: { deprecated: false, minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchH: { not: null } },
@@ -123,6 +142,7 @@ export const configureForQuote = async (
     prisma.screenRatio.findMany(),
     loadToleranceBands(),
     loadOutdoorBrightnessNits(),
+    loadLeadTimeBuffer(),
   ]);
   const cfgProducts: ConfigProduct[] = products.map((p) => ({
     id: p.id.toString(),
@@ -169,7 +189,9 @@ export const configureForQuote = async (
       excluded += 1;
       continue;
     }
-    within.push({ ...o, toleranceBand: band, withinTolerance: true, confidence: configConfidence(o) });
+    // Z3 — the quoted lead time = manufacturer lead time + the admin-set buffer (null stays null).
+    const buffered = applyLeadTimeBuffer(o, leadTimeBuffer);
+    within.push({ ...buffered, toleranceBand: band, withinTolerance: true, confidence: configConfidence(buffered) });
   }
   const reasons = [...ranked.reasons];
   if (excluded > 0) {

@@ -125,9 +125,8 @@ describe('U5 — discount scope applies to the elected base', () => {
 
 describe('U5 — recurring-scope discount does NOT trip the one-off margin floor', () => {
   it('a 90% recurring discount lets a non-admin finalise (vs one_off which is blocked)', async () => {
-    await prisma.setting.update({ where: { key: 'margin_floor' }, data: { value: 0.2 } });
-
-    // one_off 90% → margin tanks below the floor → non-admin blocked (sanity check the gate works).
+    // Z3: the two-tier margin guardrail (min-gross 28% / walk-away 22%) now gates finalisation, not
+    // `margin_floor`. one_off 90% → margin tanks below 22% → non-admin blocked (sanity check the gate).
     const blockedId = await newQuote(sales(), { discountPct: 0.9, discountScope: 'one_off' });
     const blocked = await app.inject({
       method: 'POST',
@@ -136,7 +135,7 @@ describe('U5 — recurring-scope discount does NOT trip the one-off margin floor
       payload: { status: 'approved' },
     });
     expect(blocked.statusCode).toBe(403);
-    expect(blocked.json().error.message).toMatch(/below the floor/);
+    expect(blocked.json().error.message).toMatch(/walk-away floor. Director approval required/);
 
     // recurring 90% → upfront sell (and one-off margin) untouched → non-admin can finalise.
     const okId = await newQuote(sales(), { discountPct: 0.9, discountScope: 'recurring' });
@@ -147,7 +146,5 @@ describe('U5 — recurring-scope discount does NOT trip the one-off margin floor
       payload: { status: 'approved' },
     });
     expect(ok.statusCode).toBe(200);
-
-    await prisma.setting.update({ where: { key: 'margin_floor' }, data: { value: 0.2 } });
   });
 });

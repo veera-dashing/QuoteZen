@@ -190,6 +190,17 @@ export interface Actor {
 
 const isAdmin = (actor: Actor): boolean => actor.role === 'admin';
 
+// ─── Approval tiers (Z3) ──────────────────────────────────────────────────────
+// Two-tier margin guardrail: an APPROVER (admin/director/manager) can finalise a quote whose margin
+// sits in the "thin" band (walk-away ≤ m < min-gross); only a DIRECTOR-level actor (admin/director)
+// can finalise below the walk-away floor.
+const APPROVER_ROLES: readonly UserRole[] = ['admin', 'director', 'manager'];
+const DIRECTOR_LEVEL_ROLES: readonly UserRole[] = ['admin', 'director'];
+/** Manager/Director/Admin — may approve a below-min-gross (but above walk-away) finalisation. */
+const isApprover = (actor: Actor): boolean => APPROVER_ROLES.includes(actor.role);
+/** Director/Admin — may approve a below-walk-away finalisation (the hard floor). */
+const isDirectorLevel = (actor: Actor): boolean => DIRECTOR_LEVEL_ROLES.includes(actor.role);
+
 export interface ListQuotesOptions {
   /** Show archived quotes instead of active ones (P1-05.1). Defaults to active-only. */
   archived?: boolean;
@@ -430,6 +441,25 @@ export const getMarginFloor = async (): Promise<number> => {
   return setting ? Number(setting.value) : 0;
 };
 
+/**
+ * Z3 — Minimum gross margin (fraction 0..1, default 0.28). At/above this the finalisation gate is
+ * open to any writer. Below it (but ≥ the walk-away floor) an APPROVER (admin/director/manager) is
+ * required. This is the surfaced "floor" the UI shows now (replaces `margin_floor` for the gate).
+ */
+export const getMinGrossMargin = async (): Promise<number> => {
+  const setting = await prisma.setting.findUnique({ where: { key: 'min_gross_margin' } });
+  return setting ? Number(setting.value) : 0.28;
+};
+
+/**
+ * Z3 — Walk-away margin (fraction 0..1, default 0.22): the hard floor. Below it, finalisation needs
+ * DIRECTOR-level approval (admin/director only — a manager can no longer sign off).
+ */
+export const getWalkAwayMargin = async (): Promise<number> => {
+  const setting = await prisma.setting.findUnique({ where: { key: 'walk_away_margin' } });
+  return setting ? Number(setting.value) : 0.22;
+};
+
 /** The system default client discount (fraction 0..1), or 0 when unset. */
 export const getDefaultDiscountPct = async (): Promise<number> => {
   const setting = await prisma.setting.findUnique({
@@ -538,14 +568,20 @@ export const changeStatus = async (
     await assertIssueReviews(id, existing.lockVersion);
   }
 
-  // Margin guardrail (P1-19g.2): block finalisation below the floor unless the actor is an admin
-  // (elevated approval). Admin overrides are allowed but audited.
+  // Two-tier margin guardrail (Z3): block finalisation by margin band + actor role.
+  //   • m ≥ min_gross_margin (28%)                        → OK, no gate.
+  //   • walk_away_margin (22%) ≤ m < min_gross_margin     → APPROVER required (admin/director/manager);
+  //                                                          otherwise 403. Approver → allowed + audited.
+  //   • m < walk_away_margin (22%)                        → DIRECTOR-level required (admin/director only;
+  //                                                          manager + sales blocked); director → allowed + audited.
+  // Supersedes the single `margin_floor` gate (P1-19g.2). The audit note reuses the `margin_guardrail`
+  // change field. Layered with the validation guardrail (below), which is unchanged.
   let guardrailNote: string | null = null;
   // Validation guardrail (P1-15.3): block finalisation when any error-severity conflict exists,
   // unless the actor is an admin (override, audited). Layered alongside the margin guardrail.
   let validationNote: string | null = null;
   if (FINALISED_STATUSES.includes(status)) {
-    const floor = await getMarginFloor();
+    const [minGross, walkAway] = await Promise.all([getMinGrossMargin(), getWalkAwayMargin()]);
     // Margin must reflect pinned overrides so a below-floor override trips the guardrail (P1-17.5),
     // and the effective client discount (U3) so a deep discount below the floor is gated too.
     const ovMap = overrideMap(await pruneOrphanOverrides(existing, await listOverrides(id)));
@@ -556,15 +592,27 @@ export const changeStatus = async (
       await getDefaultDiscountPct(),
     );
     const { margin } = computeMargin(existing, ovMap, discountPct, discountScope);
-    if (floor > 0 && margin.lessThan(floor)) {
-      if (!isAdmin(actor)) {
+    const mPct = margin.times(100).toFixed(1);
+    if (margin.lessThan(walkAway)) {
+      // Below the walk-away floor: director-level only.
+      if (!isDirectorLevel(actor)) {
         throw new AppError(
           'forbidden',
-          `Quote margin ${margin.times(100).toFixed(1)}% is below the floor of ${(floor * 100).toFixed(1)}%. Admin approval required.`,
-          { margin: margin.toString(), floor },
+          `Quote margin ${mPct}% is below the ${(walkAway * 100).toFixed(0)}% walk-away floor. Director approval required.`,
+          { margin: margin.toString(), walkAwayMargin: walkAway, minGrossMargin: minGross },
         );
       }
-      guardrailNote = `below-floor override: margin ${margin.times(100).toFixed(1)}% < floor ${(floor * 100).toFixed(1)}%`;
+      guardrailNote = `walk-away override: margin ${mPct}% < ${(walkAway * 100).toFixed(0)}% (approved by ${actor.role})`;
+    } else if (margin.lessThan(minGross)) {
+      // Thin band (walk-away ≤ m < min-gross): approver (manager/director/admin).
+      if (!isApprover(actor)) {
+        throw new AppError(
+          'forbidden',
+          `Quote margin ${mPct}% is below the minimum gross margin of ${(minGross * 100).toFixed(0)}%. Manager or Director approval required.`,
+          { margin: margin.toString(), minGrossMargin: minGross, walkAwayMargin: walkAway },
+        );
+      }
+      guardrailNote = `min-margin override: margin ${mPct}% < ${(minGross * 100).toFixed(0)}% (approved by ${actor.role})`;
     }
 
     const validation = await validateQuote(id);
@@ -771,7 +819,10 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
       // Margin derives from cost → admin-only (BR-081); reflects pinned overrides (P1-17.5) and the
       // effective client discount (U3 — discount lowers the realised margin).
       margin: showCost ? computeMargin(quote, ovMap, discount.pct, discount.scope).margin.toString() : null,
-      marginFloor: showCost ? await getMarginFloor() : null,
+      // Z3 — the surfaced "floor" is now the minimum gross margin (the 28% gate the UI enforces first);
+      // the walk-away floor is the harder director-only tier below it.
+      marginFloor: showCost ? await getMinGrossMargin() : null,
+      walkAwayMargin: showCost ? await getWalkAwayMargin() : null,
     },
   };
 };

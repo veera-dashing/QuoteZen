@@ -77,24 +77,28 @@ describe('versioning & snapshots', () => {
   });
 });
 
-describe('margin guardrail', () => {
-  it('blocks below-floor finalisation for non-admin, allows admin override (audited)', async () => {
-    await prisma.setting.update({ where: { key: 'margin_floor' }, data: { value: 0.99 } }); // force below-floor
+describe('margin guardrail (Z3 two-tier)', () => {
+  it('blocks below-walk-away finalisation for non-director, allows admin override (audited)', async () => {
+    // Z3: `margin_floor` no longer gates finalisation — the two-tier min-gross (28%) / walk-away (22%)
+    // guardrail does. Force a deep discount so margin tanks below 22% → director-level required.
+    await prisma.setting.update({ where: { key: 'discount_cap_pct' }, data: { value: 1 } });
     const id = await newQuoteWithScreen(sales());
+    await app.inject({ method: 'PATCH', url: `/quotes/${id}`, headers: sales(), payload: { discountPct: 0.95, discountNote: 'test' } });
 
     const blocked = await app.inject({ method: 'POST', url: `/quotes/${id}/status`, headers: sales(), payload: { status: 'approved' } });
     expect(blocked.statusCode).toBe(403);
-    expect(blocked.json().error.message).toMatch(/below the floor/);
+    expect(blocked.json().error.message).toMatch(/walk-away floor. Director approval required/);
 
-    // admin can override (different quote of their own, floor still 0.99)
+    // admin can override (different quote of their own)
     const adminId = await newQuoteWithScreen(admin());
+    await app.inject({ method: 'PATCH', url: `/quotes/${adminId}`, headers: admin(), payload: { discountPct: 0.95, discountNote: 'test' } });
     const allowed = await app.inject({ method: 'POST', url: `/quotes/${adminId}/status`, headers: admin(), payload: { status: 'approved' } });
     expect(allowed.statusCode).toBe(200);
 
     const audit = await app.inject({ method: 'GET', url: `/quotes/${adminId}/audit`, headers: admin() });
     expect((audit.json() as Array<{ fieldName: string | null }>).some((a) => a.fieldName === 'margin_guardrail')).toBe(true);
 
-    await prisma.setting.update({ where: { key: 'margin_floor' }, data: { value: 0.2 } });
+    await prisma.setting.update({ where: { key: 'discount_cap_pct' }, data: { value: 0.12 } });
   });
 });
 

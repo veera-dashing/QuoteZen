@@ -120,12 +120,11 @@ describe('U3 — discount reduces the grand total', () => {
   });
 });
 
-describe('U3 — discount lowers margin → margin-floor guardrail', () => {
+describe('U3 — discount lowers margin → two-tier margin guardrail (Z3)', () => {
   it('a large discount blocks non-admin finalisation (403) but admin can override (audited)', async () => {
-    // Set a moderate floor; the screen by itself clears it, but a deep discount drops below it.
-    await prisma.setting.update({ where: { key: 'margin_floor' }, data: { value: 0.2 } });
-
-    // sales quote with a 90% discount → margin tanks below the floor
+    // Z3: `margin_floor` no longer gates finalisation — the two-tier min-gross (28%) / walk-away (22%)
+    // guardrail does. A 90% discount tanks margin well below 22% → director-level required, so a
+    // non-director (sales) is blocked and an admin can override (audited).
     const blockedId = await newQuoteWithScreen(sales(), { discountPct: 0.9 });
     const blocked = await app.inject({
       method: 'POST',
@@ -134,7 +133,7 @@ describe('U3 — discount lowers margin → margin-floor guardrail', () => {
       payload: { status: 'approved' },
     });
     expect(blocked.statusCode).toBe(403);
-    expect(blocked.json().error.message).toMatch(/below the floor/);
+    expect(blocked.json().error.message).toMatch(/walk-away floor. Director approval required/);
 
     // admin can override the same deep discount (audited)
     const adminId = await newQuoteWithScreen(admin(), { discountPct: 0.9 });
@@ -150,8 +149,6 @@ describe('U3 — discount lowers margin → margin-floor guardrail', () => {
     expect(
       (audit.json() as Array<{ fieldName: string | null }>).some((a) => a.fieldName === 'margin_guardrail'),
     ).toBe(true);
-
-    await prisma.setting.update({ where: { key: 'margin_floor' }, data: { value: 0.2 } });
   });
 });
 

@@ -191,11 +191,10 @@ describe('V2 — discountMode: stack vs item_only', () => {
   });
 });
 
-describe('V2 — a deep per-line discount trips the non-admin margin floor', () => {
+describe('V2 — a deep per-line discount trips the non-admin margin guardrail (Z3)', () => {
   it('blocks non-admin finalisation (403); admin can override (audited)', async () => {
-    await prisma.setting.update({ where: { key: 'margin_floor' }, data: { value: 0.2 } });
-
-    // sales quote; discount every LED cost line 95% → margin tanks below the floor.
+    // Z3: the two-tier guardrail (min-gross 28% / walk-away 22%) gates finalisation, not `margin_floor`.
+    // sales quote; discount every LED cost line 95% → margin tanks below 22% → director-level required.
     const blockedId = await newQuoteWithScreen(sales());
     const blockedPrice = await priceOf(blockedId, sales());
     const ledLines = blockedPrice.sections.find((s) => s.type === 'led')!.lines.filter((l) => l.sell != null);
@@ -208,7 +207,7 @@ describe('V2 — a deep per-line discount trips the non-admin margin floor', () 
       payload: { status: 'approved' },
     });
     expect(blocked.statusCode).toBe(403);
-    expect(blocked.json().error.message).toMatch(/below the floor/);
+    expect(blocked.json().error.message).toMatch(/walk-away floor. Director approval required/);
 
     // admin can push the same deep-discounted quote through (audited).
     const adminId = await newQuoteWithScreen(admin());

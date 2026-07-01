@@ -141,10 +141,10 @@ describe('manual price overrides (P1-17)', () => {
     expect((set.json() as { warning: string | null }).warning).toMatch(/below the floor/i);
     expect(unit).toBeGreaterThan(1);
 
-    // Sales finalisation blocked (margin reflects the override).
+    // Sales finalisation blocked (margin reflects the override → below the 22% walk-away floor → Z3).
     const blocked = await app.inject({ method: 'POST', url: `/quotes/${quoteId}/status`, headers: sales(), payload: { status: 'approved' } });
     expect(blocked.statusCode).toBe(403);
-    expect(blocked.json().error.message).toMatch(/below the floor/);
+    expect(blocked.json().error.message).toMatch(/walk-away floor. Director approval required/);
 
     // Admin can finalise the same quote (admin sees all), and the override is audited.
     const allowed = await app.inject({ method: 'POST', url: `/quotes/${quoteId}/status`, headers: auth(), payload: { status: 'approved' } });
