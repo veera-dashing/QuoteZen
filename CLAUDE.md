@@ -514,3 +514,11 @@ size-tolerance bands, and Good/Better/Best tiers (those are the LED "lego" flow)
     quote page reads it so a **non-admin estimator's input is clamped to the cap** (input `max` = cap;
     typing above it snaps back) — admins may still exceed it (audited). Verified live: sales input max=12,
     typing 20 → 12. 226 tests green (9 shared + 104 calc + 113 api).
+- ✅ **Unified create + edit (no duplicate Details screen)** — the standalone `/quotes/new` page was
+  removed; `/quotes/new` now resolves to the same wizard (`[id]` route with `id === 'new'`) with the
+  **Details step in create mode**. Create mode: title "New quote", later steps locked until the draft
+  exists, "Create & continue" button → `POST /quotes` then `router.replace('/quotes/:id?step=1')` so the
+  user lands on **Select Screens** (Details is shown once, not twice). Edit mode is unchanged (opens on
+  Details with auto-save + version badge; `?step=n` deep-links a step). `DetailsStep` takes `quote:
+  Quote | null` and branches create/edit off one shared body (nulls stripped for the create schema);
+  auto-save/optimistic-lock only run in edit mode.

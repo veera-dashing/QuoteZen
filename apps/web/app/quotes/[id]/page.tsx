@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { api, ApiError, downloadFile, getRole, uploadFile } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
 
@@ -66,45 +66,63 @@ const STEPS = ['Details', 'Select Screens', 'Licences', 'Review'] as const;
 
 export default function QuoteWizard() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+  // Unified create + edit: `/quotes/new` renders this same wizard with the Details step in CREATE mode
+  // (no separate create page). On first save the Details step navigates to /quotes/:id?step=1.
+  const isNew = id === 'new';
   const [quote, setQuote] = useState<Quote | null>(null);
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(() => (isNew ? 0 : Number(searchParams.get('step')) || 0));
   const [error, setError] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
+    if (isNew) return;
     setQuote(await api<Quote>(`/quotes/${id}`));
-  }, [id]);
+  }, [id, isNew]);
 
   useEffect(() => {
     refetch().catch((e) => setError(e.message));
   }, [refetch]);
 
   if (error) return <div className="error">{error}</div>;
-  if (!quote) return <div className="muted">Loading…</div>;
+  if (!isNew && !quote) return <div className="muted">Loading…</div>;
 
   return (
     <div>
       <div className="topbar">
         <h1>
-          {quote.jobReference} <span className="pill status-badge">{quote.status.replace('_', ' ')}</span>
+          {isNew ? 'New quote' : quote!.jobReference}{' '}
+          {!isNew && <span className="pill status-badge">{quote!.status.replace('_', ' ')}</span>}
         </h1>
-        <span className="muted">
-          {quote.currency?.code} {Number(quote.grandTotal).toLocaleString()}
-        </span>
+        {!isNew && (
+          <span className="muted">
+            {quote!.currency?.code} {Number(quote!.grandTotal).toLocaleString()}
+          </span>
+        )}
       </div>
 
       <div className="stepper">
-        {STEPS.map((s, i) => (
-          <div key={s} className={`step${i === step ? ' active' : ''}`} onClick={() => setStep(i)}>
-            {i + 1}. {s}
-          </div>
-        ))}
+        {STEPS.map((s, i) => {
+          // In create mode only Details is reachable until the draft exists; later steps are disabled.
+          const locked = isNew && i > 0;
+          return (
+            <div
+              key={s}
+              className={`step${i === step ? ' active' : ''}${locked ? ' disabled' : ''}`}
+              style={locked ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+              onClick={() => { if (!locked) setStep(i); }}
+            >
+              {i + 1}. {s}
+            </div>
+          );
+        })}
       </div>
 
       {step === 0 && <DetailsStep quote={quote} onChange={refetch} />}
-      {step === 1 && <SelectScreensStep quote={quote} onChange={refetch} />}
-      {step === 2 && <LicenceStep quote={quote} onChange={refetch} />}
-      {step === 3 && <ReviewStep quote={quote} onChange={refetch} />}
+      {!isNew && step === 1 && <SelectScreensStep quote={quote!} onChange={refetch} />}
+      {!isNew && step === 2 && <LicenceStep quote={quote!} onChange={refetch} />}
+      {!isNew && step === 3 && <ReviewStep quote={quote!} onChange={refetch} />}
 
+      {!isNew && (
       <div className="step-actions">
         <button disabled={step === 0} onClick={() => setStep(step - 1)}>
           ← Back
@@ -120,28 +138,32 @@ export default function QuoteWizard() {
           </>
         )}
       </div>
+      )}
     </div>
   );
 }
 
-function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
+function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () => Promise<void> }) {
+  // Dual mode: `quote === null` → CREATE (no separate /quotes/new page); else EDIT the existing quote.
+  const isNew = quote === null;
+  const router = useRouter();
   const canWrite = getRole() !== 'viewer';
-  const [jobReference, setJobReference] = useState(quote.jobReference);
-  const [clientId, setClientId] = useState(quote.clientId ?? '');
-  const [locationId, setLocationId] = useState(quote.locationId ?? '');
-  const [currencyCode, setCurrencyCode] = useState(quote.currency?.code ?? 'AUD');
+  const [jobReference, setJobReference] = useState(quote?.jobReference ?? '');
+  const [clientId, setClientId] = useState(quote?.clientId ?? '');
+  const [locationId, setLocationId] = useState(quote?.locationId ?? '');
+  const [currencyCode, setCurrencyCode] = useState(quote?.currency?.code ?? 'AUD');
   // Project information / commercial (U1). discountPct is stored as a fraction (0..1) but shown as %.
   const [requestedShippingDate, setRequestedShippingDate] = useState(
-    quote.requestedShippingDate ? quote.requestedShippingDate.slice(0, 10) : '',
+    quote?.requestedShippingDate ? quote.requestedShippingDate.slice(0, 10) : '',
   );
-  const [siteAddress, setSiteAddress] = useState(quote.siteAddress ?? '');
-  const [projectNotes, setProjectNotes] = useState(quote.projectNotes ?? '');
+  const [siteAddress, setSiteAddress] = useState(quote?.siteAddress ?? '');
+  const [projectNotes, setProjectNotes] = useState(quote?.projectNotes ?? '');
   const [discountPctInput, setDiscountPctInput] = useState(
-    quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
+    quote?.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
   );
   // A+ discount guardrail: a manager note is required above the note threshold; the cap is a hard limit
   // for non-admins (admin-overridable). Both come from the admin-maintained DB settings (fetched below).
-  const [discountNote, setDiscountNote] = useState(quote.discountNote ?? '');
+  const [discountNote, setDiscountNote] = useState(quote?.discountNote ?? '');
   const [capPct, setCapPct] = useState(12);
   const [noteThreshold, setNoteThreshold] = useState(5);
   const isAdmin = getRole() === 'admin';
@@ -157,10 +179,10 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
   };
   // U5 — where the discount applies (one-off upfront vs every renewal).
   const [discountScope, setDiscountScope] = useState<'one_off' | 'recurring'>(
-    quote.discountScope === 'recurring' ? 'recurring' : 'one_off',
+    quote?.discountScope === 'recurring' ? 'recurring' : 'one_off',
   );
   const [selectedViewers, setSelectedViewers] = useState<Set<string>>(
-    () => new Set((quote.viewers ?? []).map((v) => v.user.id)),
+    () => new Set((quote?.viewers ?? []).map((v) => v.user.id)),
   );
   const [clients, setClients] = useState<Opt[]>([]);
   const [locations, setLocations] = useState<Opt[]>([]);
@@ -211,25 +233,35 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
     setErr(null);
     setConflict(false);
     setAutoStatus('saving');
+    // Shared body for create + edit; discountPct converts % → fraction, blanks clear the field.
+    const body = {
+      jobReference,
+      currencyCode,
+      clientId: clientId ? Number(clientId) : null,
+      locationId: locationId ? Number(locationId) : null,
+      viewerUserIds: [...selectedViewers].map(Number),
+      requestedShippingDate: requestedShippingDate || null,
+      siteAddress: siteAddress.trim() ? siteAddress.trim() : null,
+      projectNotes: projectNotes.trim() ? projectNotes.trim() : null,
+      discountPct: discountPctInput.trim() === '' ? null : Number(discountPctInput) / 100,
+      discountNote: discountNote.trim() ? discountNote.trim() : null,
+      discountScope,
+    };
     try {
-      await api(`/quotes/${quote.id}`, {
+      if (isNew) {
+        // CREATE the draft, then continue straight to Select Screens (Details is shown only once).
+        // createQuoteSchema treats these fields as optional (not nullable), so drop null/empty values.
+        const createBody = Object.fromEntries(
+          Object.entries(body).filter(([, v]) => v !== null && !(Array.isArray(v) && v.length === 0)),
+        );
+        const created = await api<{ id: string }>('/quotes', { method: 'POST', body: JSON.stringify(createBody) });
+        router.replace(`/quotes/${created.id}?step=1`);
+        return; // navigation unmounts this component
+      }
+      await api(`/quotes/${quote!.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({
-          jobReference,
-          currencyCode,
-          clientId: clientId ? Number(clientId) : null,
-          locationId: locationId ? Number(locationId) : null,
-          viewerUserIds: [...selectedViewers].map(Number),
-          // Project information (U1). discountPct converts % → fraction; empty clears the override.
-          requestedShippingDate: requestedShippingDate || null,
-          siteAddress: siteAddress.trim() ? siteAddress.trim() : null,
-          projectNotes: projectNotes.trim() ? projectNotes.trim() : null,
-          discountPct: discountPctInput.trim() === '' ? null : Number(discountPctInput) / 100,
-          discountNote: discountNote.trim() ? discountNote.trim() : null,
-          discountScope,
-          // Optimistic concurrency: server rejects (409) if the quote moved since we loaded it.
-          expectedVersion: quote.lockVersion,
-        }),
+        // Optimistic concurrency: server rejects (409) if the quote moved since we loaded it.
+        body: JSON.stringify({ ...body, expectedVersion: quote!.lockVersion }),
       });
       await onChange(); // refetch → quote.lockVersion advances, so the next save uses the new token.
       setAutoStatus('saved');
@@ -241,7 +273,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
     } finally {
       setBusy(false);
     }
-  }, [quote.id, quote.lockVersion, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, discountPctInput, discountNote, discountScope, onChange]);
+  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, discountPctInput, discountNote, discountScope, onChange]);
 
   const save = persist;
 
@@ -249,17 +281,23 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
   // on the prop-sync re-render after a save/refetch — only genuine user edits arm the timer. When a
   // conflict is showing, auto-save is suspended until the user reloads (which resets dirty).
   useEffect(() => {
+    // No auto-save in CREATE mode (nothing to PATCH yet — the user clicks "Create & continue").
     // Suspend auto-save while the discount guardrail is unmet (missing note / over cap) so the user
     // isn't hit with a mid-typing 422/403; the explicit Save still surfaces the server error.
-    if (!canWrite || !dirty || conflict || !jobReference || discountBlocked) return;
+    if (isNew || !canWrite || !dirty || conflict || !jobReference || discountBlocked) return;
     const t = setTimeout(() => {
       setDirty(false);
       void persist();
     }, 1500);
     return () => clearTimeout(t);
-  }, [dirty, conflict, canWrite, jobReference, discountBlocked, persist]);
+  }, [isNew, dirty, conflict, canWrite, jobReference, discountBlocked, persist]);
 
-  if (!canWrite) {
+  // A viewer can't create a quote; guard the create route (the "+ New quote" button is writer-only).
+  if (isNew && !canWrite) {
+    return <div className="card"><p className="muted">You don't have permission to create a quote.</p></div>;
+  }
+
+  if (!canWrite && quote) {
     return (
       <div className="card">
         <p className="muted">Quote header (read-only).</p>
@@ -300,7 +338,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
           {autoStatus === 'saved' && (
             <span className="muted">✓ Saved{savedAt ? ` ${savedAt}` : ''}</span>
           )}
-          <span className="muted" title="Optimistic-locking token; bumped on every change">v{quote.lockVersion}</span>
+          {!isNew && <span className="muted" title="Optimistic-locking token; bumped on every change">v{quote!.lockVersion}</span>}
         </span>
       </div>
       <div className="grid3">
@@ -333,7 +371,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
             options={currencies.map((c) => ({ value: c.code ?? '', label: c.code ?? '' }))}
           />
         </div>
-        <div><label>Status</label><input value={quote.status} readOnly /></div>
+        <div><label>Status</label><input value={quote?.status ?? 'draft'} readOnly /></div>
       </div>
 
       <h4 style={{ margin: '18px 0 4px' }}>Project information</h4>
@@ -408,8 +446,13 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
 
       <div className="step-actions">
         <button className="primary" onClick={() => { setDirty(false); void save(); }} disabled={busy || !jobReference || discountBlocked}>
-          {busy ? 'Saving…' : 'Save details'}
+          {busy ? (isNew ? 'Creating…' : 'Saving…') : isNew ? 'Create & continue' : 'Save details'}
         </button>
+        {isNew && (
+          <button type="button" className="ghost" onClick={() => router.push('/quotes')} disabled={busy}>
+            Cancel
+          </button>
+        )}
         {discountBlocked && (
           <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>
             {needsNote ? `Add a manager note to save (discount above ${noteThreshold}%).` : `Discount exceeds the ${capPct}% cap.`}
