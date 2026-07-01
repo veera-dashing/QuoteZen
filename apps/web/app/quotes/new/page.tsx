@@ -25,10 +25,19 @@ export default function NewQuote() {
   // A+ discount guardrail: note required above 5%; hard cap 12% (admin-overridable).
   const [discountNote, setDiscountNote] = useState('');
   const isAdmin = getRole() === 'admin';
+  // Cap + note threshold (as %) are maintained by admins in the DB settings; the quote page reads them
+  // so the estimator's input is hard-limited to the current cap (see the /quotes/discount-policy fetch).
+  const [capPct, setCapPct] = useState(12);
+  const [noteThreshold, setNoteThreshold] = useState(5);
   const discPctNum = discountPctInput.trim() === '' ? null : Number(discountPctInput);
-  const needsNote = discPctNum != null && discPctNum > 5 && !discountNote.trim();
-  const capBlocked = discPctNum != null && discPctNum > 12 && !isAdmin;
+  const needsNote = discPctNum != null && discPctNum > noteThreshold && !discountNote.trim();
+  const capBlocked = discPctNum != null && discPctNum > capPct && !isAdmin;
   const discountBlocked = needsNote || capBlocked;
+  // Non-admins can't type above the cap; admins may exceed it (audited on save).
+  const onDiscountChange = (raw: string) => {
+    if (!isAdmin && raw.trim() !== '' && Number(raw) > capPct) { setDiscountPctInput(String(capPct)); return; }
+    setDiscountPctInput(raw);
+  };
   // U5 — where the discount applies: one-off upfront concession (default) vs every renewal.
   const [discountScope, setDiscountScope] = useState<'one_off' | 'recurring'>('one_off');
   const [clients, setClients] = useState<Option[]>([]);
@@ -45,12 +54,15 @@ export default function NewQuote() {
       api<{ rows: Option[] }>('/admin/locations?take=200'),
       api<Option[]>('/catalog/currencies'),
       api<Array<{ id: string; name: string; email: string }>>('/users/viewers'),
+      api<{ capPct: number; noteThresholdPct: number }>('/quotes/discount-policy'),
     ])
-      .then(([c, l, cur, v]) => {
+      .then(([c, l, cur, v, policy]) => {
         setClients(c.rows);
         setLocations(l.rows);
         setCurrencies(cur);
         setViewers(v);
+        setCapPct(Math.round(policy.capPct * 1000) / 10);
+        setNoteThreshold(Math.round(policy.noteThresholdPct * 1000) / 10);
       })
       .catch((e) => setError(e.message));
   }, []);
@@ -139,15 +151,19 @@ export default function NewQuote() {
           </div>
           <div className="field">
             <label>Discount override (%)</label>
-            <input type="number" min={0} max={99} step="0.5" value={discountPctInput} onChange={(e) => setDiscountPctInput(e.target.value)} placeholder="(default)" />
+            <input type="number" min={0} max={isAdmin ? 99 : capPct} step="0.5" value={discountPctInput} onChange={(e) => onDiscountChange(e.target.value)} placeholder="(default)" />
             <p className="muted" style={{ margin: '4px 0 0', fontSize: 12, color: capBlocked ? 'var(--danger, #dc2626)' : undefined }}>
-              {capBlocked ? 'Exceeds the 12% cap — admin approval required.' : 'Capped at 12%. Above 5% requires a manager note.'}
+              {capBlocked
+                ? `Exceeds the ${capPct}% cap — admin approval required.`
+                : isAdmin
+                  ? `Cap ${capPct}% (you can override). Above ${noteThreshold}% requires a manager note.`
+                  : `Capped at ${capPct}%. Above ${noteThreshold}% requires a manager note.`}
             </p>
           </div>
         </div>
-        {discPctNum != null && discPctNum > 5 && (
+        {discPctNum != null && discPctNum > noteThreshold && (
           <div className="field">
-            <label>Manager note (required for discounts above 5%){needsNote && <span style={{ color: 'var(--danger, #dc2626)' }}> *</span>}</label>
+            <label>Manager note (required for discounts above {noteThreshold}%){needsNote && <span style={{ color: 'var(--danger, #dc2626)' }}> *</span>}</label>
             <textarea value={discountNote} onChange={(e) => setDiscountNote(e.target.value)} rows={2} style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box', borderColor: needsNote ? 'var(--danger, #dc2626)' : undefined }} placeholder="Justification for the discount…" />
           </div>
         )}

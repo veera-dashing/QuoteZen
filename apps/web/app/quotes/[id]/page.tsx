@@ -139,14 +139,22 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
   const [discountPctInput, setDiscountPctInput] = useState(
     quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
   );
-  // A+ discount guardrail: a manager note is required above 5%; the hard cap is 12% (admin-overridable).
+  // A+ discount guardrail: a manager note is required above the note threshold; the cap is a hard limit
+  // for non-admins (admin-overridable). Both come from the admin-maintained DB settings (fetched below).
   const [discountNote, setDiscountNote] = useState(quote.discountNote ?? '');
+  const [capPct, setCapPct] = useState(12);
+  const [noteThreshold, setNoteThreshold] = useState(5);
   const isAdmin = getRole() === 'admin';
   const discPctNum = discountPctInput.trim() === '' ? null : Number(discountPctInput);
-  const needsNote = discPctNum != null && discPctNum > 5 && !discountNote.trim();
-  const overCap = discPctNum != null && discPctNum > 12;
+  const needsNote = discPctNum != null && discPctNum > noteThreshold && !discountNote.trim();
+  const overCap = discPctNum != null && discPctNum > capPct;
   const capBlocked = overCap && !isAdmin;
   const discountBlocked = needsNote || capBlocked;
+  // Non-admins can't type above the cap; admins may exceed it (audited on save).
+  const onDiscountChange = (raw: string) => {
+    if (!isAdmin && raw.trim() !== '' && Number(raw) > capPct) { setDiscountPctInput(String(capPct)); setDirty(true); return; }
+    setDiscountPctInput(raw); setDirty(true);
+  };
   // U5 — where the discount applies (one-off upfront vs every renewal).
   const [discountScope, setDiscountScope] = useState<'one_off' | 'recurring'>(
     quote.discountScope === 'recurring' ? 'recurring' : 'one_off',
@@ -174,11 +182,14 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
       api<{ rows: Opt[] }>('/admin/locations?take=200'),
       api<Opt[]>('/catalog/currencies'),
       api<Array<{ id: string; name: string; email: string }>>('/users/viewers'),
-    ]).then(([c, l, cur, v]) => {
+      api<{ capPct: number; noteThresholdPct: number }>('/quotes/discount-policy'),
+    ]).then(([c, l, cur, v, policy]) => {
       setClients(c.rows);
       setLocations(l.rows);
       setCurrencies(cur);
       setViewers(v);
+      setCapPct(Math.round(policy.capPct * 1000) / 10);
+      setNoteThreshold(Math.round(policy.noteThresholdPct * 1000) / 10);
     });
   }, [canWrite]);
 
@@ -338,9 +349,13 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
         </div>
         <div>
           <label>Discount override (%)</label>
-          <input type="number" min={0} max={99} step="0.5" value={discountPctInput} onChange={(e) => { setDiscountPctInput(e.target.value); setDirty(true); }} placeholder="(default)" />
+          <input type="number" min={0} max={isAdmin ? 99 : capPct} step="0.5" value={discountPctInput} onChange={(e) => onDiscountChange(e.target.value)} placeholder="(default)" />
           <p className="muted" style={{ margin: '4px 0 0', fontSize: 12, color: capBlocked ? 'var(--danger, #dc2626)' : undefined }}>
-            {capBlocked ? 'Exceeds the 12% cap — admin approval required.' : 'Capped at 12%. Above 5% requires a manager note.'}
+            {capBlocked
+              ? `Exceeds the ${capPct}% cap — admin approval required.`
+              : isAdmin
+                ? `Cap ${capPct}% (you can override). Above ${noteThreshold}% requires a manager note.`
+                : `Capped at ${capPct}%. Above ${noteThreshold}% requires a manager note.`}
           </p>
         </div>
         <div>
@@ -351,9 +366,9 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
           </select>
         </div>
       </div>
-      {discPctNum != null && discPctNum > 5 && (
+      {discPctNum != null && discPctNum > noteThreshold && (
         <div style={{ marginTop: 8 }}>
-          <label>Manager note (required for discounts above 5%){needsNote && <span style={{ color: 'var(--danger, #dc2626)' }}> *</span>}</label>
+          <label>Manager note (required for discounts above {noteThreshold}%){needsNote && <span style={{ color: 'var(--danger, #dc2626)' }}> *</span>}</label>
           <textarea
             value={discountNote}
             onChange={(e) => { setDiscountNote(e.target.value); setDirty(true); }}
@@ -397,7 +412,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
         </button>
         {discountBlocked && (
           <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>
-            {needsNote ? 'Add a manager note to save (discount above 5%).' : 'Discount exceeds the 12% cap.'}
+            {needsNote ? `Add a manager note to save (discount above ${noteThreshold}%).` : `Discount exceeds the ${capPct}% cap.`}
           </span>
         )}
       </div>

@@ -506,5 +506,11 @@ size-tolerance bands, and Good/Better/Best tiers (those are the LED "lego" flow)
   in the quote service runs on create + update over the EFFECTIVE pct/note: **> cap** → non-admin 403,
   admin override allowed + audited (`discount_guardrail`); **> threshold without a note** → 422. New-quote
   form + Details step show the note field (required >5%), cap/threshold hints, and gate save (auto-save
-  suspends while unmet). Tested (`discount-guardrail.test.ts`, 6 cases); deep-discount margin/scope tests
-  lift the cap to isolate the margin-floor behaviour. 225 tests green (9 shared + 104 calc + 112 api).
+  suspends while unmet). Tested (`discount-guardrail.test.ts`); deep-discount margin/scope tests
+  lift the cap to isolate the margin-floor behaviour.
+  - *Cap is admin-maintained + hard-limited in the UI:* `discount_cap_pct` (and the note threshold) are
+    edited in the admin **Settings (markups/margins)** page (label "Quote Discount Cap %"). `GET
+    /quotes/discount-policy` (any authenticated user) returns the live cap + threshold from the DB; the
+    quote page reads it so a **non-admin estimator's input is clamped to the cap** (input `max` = cap;
+    typing above it snaps back) — admins may still exceed it (audited). Verified live: sales input max=12,
+    typing 20 → 12. 226 tests green (9 shared + 104 calc + 113 api).

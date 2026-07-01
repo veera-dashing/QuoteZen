@@ -32,6 +32,8 @@ import {
   restoreQuote,
   getAllAuditLog,
   getAuditLog,
+  getDiscountCapPct,
+  getDiscountNoteThresholdPct,
   getOverrides,
   getQuote,
   getQuotes,
@@ -114,6 +116,16 @@ export const quoteRoutes = async (
   app.get('/quotes', auth, (request) => {
     const { archived, status, clientId, q, from, to } = parse(listQuotesQuerySchema, request.query);
     return getQuotes(actor(request), { archived, status, clientId, q, from, to });
+  });
+
+  // The quote-level discount policy (cap + note threshold, fractions 0..1) from the DB settings, so
+  // the quote page can hard-limit the estimator's input to the admin-maintained cap. Any writer/reader.
+  app.get('/quotes/discount-policy', auth, async () => {
+    const [capPct, noteThresholdPct] = await Promise.all([
+      getDiscountCapPct(),
+      getDiscountNoteThresholdPct(),
+    ]);
+    return { capPct, noteThresholdPct };
   });
 
   app.post('/quotes', write, async (request, reply) => {

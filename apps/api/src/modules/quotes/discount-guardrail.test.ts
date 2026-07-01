@@ -35,6 +35,16 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+describe('discount policy endpoint', () => {
+  it('exposes the admin-maintained cap + note threshold from the DB settings', async () => {
+    const res = await app.inject({ method: 'GET', url: '/quotes/discount-policy', headers: sales() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { capPct: number; noteThresholdPct: number };
+    expect(body.capPct).toBe(0.12);
+    expect(body.noteThresholdPct).toBe(0.05);
+  });
+});
+
 describe('discount cap (12%)', () => {
   it('blocks a non-admin above the cap (403)', async () => {
     const res = await create(sales(), { discountPct: 0.15, discountNote: 'strategic account' });
