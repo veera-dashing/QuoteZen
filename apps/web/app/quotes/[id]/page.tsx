@@ -438,6 +438,78 @@ function withinBand<T extends Pick<ConfigOption, 'sizeMode' | 'toleranceBand'>>(
   return rows.filter((o) => o.sizeMode === 'exact' || o.toleranceBand <= band);
 }
 
+// U9: sortable columns for the Ranked configurations table. Each key maps to a comparable value.
+type ConfigSortKey =
+  | 'model' | 'manufacturerName' | 'leadTimeDays' | 'size' | 'sizeDeltaPct'
+  | 'toleranceBand' | 'resolution' | 'ratioLabel' | 'fillPercent' | 'cabinetCount'
+  | 'cutCabinetSuggested' | 'confidence';
+
+// The human header labels shown in the table (also used as the clickable sort targets).
+const CONFIG_COLUMNS: Array<{ key: ConfigSortKey; label: string; num?: boolean }> = [
+  { key: 'model', label: 'Product' },
+  { key: 'manufacturerName', label: 'Manufacturer' },
+  { key: 'leadTimeDays', label: 'Lead (d)', num: true },
+  { key: 'size', label: 'Size (mm)' },
+  { key: 'sizeDeltaPct', label: 'Sizing' },
+  { key: 'toleranceBand', label: 'Tolerance' },
+  { key: 'resolution', label: 'Resolution' },
+  { key: 'ratioLabel', label: 'Ratio' },
+  { key: 'fillPercent', label: 'Fill %', num: true },
+  { key: 'cabinetCount', label: 'Cabinets', num: true },
+  { key: 'cutCabinetSuggested', label: 'Cut?' },
+  { key: 'confidence', label: 'Confidence', num: true },
+];
+
+// U9: the free-text haystack for a config row — human-readable fields joined + lowercased.
+function configSearchText(o: ConfigOption): string {
+  return [
+    o.model, o.manufacturerName, o.ratioLabel,
+    `${o.widthMm}×${o.heightMm}`, `${o.widthMm}x${o.heightMm}`,
+    o.sizeMode, sizeLabel(o), toleranceLabel(o),
+    o.rotated ? 'rotated rot' : '',
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+// U9: extract the comparable value for a sort key. Numeric keys → number|null; text/bool → string|null.
+function configSortValue(o: ConfigOption, key: ConfigSortKey): number | string | null {
+  switch (key) {
+    case 'model': return o.model ?? null;
+    case 'manufacturerName': return o.manufacturerName ?? null;
+    case 'ratioLabel': return o.ratioLabel ?? null;
+    case 'leadTimeDays': return o.leadTimeDays ?? null;
+    case 'size': return o.widthMm * 100000 + o.heightMm; // width primary, height tiebreak
+    case 'sizeDeltaPct': return Number(o.sizeDeltaPct);
+    case 'toleranceBand': return o.toleranceBand;
+    case 'resolution': return o.resolutionWpx * o.resolutionHpx;
+    case 'fillPercent': return Number(o.fillPercent);
+    case 'cabinetCount': return o.cabinetCount;
+    case 'cutCabinetSuggested': return o.cutCabinetSuggested ? 1 : 0;
+    case 'confidence': return o.confidence;
+    default: return null;
+  }
+}
+
+// U9: sort a copy of the rows by key/direction. Nulls always sort last (regardless of direction);
+// falls back to a stable no-op when key is null (preserves the server's manufacturer-priority order).
+function sortConfigs(rows: ConfigOption[], key: ConfigSortKey | null, dir: 'asc' | 'desc'): ConfigOption[] {
+  if (key === null) return rows;
+  const mult = dir === 'asc' ? 1 : -1;
+  return rows
+    .map((o, i) => ({ o, i }))
+    .sort((a, b) => {
+      const va = configSortValue(a.o, key);
+      const vb = configSortValue(b.o, key);
+      if (va === null && vb === null) return a.i - b.i;
+      if (va === null) return 1; // nulls last
+      if (vb === null) return -1;
+      let cmp: number;
+      if (typeof va === 'number' && typeof vb === 'number') cmp = va - vb;
+      else cmp = String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' });
+      return cmp !== 0 ? cmp * mult : a.i - b.i; // stable tiebreak by original index
+    })
+    .map((x) => x.o);
+}
+
 // U8: what CabinetPreview needs from an option (both ConfigOption + TierOption satisfy this).
 type PreviewOption = Pick<
   ConfigOption,
@@ -602,6 +674,14 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
   // (size_tolerance_bands setting); `selectedBand` is a pure view filter (null = "All").
   const [toleranceBands, setToleranceBands] = useState<number[]>([]);
   const [selectedBand, setSelectedBand] = useState<number | null>(null);
+  // U9: Ranked-configurations table search + sort (local view state, reset on each configure).
+  const [configSearch, setConfigSearch] = useState('');
+  const [sortKey, setSortKey] = useState<ConfigSortKey | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const toggleSort = (key: ConfigSortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  };
   // Good / Better / Best tiered options (T2).
   const [tiers, setTiers] = useState<TierOption[] | null>(null);
   const [tierReasons, setTierReasons] = useState<string[]>([]);
@@ -714,6 +794,10 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
       );
       setOptions(res.options);
       setReasons(res.reasons);
+      // U9: reset the table search/sort when a fresh result set arrives.
+      setConfigSearch('');
+      setSortKey(null);
+      setSortDir('asc');
       // Surface the allowed tolerance bands and default the filter to the widest (least restrictive).
       const bands = (res.toleranceBands ?? []).slice().sort((a, b) => a - b);
       setToleranceBands(bands);
@@ -994,7 +1078,7 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
                         </tr>
                         <tr><td className="muted">Fill %</td><td>{t.fillPercent}</td></tr>
                         <tr><td className="muted">Cabinets</td><td>{t.cabinetCount}</td></tr>
-                        <tr><td className="muted">Cut?</td><td>{t.cutCabinetSuggested ? '⚠️ yes' : '—'}</td></tr>
+                        <tr><td className="muted">Cut?</td><td>{t.cutCabinetSuggested ? <span title="Cabinets must be cut to fit the opening — adds cost and lead time" style={{ cursor: 'help' }}>⚠️ yes</span> : '—'}</td></tr>
                         <tr>
                           <td className="muted">Sizing</td>
                           <td style={{ color: t.sizeMode === 'over' ? 'var(--danger, #dc2626)' : t.sizeMode === 'under' ? 'var(--warn, #b45309)' : 'var(--ok, #15803d)' }}>
@@ -1029,26 +1113,58 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
       })()}
 
       {options && (() => {
-        const shownOptions = withinBand(options, selectedBand);
+        // U9: band filter → search filter → sort → display slice.
+        const CONFIG_CAP = 50;
+        const banded = withinBand(options, selectedBand);
+        const q = configSearch.trim().toLowerCase();
+        const searched = q ? banded.filter((o) => configSearchText(o).includes(q)) : banded;
+        const shownOptions = sortConfigs(searched, sortKey, sortDir);
+        const capped = shownOptions.slice(0, CONFIG_CAP);
         return (
         <div className="card">
-          <h3 style={{ marginTop: 0 }}>Ranked configurations ({shownOptions.length}{selectedBand !== null && shownOptions.length !== options.length ? ` of ${options.length}` : ''})</h3>
+          <h3 style={{ marginTop: 0 }}>Ranked configurations ({shownOptions.length}{selectedBand !== null && banded.length !== options.length ? ` of ${options.length}` : ''})</h3>
           {options.length === 0 && <p className="muted">No fit: {reasons.join(' ')}</p>}
-          {options.length > 0 && shownOptions.length === 0 && (
+          {options.length > 0 && banded.length === 0 && (
             <p className="muted">No configurations within ±{selectedBand}% — widen the allowed size tolerance above.</p>
           )}
+          {banded.length > 0 && (
+            <div style={{ margin: '8px 0' }}>
+              <input
+                type="text"
+                value={configSearch}
+                onChange={(e) => setConfigSearch(e.target.value)}
+                placeholder="Search configurations…"
+                style={{ width: '100%', maxWidth: 360 }}
+                aria-label="Search configurations"
+              />
+            </div>
+          )}
+          {banded.length > 0 && searched.length === 0 && (
+            <p className="muted">No configurations match “{configSearch}”.</p>
+          )}
           {shownOptions.length > 0 && (
+            <>
+            <p className="muted" style={{ margin: '4px 0' }}>Showing {capped.length} of {shownOptions.length}</p>
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Product</th><th>Manufacturer</th><th className="cell-num">Lead (d)</th>
-                    <th>Size (mm)</th><th>Sizing</th><th>Tolerance</th><th>Resolution</th><th>Ratio</th>
-                    <th className="cell-num">Fill %</th><th className="cell-num">Cabinets</th><th>Cut?</th><th></th>
+                    {CONFIG_COLUMNS.map((c) => (
+                      <th
+                        key={c.key}
+                        className={c.num ? 'cell-num' : undefined}
+                        onClick={() => toggleSort(c.key)}
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        title="Click to sort"
+                      >
+                        {c.label}{sortKey === c.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                      </th>
+                    ))}
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {shownOptions.slice(0, 25).map((o, i) => (
+                  {capped.map((o, i) => (
                     <tr key={`${o.productId}-${o.rotated}-${o.sizeMode}-${i}`}>
                       <td>{o.model}{o.rotated ? ' (rot)' : ''}</td>
                       <td>{o.manufacturerName ?? '—'}</td>
@@ -1077,7 +1193,8 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
                       </td>
                       <td className="cell-num">{o.fillPercent}</td>
                       <td className="cell-num">{o.cabinetCount}</td>
-                      <td>{o.cutCabinetSuggested ? '⚠️' : '—'}</td>
+                      <td>{o.cutCabinetSuggested ? <span title="Cabinets must be cut to fit the opening — adds cost and lead time" style={{ cursor: 'help' }}>⚠️</span> : '—'}</td>
+                      <td className="cell-num">{o.confidence}</td>
                       <td className="actions">
                         <button className="ghost" onClick={() => setPreview(o)} type="button" style={{ marginRight: 4 }}>
                           👁 Preview
@@ -1091,6 +1208,7 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </div>
         );
@@ -2599,7 +2717,18 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
                             : 'var(--muted, #6b7280)',
                       }}
                     >
-                      {f.severity === 'error' ? '⛔' : f.severity === 'warning' ? '⚠️' : 'ℹ️'}{' '}
+                      <span
+                        title={
+                          f.severity === 'error'
+                            ? 'Error — blocks finalisation'
+                            : f.severity === 'warning'
+                              ? 'Warning — advisory, does not block'
+                              : 'Cannot evaluate yet — needs more input'
+                        }
+                        style={{ cursor: 'help' }}
+                      >
+                        {f.severity === 'error' ? '⛔' : f.severity === 'warning' ? '⚠️' : 'ℹ️'}
+                      </span>{' '}
                       <span className="muted">[{f.rule}]</span> {f.message}
                     </div>
                   ))}
