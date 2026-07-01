@@ -85,6 +85,9 @@ model User {
   name         String
   roleId       BigInt   @map("role_id")
   isActive     Boolean  @default(true) @map("is_active")
+  // UI theme preference ('light' | 'dark'), self-service via PATCH /auth/me. Defaults to the app's
+  // original dark palette so existing users are unaffected.
+  themePreference String @default("dark") @map("theme_preference")
   createdAt    DateTime @default(now()) @map("created_at")
 
   role          Role            @relation(fields: [roleId], references: [id])

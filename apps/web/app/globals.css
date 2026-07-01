@@ -10,6 +10,26 @@
   --danger: #e5484d;
   --ok: #30a46c;
   --radius: 8px;
+  --shadow: rgba(0, 0, 0, 0.4);
+  /* Fixed near-black used as text on the (bright) accent colour — kept legible in both themes. */
+  --on-accent: #0f1115;
+}
+
+/* Light theme — activated by the pre-paint script setting <html data-theme="light">.
+   Accent stays the bright brand teal so on-accent text (--on-accent) reads the same in both themes. */
+[data-theme='light'] {
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --surface-2: #eef1f6;
+  --border: #d6dbe4;
+  --text: #1a1d23;
+  --muted: #5c6470;
+  --accent: #0d9488;
+  --accent-hover: #0b7d72;
+  --danger: #d1383d;
+  --ok: #17864f;
+  --shadow: rgba(15, 23, 42, 0.14);
+  --on-accent: #ffffff;
 }
 
 * { box-sizing: border-box; }
@@ -35,7 +55,7 @@ button {
   border-radius: var(--radius);
 }
 button:hover { border-color: var(--accent); }
-button.primary { background: var(--accent); border-color: var(--accent); color: #0f1115; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 button.primary:hover { background: var(--accent-hover); }
 button.danger { color: var(--danger); border-color: transparent; background: transparent; }
 button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
@@ -61,9 +81,9 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
 .nav-group { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 14px 10px 4px; }
 .nav-item { display: flex; justify-content: space-between; padding: 6px 10px; border-radius: 6px; color: var(--text); cursor: pointer; }
 .nav-item:hover { background: var(--surface-2); }
-.nav-item.active { background: var(--accent); color: #0f1115; }
+.nav-item.active { background: var(--accent); color: var(--on-accent); }
 .nav-item .count { color: var(--muted); font-size: 12px; }
-.nav-item.active .count { color: #0f1115; }
+.nav-item.active .count { color: var(--on-accent); }
 
 .main { padding: 24px 28px; max-width: 100%; overflow-x: hidden; }
 .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
@@ -109,7 +129,7 @@ td.actions { text-align: right; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
 .stepper { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 22px; }
 .step { padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; font-size: 13px; }
-.step.active { background: var(--accent); border-color: var(--accent); color: #0f1115; }
+.step.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .step.done { border-color: var(--ok); color: var(--ok); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
@@ -136,11 +156,11 @@ td.actions { text-align: right; }
 .ss-pop {
   position: absolute; z-index: 60; top: calc(100% + 4px); left: 0; right: 0;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  box-shadow: 0 10px 30px rgba(0,0,0,0.4); overflow: hidden;
+  box-shadow: 0 10px 30px var(--shadow); overflow: hidden;
 }
 .ss-search { border: none; border-bottom: 1px solid var(--border); border-radius: 0; }
 .ss-list { max-height: 240px; overflow-y: auto; }
 .ss-opt { padding: 8px 10px; cursor: pointer; font-size: 13px; }
 .ss-opt:hover { background: var(--surface-2); }
-.ss-opt.sel { background: var(--accent); color: #0f1115; }
+.ss-opt.sel { background: var(--accent); color: var(--on-accent); }
 .ss-empty { padding: 8px 10px; color: var(--muted); font-size: 13px; }

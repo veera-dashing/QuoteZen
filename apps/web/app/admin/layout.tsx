@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, clearToken, getRole, getToken, type Role } from '@/lib/api';
 import type { TableDef } from '@/lib/types';
+import ThemeToggle from '@/components/ThemeToggle';
 
 // Top-level nav items and which roles may see them.
 const STAFF: Role[] = ['admin', 'sales', 'director', 'manager']; // internal staff (not viewer)
@@ -93,7 +94,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
               })}
             </div>
           ))}
-        <div style={{ marginTop: 20, padding: '0 10px' }}>
+        <div style={{ marginTop: 20, padding: '0 10px', display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
+          <ThemeToggle />
           <button className="ghost" onClick={signOut}>
             Sign out
           </button>

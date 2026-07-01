@@ -6,11 +6,15 @@ const TOKEN_KEY = 'quotezen_token';
 const USER_KEY = 'quotezen_user';
 
 export type Role = 'admin' | 'sales' | 'viewer' | 'director' | 'manager';
+export type Theme = 'light' | 'dark';
 export interface SessionUser {
   id: string;
   email: string;
   role: Role;
+  themePreference?: Theme;
 }
+// Dedicated key read by the pre-paint script in the root layout (avoids a flash of the wrong theme).
+export const THEME_KEY = 'quotezen_theme';
 
 export const getToken = (): string | null =>
   typeof window === 'undefined' ? null : window.localStorage.getItem(TOKEN_KEY);
@@ -136,5 +140,11 @@ export const login = async (email: string, password: string): Promise<void> => {
     body: JSON.stringify({ email, password }),
   });
   setToken(res.token);
-  if (res.user) window.localStorage.setItem(USER_KEY, JSON.stringify(res.user));
+  if (res.user) {
+    window.localStorage.setItem(USER_KEY, JSON.stringify(res.user));
+    // Seed the theme so the pre-paint script picks it up on the next navigation, and apply it now.
+    const theme: Theme = res.user.themePreference === 'light' ? 'light' : 'dark';
+    window.localStorage.setItem(THEME_KEY, theme);
+    if (typeof document !== 'undefined') document.documentElement.dataset.theme = theme;
+  }
 };

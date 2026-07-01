@@ -62,6 +62,9 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 export const USER_ROLES = ['admin', 'sales', 'viewer', 'director', 'manager'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
+export const THEMES = ['light', 'dark'] as const;
+export type Theme = (typeof THEMES)[number];
+
 /** LED screen orientation (LED-1 E10). */
 export const ORIENTATIONS = ['Landscape', 'Portrait'] as const;
 export type Orientation = (typeof ORIENTATIONS)[number];

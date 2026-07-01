@@ -12,6 +12,7 @@ import {
   REVIEW_DECISIONS,
   REVIEW_STAGES,
   SCREEN_TYPES,
+  THEMES,
 } from './enums.js';
 
 /** A monetary value accepted from clients: number or numeric string, normalised to a string. */
@@ -297,3 +298,9 @@ export const loginSchema = z.object({
   password: z.string().min(1),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
+
+// Self-service profile update (PATCH /auth/me) — currently just the UI theme preference.
+export const updateMeSchema = z.object({
+  themePreference: z.enum(THEMES),
+});
+export type UpdateMeInput = z.infer<typeof updateMeSchema>;

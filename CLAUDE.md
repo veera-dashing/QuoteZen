@@ -582,3 +582,22 @@ six ordered blocks (Z1–Z6), each verified against the full live-RDS suite befo
 **Interpretation applied:** walk-away (<22% margin) is **Director-approvable** (not an absolute block) — the
 Director role exists precisely for that authority. `aud_usd_rate` is managed/displayed but not wired into live
 FX conversion (that would change workbook-verified pricing) — flagged as a follow-up.
+
+### Block 16 — light/dark theme toggle (persisted per-user in the DB)
+Users can switch between light and dark themes at any time; the choice is stored on the user row and restored on
+next login. The app was previously dark-only (hardcoded `:root` CSS variables). Typecheck + web build clean; new
+`theme.test.ts` (api); verified live in-browser (toggle flips `data-theme`, persisted to the DB via a fresh
+`GET /auth/me`).
+- ✅ **Schema** — `users.theme_preference` (TEXT, `@default("dark")`, migration `user_theme_preference`); existing
+  users default to the original dark palette so nothing changes for them. Shared `THEMES = ['light','dark']` enum +
+  `updateMeSchema` (Zod).
+- ✅ **API** — the login response `user` now carries `themePreference` (the JWT stays minimal — id/email/role — so a
+  theme change never mints a new token); `GET /auth/me` reads the fresh value from the DB; new self-service
+  `PATCH /auth/me` (authenticated, any role) persists `{ themePreference }`. Invalid value → 400, no token → 401.
+- ✅ **Web** — a pre-paint `<script>` in the root layout reads `localStorage['quotezen_theme']` and sets
+  `<html data-theme>` before first paint (no flash of the wrong palette); `login()` seeds that key + applies it
+  from the server value. `lib/theme.ts` (`getStoredTheme`/`storeTheme`/`setTheme`) applies instantly + fire-and-
+  forget PATCHes the DB (failure is non-fatal — local preference holds). `components/ThemeToggle.tsx` (☀️/🌙) sits
+  in both the admin sidebar and the quotes header. `globals.css` gains a `[data-theme='light']` variable block;
+  hardcoded on-accent text `#0f1115` → `var(--on-accent)` (near-black in dark, white in light) and the popover
+  shadow → `var(--shadow)`, so both palettes read correctly. Accent stays the brand teal.
