@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   CURRENCY_CODES,
+  DISCOUNT_MODES,
   DISCOUNT_SCOPES,
   LED_COMPONENT_TYPES,
   LICENCE_TIERS,
@@ -53,6 +54,8 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   discountPct: z.coerce.number().min(0).max(1).nullish(),
   /** Discount scope (U5); optional on update. */
   discountScope: z.enum(DISCOUNT_SCOPES).optional(),
+  /** Per-quote discount mode (V2): how per-line discounts fold with the quote/client discount. */
+  discountMode: z.enum(DISCOUNT_MODES).optional(),
   siteAddress: z.string().max(500).nullish(),
   projectNotes: z.string().max(2000).nullish(),
   /** Optimistic-locking token from the last read; a mismatch is a 409 conflict (P1-05.2). */
@@ -216,6 +219,15 @@ export const setOverrideSchema = z.object({
   reason: z.string().max(500).optional(),
 });
 export type SetOverrideInput = z.infer<typeof setOverrideSchema>;
+
+/**
+ * Set/clear a per-line discount (V2) on a LED cost-breakdown line or an LCD item. `discountPct` is a
+ * fraction 0..1 (nullable → clears the discount). Reduces that line's sell in the rollup + margin.
+ */
+export const lineDiscountSchema = z.object({
+  discountPct: z.coerce.number().min(0).max(1).nullable(),
+});
+export type LineDiscountInput = z.infer<typeof lineDiscountSchema>;
 
 // ─── Simple quote line collections (skippable wizard steps) ───────────────────
 const refQty = (key: string) =>

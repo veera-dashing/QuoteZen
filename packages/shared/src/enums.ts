@@ -36,6 +36,15 @@ export type ScreenType = (typeof SCREEN_TYPES)[number];
 export const DISCOUNT_SCOPES = ['one_off', 'recurring'] as const;
 export type DiscountScope = (typeof DISCOUNT_SCOPES)[number];
 
+/**
+ * How per-line discounts interact with the quote/client discount (V2). `stack` (default) = the
+ * quote/client discount applies ON TOP of the per-line-discounted base (both apply). `item_only` =
+ * when the quote has ANY per-line discount, the quote/client discount is suppressed (per-line only);
+ * with no per-line discounts, the quote/client discount applies as normal.
+ */
+export const DISCOUNT_MODES = ['stack', 'item_only'] as const;
+export type DiscountMode = (typeof DISCOUNT_MODES)[number];
+
 export const LICENCE_TIERS = ['low', 'high'] as const;
 export type LicenceTier = (typeof LICENCE_TIERS)[number];
 

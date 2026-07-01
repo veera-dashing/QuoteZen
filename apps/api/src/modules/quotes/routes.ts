@@ -8,6 +8,7 @@ import {
   changeStatusSchema,
   createQuoteSchema,
   lcdScreenSchema,
+  lineDiscountSchema,
   recordReviewSchema,
   listQuotesQuerySchema,
   ledScreenSchema,
@@ -37,6 +38,8 @@ import {
   priceQuote,
   recomputePreview,
   recomputeQuote,
+  setLcdItemDiscount,
+  setLedLineDiscount,
   setOverride,
   updateQuote,
   type Actor,
@@ -205,6 +208,23 @@ export const quoteRoutes = async (
     await assertOwnership(id, actor(request));
     const { overrideId } = parse(z.object({ overrideId: z.coerce.bigint() }), request.params);
     return clearOverride(actor(request), id, overrideId);
+  });
+
+  // ── Per-line discounts (V2): set/clear a per-line % on a LED cost line or an LCD item ──
+  app.patch('/quotes/:id/led-lines/:lineId/discount', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { lineId } = parse(z.object({ lineId: z.coerce.bigint() }), request.params);
+    const { discountPct } = parse(lineDiscountSchema, request.body);
+    return setLedLineDiscount(actor(request), id, lineId, discountPct);
+  });
+
+  app.patch('/quotes/:id/lcd-items/:itemId/discount', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { itemId } = parse(z.object({ itemId: z.coerce.bigint() }), request.params);
+    const { discountPct } = parse(lineDiscountSchema, request.body);
+    return setLcdItemDiscount(actor(request), id, itemId, discountPct);
   });
 
   // Conflict / validation engine (P1-15): per-screen findings + can-finalise gate.

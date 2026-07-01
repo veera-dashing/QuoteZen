@@ -760,6 +760,8 @@ model Quote {
   discountPct           Decimal?    @map("discount_pct") @db.Decimal(5, 4)
   /** Where the discount applies (U5): `one_off` = the upfront equipment+services concession; `recurring` = every renewal (the recurring total). */
   discountScope         String      @default("one_off") @map("discount_scope")
+  /** How per-line discounts interact with the quote/client discount (V2): `stack` = both apply; `item_only` = the quote/client discount is suppressed when any per-line discount exists. */
+  discountMode          String      @default("stack") @map("discount_mode")
   /** Quote-wide PI capture (U0): the install site address and free-text project notes. */
   siteAddress           String?     @map("site_address")
   projectNotes          String?     @map("project_notes")
@@ -973,6 +975,8 @@ model QuoteLedCostBreakdown {
   category         String?
   cost             Decimal? @db.Decimal(12, 2)
   sell             Decimal? @db.Decimal(12, 2)
+  /** Per-line discount (V2), a fraction 0..1 that reduces this line's SELL in the rollup + margin. Null = no discount. */
+  discountPct      Decimal? @map("discount_pct") @db.Decimal(5, 4)
 
   screen QuoteLedScreen @relation(fields: [quoteLedScreenId], references: [id], onDelete: Cascade)
 
@@ -1024,6 +1028,8 @@ model QuoteLcdItem {
   qty              Decimal     @default(1) @db.Decimal(10, 2)
   unitCost         Decimal?    @map("unit_cost") @db.Decimal(12, 2)
   unitSell         Decimal?    @map("unit_sell") @db.Decimal(12, 2)
+  /** Per-line discount (V2), a fraction 0..1 that reduces this item's extended SELL in the rollup + margin. Null = no discount. */
+  discountPct      Decimal?    @map("discount_pct") @db.Decimal(5, 4)
 
   screen  QuoteLcdScreen  @relation(fields: [quoteLcdScreenId], references: [id], onDelete: Cascade)
   display DisplayCatalog? @relation(fields: [displayId], references: [id], onDelete: Restrict)

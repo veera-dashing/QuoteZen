@@ -3,7 +3,10 @@ import type { Prisma } from '@quotezen/db';
 import { aggregateQuote, type QuoteLineContribution } from '@quotezen/calc';
 import { d, marginOf, round, sum } from '@quotezen/shared';
 import type { CreateQuoteInput, UpdateQuoteInput } from '@quotezen/shared';
-import type { DiscountScope, QuoteStatus } from '@quotezen/shared';
+import type { DiscountMode, DiscountScope, QuoteStatus } from '@quotezen/shared';
+
+/** A decimal.js instance (the type `d()` returns); avoids re-exporting the class from shared. */
+type Decimal = ReturnType<typeof d>;
 import { AppError, conflict, notFound } from '../../errors.js';
 import type { UserRole } from '@quotezen/shared';
 import { diffFields, recordAudit } from '../../services/audit.js';
@@ -40,11 +43,75 @@ const QUOTE_HEADER_FIELDS = [
   'requestedShippingDate',
   'discountPct',
   'discountScope',
+  'discountMode',
   'siteAddress',
   'projectNotes',
 ] as const;
 
 const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toString() : '0');
+
+// ─── Per-line discounts (V2) ──────────────────────────────────────────────────
+
+type LedScreen = QuoteWithChildren['ledScreens'][number];
+type LcdScreen = QuoteWithChildren['lcdScreens'][number];
+
+/** A per-line discount fraction (0..1) or 0 when unset. */
+const lineDisc = (v: { toString(): string } | null | undefined): number => (v ? Number(v.toString()) : 0);
+
+/**
+ * A LED screen's per-unit effective sell after per-line discounts (V2):
+ *   Σ over cost-breakdown lines of line.sell × (1 − (line.discountPct ?? 0)).
+ * PRECEDENCE: a pinned C-override (P1-17) wins — if the screen sell is overridden, the override value
+ * is the effective sell and per-line discounts on that screen are IGNORED (documented).
+ */
+const ledScreenDiscountedSell = (overrides: Map<string, OverrideRow>, s: LedScreen): Decimal => {
+  const ov = overrides.get(`led_screen_price:${s.id.toString()}`);
+  if (ov) return d(ov.overrideValue.toString());
+  let total = d(0);
+  for (const l of s.costBreakdown) {
+    if (l.sell) total = total.plus(d(l.sell.toString()).times(d(1).minus(lineDisc(l.discountPct))));
+  }
+  return round(total);
+};
+
+/**
+ * A LCD screen's effective sell after per-line discounts (V2):
+ *   Σ over item rows of item.unitSell × item.qty × (1 − (item.discountPct ?? 0)).
+ * (No screen-level override target for LCD.)
+ */
+const lcdScreenDiscountedSell = (s: LcdScreen): Decimal => {
+  let total = d(0);
+  for (const i of s.items) {
+    if (i.unitSell) {
+      total = total.plus(
+        d(i.unitSell.toString()).times(Number(i.qty)).times(d(1).minus(lineDisc(i.discountPct))),
+      );
+    }
+  }
+  return round(total);
+};
+
+/** True when any LED cost line or LCD item on the quote carries a per-line discount (V2). */
+const hasLineDiscounts = (quote: QuoteWithChildren): boolean => {
+  for (const s of quote.ledScreens) for (const l of s.costBreakdown) if (lineDisc(l.discountPct) > 0) return true;
+  for (const s of quote.lcdScreens) for (const i of s.items) if (lineDisc(i.discountPct) > 0) return true;
+  return false;
+};
+
+/**
+ * Resolve the effective quote/client discount for the rollup + margin, honouring the per-quote
+ * discount MODE (V2). In `item_only` mode the quote/client discount is SUPPRESSED whenever any
+ * per-line discount exists (per-line discounts only); otherwise (`stack`, default) it applies on top
+ * of the already-per-line-discounted base. Returns the same shape as `resolveDiscount`.
+ */
+const resolveModedDiscount = (quote: QuoteWithChildren, defaultDiscountPct: number): ResolvedDiscount => {
+  const resolved = resolveDiscount(quote, defaultDiscountPct);
+  const mode = (quote.discountMode as DiscountMode) ?? 'stack';
+  if (mode === 'item_only' && hasLineDiscounts(quote)) {
+    return { pct: 0, source: resolved.source, scope: resolved.scope };
+  }
+  return resolved;
+};
 
 export const createQuote = async (userId: bigint, input: CreateQuoteInput) => {
   if (await findQuoteByJobRef(input.jobReference)) {
@@ -224,6 +291,7 @@ export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuote
   if (input.requestedShippingDate !== undefined) data.requestedShippingDate = input.requestedShippingDate;
   if (input.discountPct !== undefined) data.discountPct = input.discountPct;
   if (input.discountScope !== undefined) data.discountScope = input.discountScope;
+  if (input.discountMode !== undefined) data.discountMode = input.discountMode;
   if (input.siteAddress !== undefined) data.siteAddress = input.siteAddress;
   if (input.projectNotes !== undefined) data.projectNotes = input.projectNotes;
   if (input.currencyCode !== undefined) {
@@ -279,6 +347,13 @@ const FINALISED_STATUSES: QuoteStatus[] = ['approved', 'issued'];
  * U5 — the realised margin here is the ONE-OFF (equipment + services) margin. Only a `one_off`-scope
  * discount lowers it; a `recurring`-scope discount touches the recurring renewal total, not the
  * upfront sell, so it must NOT reduce this margin (and so must NOT trip the one-off floor guardrail).
+ *
+ * V2 — per-line discounts: an LED screen's effective sell = Σ(line.sell × (1 − line.discountPct)) and
+ * an LCD screen's = Σ(item.unitSell × qty × (1 − item.discountPct)); cost is unchanged. So per-line
+ * discounts lower the realised margin (and can trip the below-floor guardrail). Override precedence
+ * holds: a pinned screen sell wins and its per-line discounts are ignored. The `discountPct`/`Scope`
+ * args here are the resolved quote/client discount (already mode-adjusted by the caller — in
+ * `item_only` mode with per-line discounts present, the caller passes pct 0).
  */
 export const computeMargin = (
   quote: QuoteWithChildren,
@@ -286,26 +361,25 @@ export const computeMargin = (
   discountPct = 0,
   discountScope: DiscountScope = 'one_off',
 ) => {
+  const ovMap = overrides ?? new Map<string, OverrideRow>();
   const costs: Array<string> = [];
   const sells: Array<string> = [];
   for (const s of quote.ledScreens) {
-    const ov = overrides?.get(`led_screen_price:${s.id.toString()}`);
+    const ov = ovMap.get(`led_screen_price:${s.id.toString()}`);
     if (ov) {
-      // Pinned sell: override value scaled by screen qty. Cost still rolls up from the breakdown.
+      // Pinned sell: override value scaled by screen qty (per-line discounts on this screen ignored).
       sells.push(round(Number(ov.overrideValue.toString()) * s.qty).toString());
       for (const l of s.costBreakdown) if (l.cost) costs.push(l.cost.toString());
       continue;
     }
-    for (const l of s.costBreakdown) {
-      if (l.cost) costs.push(l.cost.toString());
-      if (l.sell) sells.push(l.sell.toString());
-    }
+    // Per-line-discounted per-unit sell × screen qty (V2). Cost stays the undiscounted cost-sum.
+    sells.push(round(ledScreenDiscountedSell(ovMap, s).times(s.qty)).toString());
+    for (const l of s.costBreakdown) if (l.cost) costs.push(l.cost.toString());
   }
   for (const s of quote.lcdScreens) {
-    for (const i of s.items) {
-      if (i.unitCost) costs.push(round(Number(i.unitCost) * Number(i.qty)).toString());
-      if (i.unitSell) sells.push(round(Number(i.unitSell) * Number(i.qty)).toString());
-    }
+    // Per-line-discounted extended sell (V2). Cost stays undiscounted.
+    sells.push(lcdScreenDiscountedSell(s).toString());
+    for (const i of s.items) if (i.unitCost) costs.push(round(Number(i.unitCost) * Number(i.qty)).toString());
   }
   const totalCost = sum(costs);
   // U3/U5: a ONE-OFF discount reduces the upfront sell side (cost unchanged) → margin reflects the
@@ -390,7 +464,9 @@ export const changeStatus = async (
     // Margin must reflect pinned overrides so a below-floor override trips the guardrail (P1-17.5),
     // and the effective client discount (U3) so a deep discount below the floor is gated too.
     const ovMap = overrideMap(await pruneOrphanOverrides(existing, await listOverrides(id)));
-    const { pct: discountPct, scope: discountScope } = resolveDiscount(
+    // V2 — mode-adjusted discount so the guardrail fires off the fully-discounted margin (per-line
+    // discounts always lower it; the quote discount stacks or is suppressed per discountMode).
+    const { pct: discountPct, scope: discountScope } = resolveModedDiscount(
       existing,
       await getDefaultDiscountPct(),
     );
@@ -442,7 +518,7 @@ export const changeStatus = async (
     // Knowledge-base capture on outcome states (P1-19f). Margin reflects pinned overrides.
     if (CAPTURE_STATUSES.includes(status)) {
       const ov = overrideMap(await listOverrides(id));
-      const { pct, scope } = resolveDiscount(quote, await getDefaultDiscountPct());
+      const { pct, scope } = resolveModedDiscount(quote, await getDefaultDiscountPct());
       await captureKbEntry(tx, quote, actor.id, status, computeMargin(quote, ov, pct, scope).margin.toString());
     }
     return quote;
@@ -450,12 +526,18 @@ export const changeStatus = async (
 };
 
 export interface PriceLine {
+  /** The stored line id (LED cost-breakdown line / LCD item), so the UI can set/clear its discount. */
+  id: string;
   label: string;
   category: string | null;
   qty: number;
   /** Cost is null for non-admin actors (BR-081: sell visible, cost gated). */
   cost: string | null;
   sell: string | null;
+  /** Per-line discount fraction 0..1 (V2), or null when none. */
+  discountPct: number | null;
+  /** The line's effective (post per-line-discount) sell — extended by qty for LCD items (V2). */
+  effectiveSell: string;
 }
 export interface PriceSection {
   type: 'led' | 'lcd' | 'licence';
@@ -496,7 +578,9 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
   const activeOverrides = await pruneOrphanOverrides(quote, await listOverrides(id));
   const ovMap = overrideMap(activeOverrides);
   // U3/U5 — effective client discount (quote override → client → system default) + discounted margin.
-  const discount = resolveDiscount(quote, await getDefaultDiscountPct());
+  // V2 — mode-adjusted: in `item_only` mode with per-line discounts present the quote/client discount
+  // is suppressed (pct 0), so the surfaced discount matches what actually applied to the totals.
+  const discount = resolveModedDiscount(quote, await getDefaultDiscountPct());
   // Authoritative, scope-aware discount amount (one-off vs recurring) from the shared rollup, so the
   // surfaced concession matches whichever base the discount was applied to (U5).
   const discountAmount = computeQuoteTotals(quote, ovMap, await getDefaultDiscountPct()).discount.amount;
@@ -504,35 +588,51 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
   const sections: PriceSection[] = [];
   for (const s of quote.ledScreens) {
     const eff = effectiveLedScreenSell(ovMap, s.id, dec(s.priceTotal));
+    // V2 — the section total is the EFFECTIVE per-unit sell that rolls into the totals: an active
+    // override pins it (per-line discounts ignored), else it's the per-line-discounted sell.
     sections.push({
       type: 'led',
       name: s.screenName ?? 'LED screen',
-      // The section total is the effective (pinned) sell — what actually rolls into the totals.
-      total: eff.value,
+      total: eff.overridden ? eff.value : ledScreenDiscountedSell(ovMap, s).toString(),
       overridden: eff.overridden,
       targetId: s.id.toString(),
       computedTotal: dec(s.priceTotal),
-      lines: s.costBreakdown.map((l) => ({
-        label: l.lineLabel,
-        category: l.category,
-        qty: 1,
-        cost: showCost ? dec(l.cost) : null,
-        sell: dec(l.sell),
-      })),
+      lines: s.costBreakdown.map((l) => {
+        const disc = lineDisc(l.discountPct);
+        return {
+          id: l.id.toString(),
+          label: l.lineLabel,
+          category: l.category,
+          qty: 1,
+          cost: showCost ? dec(l.cost) : null,
+          sell: dec(l.sell),
+          discountPct: l.discountPct != null ? disc : null,
+          effectiveSell: round(d(dec(l.sell)).times(d(1).minus(disc))).toString(),
+        };
+      }),
     });
   }
   for (const s of quote.lcdScreens) {
     sections.push({
       type: 'lcd',
       name: s.screenName ?? 'LCD display',
-      total: dec(s.priceTotal),
-      lines: s.items.map((i) => ({
-        label: i.description ?? i.itemType,
-        category: i.itemType,
-        qty: Number(i.qty),
-        cost: showCost ? dec(i.unitCost) : null,
-        sell: dec(i.unitSell),
-      })),
+      // V2 — effective sell after per-line discounts (what rolls into totals).
+      total: lcdScreenDiscountedSell(s).toString(),
+      computedTotal: dec(s.priceTotal),
+      lines: s.items.map((i) => {
+        const disc = lineDisc(i.discountPct);
+        const extendedSell = d(dec(i.unitSell)).times(Number(i.qty));
+        return {
+          id: i.id.toString(),
+          label: i.description ?? i.itemType,
+          category: i.itemType,
+          qty: Number(i.qty),
+          cost: showCost ? dec(i.unitCost) : null,
+          sell: dec(i.unitSell),
+          discountPct: i.discountPct != null ? disc : null,
+          effectiveSell: round(extendedSell.times(d(1).minus(disc))).toString(),
+        };
+      }),
     });
   }
 
@@ -564,6 +664,10 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
     // U3/U5 — effective discount; `scope` decides the base: `one_off` discounts the upfront sell
     // (equipment + services, after markup), `recurring` discounts the renewal total. `amount` is the
     // dollar concession on whichever base, taken from the shared scope-aware rollup.
+    // V2 — the per-quote discount mode + whether any per-line discount exists (so the UI can explain
+    // why the quote/client discount is or isn't applied in `item_only` mode).
+    discountMode: (quote.discountMode as DiscountMode) ?? 'stack',
+    hasLineDiscounts: hasLineDiscounts(quote),
     discount: {
       pct: discount.pct,
       source: discount.source,
@@ -616,11 +720,12 @@ export const computeQuoteTotals = (
   // carry a screen-level qty; LCD screens have none (their item rows carry their own qty), so the
   // stored LCD priceTotal is already the full screen price.
   for (const s of quote.ledScreens) {
-    const sell = effectiveLedScreenSell(overrides, s.id, dec(s.priceTotal)).value;
-    lines.push({ kind: 'equipment', extendedSell: round(Number(sell) * s.qty) });
+    // V2 — per-line-discounted per-unit sell (override pin wins), × screen qty.
+    lines.push({ kind: 'equipment', extendedSell: round(ledScreenDiscountedSell(overrides, s).times(s.qty)).toString() });
   }
   for (const s of quote.lcdScreens) {
-    lines.push({ kind: 'equipment', extendedSell: dec(s.priceTotal) });
+    // V2 — per-line-discounted extended sell (Σ item.unitSell × qty × (1 − discountPct)).
+    lines.push({ kind: 'equipment', extendedSell: lcdScreenDiscountedSell(s).toString() });
   }
   for (const m of quote.manufacturedItems) {
     lines.push({ kind: 'equipment', extendedSell: Number(dec(m.product.sell)) * m.qty });
@@ -645,7 +750,9 @@ export const computeQuoteTotals = (
   // is the annual/renewal total. Decimal math throughout.
   //   • one_off  (default): discount the UPFRONT base; recurring untouched. Matches U3 behaviour.
   //   • recurring         : discount the RECURRING total; upfront untouched.
-  const { pct, source, scope } = resolveDiscount(quote, defaultDiscountPct);
+  // V2 — the quote/client discount is mode-adjusted: in `item_only` mode it is suppressed (pct 0)
+  // whenever any per-line discount exists, so per-line discounts don't stack with the quote discount.
+  const { pct, source, scope } = resolveModedDiscount(quote, defaultDiscountPct);
   const recurringBase = round(agg.recurring);
   let recurring = recurringBase;
   let upfront = round(agg.grandTotal);
@@ -832,7 +939,7 @@ export const setOverride = async (
   let warning: string | null = null;
   const floor = await getMarginFloor();
   if (floor > 0) {
-    const { pct, scope } = resolveDiscount(updated, await getDefaultDiscountPct());
+    const { pct, scope } = resolveModedDiscount(updated, await getDefaultDiscountPct());
     const { margin } = computeMargin(updated, ovMap, pct, scope);
     if (margin.lessThan(floor)) {
       warning = `This override drops the quote margin to ${margin.times(100).toFixed(1)}%, below the floor of ${(floor * 100).toFixed(1)}%. Finalisation will require admin approval.`;
@@ -878,4 +985,73 @@ export const getOverrides = async (quoteId: bigint): Promise<OverrideSummary[]> 
   const quote = await getQuote(quoteId);
   const active = await pruneOrphanOverrides(quote, await listOverrides(quoteId));
   return active.map(toSummary);
+};
+
+// ─── Per-line discounts (V2) ──────────────────────────────────────────────────
+
+/**
+ * Set (or clear, when `discountPct` is null) a per-line discount on a LED cost-breakdown line
+ * (V2). The line must belong to a screen on this quote. Audits the change and recomputes so the
+ * discounted sell flows into the totals + margin. Returns the recomputed quote.
+ */
+export const setLedLineDiscount = async (
+  actor: Actor,
+  quoteId: bigint,
+  lineId: bigint,
+  discountPct: number | null,
+): Promise<QuoteWithChildren> => {
+  const line = await prisma.quoteLedCostBreakdown.findUnique({
+    where: { id: lineId },
+    include: { screen: { select: { quoteId: true } } },
+  });
+  if (!line || line.screen.quoteId !== quoteId) throw notFound('LED cost line', lineId.toString());
+
+  const oldPct = line.discountPct != null ? line.discountPct.toString() : null;
+  await prisma.$transaction(async (tx) => {
+    await tx.quoteLedCostBreakdown.update({ where: { id: lineId }, data: { discountPct } });
+    await recordAudit(tx, {
+      quoteId,
+      userId: actor.id,
+      action: 'update',
+      entityTable: 'quote_led_cost_breakdown',
+      entityId: lineId,
+      changes: [{ field: 'discount_pct', oldValue: oldPct, newValue: discountPct }],
+    });
+  });
+
+  await recomputeQuote(actor.id, quoteId);
+  return getQuote(quoteId);
+};
+
+/**
+ * Set (or clear) a per-line discount on a LCD item line (V2). The item must belong to a screen on
+ * this quote. Audits + recomputes. Returns the recomputed quote.
+ */
+export const setLcdItemDiscount = async (
+  actor: Actor,
+  quoteId: bigint,
+  itemId: bigint,
+  discountPct: number | null,
+): Promise<QuoteWithChildren> => {
+  const item = await prisma.quoteLcdItem.findUnique({
+    where: { id: itemId },
+    include: { screen: { select: { quoteId: true } } },
+  });
+  if (!item || item.screen.quoteId !== quoteId) throw notFound('LCD item', itemId.toString());
+
+  const oldPct = item.discountPct != null ? item.discountPct.toString() : null;
+  await prisma.$transaction(async (tx) => {
+    await tx.quoteLcdItem.update({ where: { id: itemId }, data: { discountPct } });
+    await recordAudit(tx, {
+      quoteId,
+      userId: actor.id,
+      action: 'update',
+      entityTable: 'quote_lcd_items',
+      entityId: itemId,
+      changes: [{ field: 'discount_pct', oldValue: oldPct, newValue: discountPct }],
+    });
+  });
+
+  await recomputeQuote(actor.id, quoteId);
+  return getQuote(quoteId);
 };
