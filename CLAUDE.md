@@ -583,21 +583,34 @@ six ordered blocks (Z1–Z6), each verified against the full live-RDS suite befo
 Director role exists precisely for that authority. `aud_usd_rate` is managed/displayed but not wired into live
 FX conversion (that would change workbook-verified pricing) — flagged as a follow-up.
 
-### Block 16 — light/dark theme toggle (persisted per-user in the DB)
-Users can switch between light and dark themes at any time; the choice is stored on the user row and restored on
+### Block 16 — light / dark / system theme toggle (persisted per-user in the DB)
+Users can switch between **Light · Dark · System** at any time; the choice is stored on the user row and restored on
 next login. The app was previously dark-only (hardcoded `:root` CSS variables). Typecheck + web build clean; new
-`theme.test.ts` (api); verified live in-browser (toggle flips `data-theme`, persisted to the DB via a fresh
-`GET /auth/me`).
+`theme.test.ts` (5 tests, api); verified live in-browser (3-way cycle flips `data-theme`, persisted to the DB via a
+fresh `GET /auth/me`; `system` resolves against the OS).
 - ✅ **Schema** — `users.theme_preference` (TEXT, `@default("dark")`, migration `user_theme_preference`); existing
-  users default to the original dark palette so nothing changes for them. Shared `THEMES = ['light','dark']` enum +
-  `updateMeSchema` (Zod).
+  users default to the original dark palette so nothing changes for them. Shared `THEMES = ['light','dark','system']`
+  enum (the stored PREFERENCE — the value applied to the DOM is only light|dark) + `updateMeSchema` (Zod).
 - ✅ **API** — the login response `user` now carries `themePreference` (the JWT stays minimal — id/email/role — so a
   theme change never mints a new token); `GET /auth/me` reads the fresh value from the DB; new self-service
-  `PATCH /auth/me` (authenticated, any role) persists `{ themePreference }`. Invalid value → 400, no token → 401.
+  `PATCH /auth/me` (authenticated, any role) persists `{ themePreference }`. Invalid value → 422, no token → 401.
 - ✅ **Web** — a pre-paint `<script>` in the root layout reads `localStorage['quotezen_theme']` and sets
-  `<html data-theme>` before first paint (no flash of the wrong palette); `login()` seeds that key + applies it
-  from the server value. `lib/theme.ts` (`getStoredTheme`/`storeTheme`/`setTheme`) applies instantly + fire-and-
-  forget PATCHes the DB (failure is non-fatal — local preference holds). `components/ThemeToggle.tsx` (☀️/🌙) sits
-  in both the admin sidebar and the quotes header. `globals.css` gains a `[data-theme='light']` variable block;
-  hardcoded on-accent text `#0f1115` → `var(--on-accent)` (near-black in dark, white in light) and the popover
-  shadow → `var(--shadow)`, so both palettes read correctly. Accent stays the brand teal.
+  `<html data-theme>` before first paint (no flash of the wrong palette); a `system` (or unknown) value resolves
+  against `prefers-color-scheme`, missing → dark (legacy default). `login()` seeds that key + applies the resolved
+  theme. `lib/theme.ts` (`getStoredPref`/`resolveTheme`/`systemTheme`/`storePref`/`setThemePref`) applies instantly +
+  fire-and-forget PATCHes the DB (failure is non-fatal — local preference holds). `components/ThemeToggle.tsx`
+  (☀️/🌙/🖥️) **cycles** Light → Dark → System and, while on System, re-applies live when the OS scheme changes (a
+  `matchMedia` listener); it sits in both the admin sidebar and the quotes header. `globals.css` gains a
+  `[data-theme='light']` variable block; hardcoded on-accent text `#0f1115` → `var(--on-accent)` (near-black in dark,
+  white in light) and the popover shadow → `var(--shadow)`, so both palettes read correctly. Accent stays the brand teal.
+
+### Block 17 — admin discount-cap override requires explicit confirmation (web)
+The quote-level discount cap (`discount_cap_pct`, default 12%) is unchanged server-side: a non-admin above the cap
+is hard-stopped (403; the input also clamps), an admin may override with a manager note (audited `discount_guardrail`).
+Per UX decision, an admin exceeding the cap now must **explicitly confirm the override** in the quote Details step
+before it saves — it's no longer silent. `apps/web/app/quotes/[id]/page.tsx` `DetailsStep`: a `capAck` state records
+confirmation of the CURRENT over-cap value (re-armed on any discount edit); `handleSave` shows a `window.confirm`
+("…exceeds the N% cap … recorded in the audit log. Proceed?") for `isAdmin && overCap && !capAck` and only saves on
+OK; the debounced auto-save is suspended while the override is unconfirmed (so it can't slip through mid-typing); the
+field hint reflects the pending-confirmation state. Web-only — no schema/API change; the server remains the
+enforcement boundary.

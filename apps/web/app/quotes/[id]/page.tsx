@@ -172,8 +172,13 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   const overCap = discPctNum != null && discPctNum > capPct;
   const capBlocked = overCap && !isAdmin;
   const discountBlocked = needsNote || capBlocked;
-  // Non-admins can't type above the cap; admins may exceed it (audited on save).
+  // Admin cap override requires an explicit confirmation before it saves (still audited server-side).
+  // `capAck` records that the admin confirmed the CURRENT over-cap value; any edit re-arms it.
+  const [capAck, setCapAck] = useState(false);
+  const adminOverCapUnacked = isAdmin && overCap && !capAck;
+  // Non-admins can't type above the cap; admins may exceed it (confirmed + audited on save).
   const onDiscountChange = (raw: string) => {
+    setCapAck(false); // any change re-arms the override confirmation
     if (!isAdmin && raw.trim() !== '' && Number(raw) > capPct) { setDiscountPctInput(String(capPct)); setDirty(true); return; }
     setDiscountPctInput(raw); setDirty(true);
   };
@@ -277,20 +282,35 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
 
   const save = persist;
 
+  // Explicit Save/Create: an admin exceeding the cap must confirm the override first (audited on save).
+  const handleSave = () => {
+    if (adminOverCapUnacked) {
+      const ok = window.confirm(
+        `This discount (${discPctNum}%) exceeds the ${capPct}% cap. As an admin you can override it — ` +
+          `the override will be recorded in the audit log. Proceed?`,
+      );
+      if (!ok) return;
+      setCapAck(true);
+    }
+    setDirty(false);
+    void save();
+  };
+
   // Debounced auto-save (~1.5s after the last edit). `dirty` gates it so it never fires on mount or
   // on the prop-sync re-render after a save/refetch — only genuine user edits arm the timer. When a
   // conflict is showing, auto-save is suspended until the user reloads (which resets dirty).
   useEffect(() => {
     // No auto-save in CREATE mode (nothing to PATCH yet — the user clicks "Create & continue").
     // Suspend auto-save while the discount guardrail is unmet (missing note / over cap) so the user
-    // isn't hit with a mid-typing 422/403; the explicit Save still surfaces the server error.
-    if (isNew || !canWrite || !dirty || conflict || !jobReference || discountBlocked) return;
+    // isn't hit with a mid-typing 422/403; the explicit Save still surfaces the server error. Also
+    // suspend while an admin over-cap override is unconfirmed — it must go through the Save confirmation.
+    if (isNew || !canWrite || !dirty || conflict || !jobReference || discountBlocked || adminOverCapUnacked) return;
     const t = setTimeout(() => {
       setDirty(false);
       void persist();
     }, 1500);
     return () => clearTimeout(t);
-  }, [isNew, dirty, conflict, canWrite, jobReference, discountBlocked, persist]);
+  }, [isNew, dirty, conflict, canWrite, jobReference, discountBlocked, adminOverCapUnacked, persist]);
 
   // A viewer can't create a quote; guard the create route (the "+ New quote" button is writer-only).
   if (isNew && !canWrite) {
@@ -391,9 +411,11 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
           <p className="muted" style={{ margin: '4px 0 0', fontSize: 12, color: capBlocked ? 'var(--danger, #dc2626)' : undefined }}>
             {capBlocked
               ? `Exceeds the ${capPct}% cap — admin approval required.`
-              : isAdmin
-                ? `Cap ${capPct}% (you can override). Above ${noteThreshold}% requires a manager note.`
-                : `Capped at ${capPct}%. Above ${noteThreshold}% requires a manager note.`}
+              : isAdmin && overCap
+                ? `Above the ${capPct}% cap — you'll be asked to confirm the override (audited) on save.`
+                : isAdmin
+                  ? `Cap ${capPct}% (you can override with confirmation). Above ${noteThreshold}% requires a manager note.`
+                  : `Capped at ${capPct}%. Above ${noteThreshold}% requires a manager note.`}
           </p>
         </div>
         <div>
@@ -445,7 +467,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
 
       <div className="step-actions">
-        <button className="primary" onClick={() => { setDirty(false); void save(); }} disabled={busy || !jobReference || discountBlocked}>
+        <button className="primary" onClick={handleSave} disabled={busy || !jobReference || discountBlocked}>
           {busy ? (isNew ? 'Creating…' : 'Saving…') : isNew ? 'Create & continue' : 'Save details'}
         </button>
         {isNew && (

@@ -62,7 +62,9 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 export const USER_ROLES = ['admin', 'sales', 'viewer', 'director', 'manager'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
-export const THEMES = ['light', 'dark'] as const;
+// Stored per-user theme PREFERENCE. 'system' follows the OS (prefers-color-scheme) at runtime; the
+// resolved value applied to the DOM is only ever 'light' | 'dark'.
+export const THEMES = ['light', 'dark', 'system'] as const;
 export type Theme = (typeof THEMES)[number];
 
 /** LED screen orientation (LED-1 E10). */

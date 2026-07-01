@@ -54,6 +54,17 @@ describe('theme preference', () => {
     expect(row.themePreference).toBe('light');
   });
 
+  it('accepts the system preference (follows the OS at runtime)', async () => {
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: '/auth/me',
+      headers: auth(),
+      payload: { themePreference: 'system' },
+    });
+    expect(patched.statusCode).toBe(200);
+    expect(patched.json().user.themePreference).toBe('system');
+  });
+
   it('rejects an invalid theme value (422 validation)', async () => {
     const bad = await app.inject({
       method: 'PATCH',

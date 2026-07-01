@@ -6,7 +6,8 @@ const TOKEN_KEY = 'quotezen_token';
 const USER_KEY = 'quotezen_user';
 
 export type Role = 'admin' | 'sales' | 'viewer' | 'director' | 'manager';
-export type Theme = 'light' | 'dark';
+/** Stored preference. 'system' follows the OS; the value applied to the DOM is only light | dark. */
+export type Theme = 'light' | 'dark' | 'system';
 export interface SessionUser {
   id: string;
   email: string;
@@ -142,9 +143,14 @@ export const login = async (email: string, password: string): Promise<void> => {
   setToken(res.token);
   if (res.user) {
     window.localStorage.setItem(USER_KEY, JSON.stringify(res.user));
-    // Seed the theme so the pre-paint script picks it up on the next navigation, and apply it now.
-    const theme: Theme = res.user.themePreference === 'light' ? 'light' : 'dark';
-    window.localStorage.setItem(THEME_KEY, theme);
-    if (typeof document !== 'undefined') document.documentElement.dataset.theme = theme;
+    // Seed the preference so the pre-paint script picks it up on the next navigation, and apply the
+    // resolved theme now (a 'system' preference resolves against the OS via prefers-color-scheme).
+    const pref: Theme = res.user.themePreference ?? 'dark';
+    window.localStorage.setItem(THEME_KEY, pref);
+    if (typeof document !== 'undefined') {
+      const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+      document.documentElement.dataset.theme =
+        pref === 'light' ? 'light' : pref === 'dark' ? 'dark' : prefersDark ? 'dark' : 'light';
+    }
   }
 };
