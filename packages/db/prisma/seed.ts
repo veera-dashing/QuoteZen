@@ -134,6 +134,38 @@ const LED_PERIPHERALS: Array<[string, number]> = [
   ['Nova CVT310 Multimode Fibre Converters (Need Pair)', 198],
 ];
 
+// Frames: [name, frame cost, backcover cost, frame install hours].
+const FRAMES: Array<[string, number, number, number]> = [
+  ['No Frame', 0, 0, 0],
+  ['ivisual Portrait Elevated Frame 960 x 1600 (needs backcover)', 750, 218, 4],
+  ['ivisual Portrait Elevated Frame 2240 x 1600 (needs backcover)', 1040, 367, 4],
+  ['ivisual Landscape Elevated Frame 1920 x 1120mm (Needs backcover)', 820, 218, 4],
+  ['Fletchers Bundoor Frame (1120 x 1920, needs backcover)', 488, 218, 2],
+  ['Single Pole Floor to ceiling (Gazman Essendon)', 900, 218, 2],
+  ['Wall Frame with Trim 1920x 960 (Johnny Bigg)', 585, 0, 2],
+  ['ivisual Low Frame 960 x 1920 (needs backcover)', 480, 218, 2],
+  ['ivisual Low Frame 1600 x 1600 (needs backcover)', 750, 367, 4],
+  ['ivisual Low Frame 1920 x 2880 (needs backcover)', 775, 516, 6],
+  ['ivisual Low Frame 2560 x 2400 (needs backcover)', 950, 549, 6],
+  ['Plinth 640 x 1120 with trim (e.g. Goodman)', 730, 0, 4],
+  ['Plinth 1440 x 2560 with trim (needs backcover e.g. ASICS Harbourtown)', 1560, 309, 4],
+  ['Plinth 1440 x 2560 with trim (needs ply, back cover) e.g. Valley Girl', 1180, 309, 4],
+  ['Stand near ground 1120x1920 with trim (e.g Bonds Birkenhead)', 770, 218, 4],
+  ['Stand 1500 x 2000 with trim (Needs ply and Back cover) e.g. AXL', 850, 309, 4],
+  ['Stand 1600 x 2400 with trim (Needs ply and Back cover) e.g. Sea Folly', 1180, 367, 6],
+  ['Stand 1120 x 1920 with basecladding, trim and back cover e.g. Strand', 1290, 0, 4],
+  ['Stand 1120 x 1600 with basecladding, trim and back cover (Peter Alexander)', 1350, 0, 4],
+  ['Stand 1000 x 3000 with side and base trim, needs back cover (rear service)', 1200, 380, 4],
+  ['Stand 2000 x 3500 with trim and back cover e.g. ASICS Chatswood', 3500, 0, 8],
+  ['Portable 640 x 1920', 1140, 0, 0],
+  ['Portable 1280 x 1920', 1450, 0, 0],
+  ['Transparent (3000x3000) - Adidas Werribee', 780, 0, 6],
+  ['Outdoor - APCO 4 x 1m', 1280, 0, 8],
+  ['Outdoor - Share Media 9 x 3m', 9500, 0, 16],
+  ['Outdoor - Mainfreight 12 x 4m', 17750, 0, 16],
+  ['Outdoor - Lifestyle Communities (2560 x 1440)', 2600, 0, 4],
+];
+
 const TRIM_OPTIONS: Array<[string, number, number]> = [
   ['No Trim', 0, 0],
   ['Trim (Sides Only)', 0, 60],
@@ -342,6 +374,11 @@ async function main(): Promise<void> {
   );
   await seedIfEmpty('ledPeripheral', () =>
     prisma.ledPeripheral.createMany({ data: LED_PERIPHERALS.map(([name, price]) => ({ name, price })) }),
+  );
+  await seedIfEmpty('frame', () =>
+    prisma.frame.createMany({
+      data: FRAMES.map(([name, price, backcoverCost, installHours]) => ({ name, price, backcoverCost, installHours })),
+    }),
   );
   await seedIfEmpty('trimOption', () =>
     prisma.trimOption.createMany({
