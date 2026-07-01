@@ -66,6 +66,8 @@ import {
   reorderLedScreens,
   setLedScreenQty,
   updateLedScreen,
+  updateLedScreenFull,
+  updateLcdScreen,
 } from './screens.js';
 import { buildQuotePdf } from './pdf.js';
 import { buildBom, buildDescriptions, buildPmHandoff, buildSolutionSummary, loadRatios } from './outputs.js';
@@ -429,12 +431,33 @@ export const quoteRoutes = async (
     return recomputeQuote(userId(request), id);
   });
 
+  // Full re-edit of a LED screen (V3): the whole add form pre-filled — any field changeable
+  // (product + geometry + components + options). Re-prices via the same path as add, recomputes,
+  // preserves id/sortOrder/qty. Returns the updated screen with its children.
+  app.put('/quotes/:id/led-screens/:screenId', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { screenId } = parse(z.object({ screenId: z.coerce.bigint() }), request.params);
+    const input = parse(ledScreenSchema, request.body);
+    return updateLedScreenFull(userId(request), id, screenId, input);
+  });
+
   app.post('/quotes/:id/lcd-screens', write, async (request, reply) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const input = parse(lcdScreenSchema, request.body);
     const screen = await addLcdScreen(userId(request), id, input);
     return reply.code(201).send(screen);
+  });
+
+  // Full re-edit of a LCD screen (V3): replaces fields + line items, re-prices via the same path
+  // as add, recomputes, preserves id/sortOrder. Returns the updated screen with its items.
+  app.put('/quotes/:id/lcd-screens/:screenId', write, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const { screenId } = parse(z.object({ screenId: z.coerce.bigint() }), request.params);
+    const input = parse(lcdScreenSchema, request.body);
+    return updateLcdScreen(userId(request), id, screenId, input);
   });
 
   app.post('/quotes/:id/licences', write, async (request, reply) => {

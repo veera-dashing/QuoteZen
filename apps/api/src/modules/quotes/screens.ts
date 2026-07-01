@@ -884,6 +884,274 @@ export const updateLedScreen = async (
 };
 
 /**
+ * Full re-edit of an existing LED screen (V3) — the whole add form, pre-filled. UNLIKE the
+ * options-only PATCH ({@link updateLedScreen}), this replaces EVERY input: product, geometry,
+ * orientation/aspect, back cover / notes, all option FKs, AND the component list. It re-prices via
+ * the SAME {@link computeLedScreenPricing} path as {@link addLedScreen} (never a forked formula),
+ * replaces the components and the cost breakdown, recomputes the quote and audits.
+ *
+ * Preserved: the row's `id`, `sortOrder`, and `qty` (qty stays the current value unless the input
+ * supplies one). Note: replacing the cost breakdown clears any V2 per-line discounts on the old
+ * lines — expected on a full re-edit (fresh lines have no discount to inherit).
+ */
+export const updateLedScreenFull = async (
+  userId: bigint,
+  quoteId: bigint,
+  screenId: bigint,
+  input: LedScreenInput,
+) => {
+  const quote = await getQuote(quoteId); // 404s if the quote is missing
+  const screen = await prisma.quoteLedScreen.findFirst({ where: { id: screenId, quoteId } });
+  if (!screen) throw notFound('LED screen', screenId.toString());
+
+  // qty is PRESERVED across a full re-edit — it has its own dedicated endpoint (PATCH …/qty), and the
+  // add schema defaults qty to 1, so we can't distinguish "omitted" from "1". Keep the current qty so
+  // a re-edit never silently resets it (spec: id/sortOrder/qty preserved). Pricing is per-unit anyway.
+  const qty = screen.qty;
+  const pricingInput: LedScreenInput = { ...input, qty };
+
+  const { spec, lines, compRows, labourHours, freightKg, totals, unitSell, product } =
+    await computeLedScreenPricing(quote, pricingInput);
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.quoteLedScreen.update({
+      where: { id: screenId },
+      data: {
+        // sortOrder + id are untouched (not in `data`); qty preserved (or overridden by input).
+        screenName: input.screenName ?? null,
+        ledProductId: input.ledProductId ? BigInt(input.ledProductId) : null,
+        qty,
+        desiredWidthMm: input.desiredWidthMm ?? null,
+        desiredHeightMm: input.desiredHeightMm ?? null,
+        rotateCabinets: input.rotateCabinets,
+        orientation: input.orientation ?? null,
+        aspectRatioId: input.aspectRatioId ? BigInt(input.aspectRatioId) : null,
+        backCover: input.backCover,
+        frameNote: input.frameNote ?? null,
+        serviceDescriptionSuffix: input.serviceDescriptionSuffix ?? null,
+        gobId: input.gobId ? BigInt(input.gobId) : null,
+        frameId: input.frameId ? BigInt(input.frameId) : null,
+        trimId: input.trimId ? BigInt(input.trimId) : null,
+        hangingBarId: input.hangingBarId ? BigInt(input.hangingBarId) : null,
+        engineeringId: input.engineeringId ? BigInt(input.engineeringId) : null,
+        installMethodId: input.installMethodId ? BigInt(input.installMethodId) : null,
+        freightOptionId: input.freightOptionId ? BigInt(input.freightOptionId) : null,
+        warrantyId: input.warrantyId ? BigInt(input.warrantyId) : null,
+        serviceHoursId: input.serviceHoursId ? BigInt(input.serviceHoursId) : null,
+        accessEquipmentId: input.accessEquipmentId ? BigInt(input.accessEquipmentId) : null,
+        marginOverride: input.marginOverride ?? null,
+        resolutionWpx: spec?.resolutionWpx ?? null,
+        resolutionHpx: spec?.resolutionHpx ?? null,
+        totalPixels: spec ? BigInt(spec.totalPixels) : null,
+        weightKg: spec ? spec.weightKg.toString() : null,
+        powerAvgW: spec?.powerAvgW ? Math.round(spec.powerAvgW.toNumber()) : null,
+        powerMaxW: spec?.powerMaxW ? Math.round(spec.powerMaxW.toNumber()) : null,
+        cabinetDepthMm: product?.cabinetDepthMm ?? null,
+        labourHours: labourHours ? labourHours.toString() : null,
+        freightKg: freightKg !== null ? freightKg.toString() : null,
+        priceScreenMediaplayer: totals.screenMediaplayerSell.toString(),
+        priceFrameTrim: totals.frameTrimSell.toString(),
+        priceServices: totals.servicesSell.toString(),
+        priceTotal: unitSell.toString(),
+        // Replace the component list wholesale (V3 = full re-edit).
+        components: {
+          deleteMany: {},
+          create: compRows.map((r) => ({
+            componentType: r.componentType as never,
+            controllerId: r.controllerId ?? null,
+            ledPeripheralId: r.ledPeripheralId ?? null,
+            mediaplayerId: r.mediaplayerId ?? null,
+            peripheralId: r.peripheralId ?? null,
+            qty: r.qty,
+            unitCostSnapshot: r.unitCostSnapshot,
+            unitSellSnapshot: r.unitSellSnapshot,
+          })),
+        },
+        // Replace the cost breakdown (clears any old per-line discounts — expected on full re-edit).
+        costBreakdown: {
+          deleteMany: {},
+          create: lines.map((l) => ({
+            lineLabel: l.label,
+            category: l.bucket,
+            cost: l.costAud.toString(),
+            sell: l.sellAud.toString(),
+          })),
+        },
+      },
+      include: { components: true, costBreakdown: true },
+    });
+    await recordAudit(tx, {
+      quoteId,
+      userId,
+      action: 'update',
+      entityTable: 'quote_led_screens',
+      entityId: screenId,
+      changes: [{ field: 'price_total', oldValue: dec(screen.priceTotal), newValue: row.priceTotal }],
+    });
+    return row;
+  });
+
+  await recomputeQuote(userId, quoteId);
+  return updated;
+};
+
+/**
+ * Resolve every LCD line to its authoritative point-in-time cost/sell and compute the section
+ * subtotals + grossed-up screen total — the SINGLE pricing path shared by {@link addLcdScreen} and
+ * {@link updateLcdScreen} so create + re-edit price identically (catalog-cost resolution + fixed
+ * margin gross-up + out-of-hours labour uplift + subtotals + G54 rounding).
+ */
+type LcdResolvedLine = {
+  displayId?: bigint;
+  itemType: LcdScreenInput['items'][number]['itemType'];
+  description: string | null;
+  qty: number;
+  unitCost: number;
+  unitSell: number;
+};
+interface LcdPricing {
+  resolved: LcdResolvedLine[];
+  priceScreenMediaplayer: number;
+  priceBracketShroud: number;
+  priceServices: number;
+  priceTotal: number;
+}
+
+const computeLcdScreenPricing = async (input: LcdScreenInput): Promise<LcdPricing> => {
+  const config = await loadPricingConfig();
+  const margin = config.markups.lcdMargin;
+
+  // Out-of-hours? Service Hours is a lookup; the workbook keys off the literal "Business Hours".
+  const serviceHours = input.serviceHoursId
+    ? await prisma.serviceHoursOption.findUnique({ where: { id: BigInt(input.serviceHoursId) } })
+    : null;
+  const outOfHours = !!serviceHours && serviceHours.name !== 'Business Hours';
+  const settingNum = async (key: string, fallback: number): Promise<number> => {
+    const s = await prisma.setting.findUnique({ where: { key } });
+    return s ? Number(s.value) : fallback;
+  };
+  const installHourlyCost = await settingNum('install_hourly_cost', 95);
+  const oohRateCost = await settingNum('out_of_hours_rate_cost', 50);
+  const oohRateSell = await settingNum('out_of_hours_rate_sell', 80);
+
+  const resolved: LcdResolvedLine[] = [];
+  for (const i of input.items) {
+    const qty = Number(i.qty ?? 1);
+    let cost = Number(i.unitCost ?? 0);
+    let sell: number | null = i.unitSell !== undefined ? Number(i.unitSell) : null;
+    let description = i.description ?? null;
+    if (i.displayId) {
+      const row = await prisma.displayCatalog.findUnique({ where: { id: BigInt(i.displayId) } });
+      if (row) {
+        cost = Number(row.totalCost ?? row.usd ?? 0);
+        sell = null; // recompute from margin below
+        if (!description) description = row.model;
+      }
+    }
+    const unitSell = sell !== null ? sell : round(applyMargin(cost, margin)).toNumber();
+    resolved.push({
+      displayId: i.displayId ? BigInt(i.displayId) : undefined,
+      itemType: i.itemType,
+      description,
+      qty,
+      unitCost: round(cost).toNumber(),
+      unitSell: round(unitSell).toNumber(),
+    });
+  }
+
+  if (outOfHours && installHourlyCost > 0) {
+    const upliftHours = resolved
+      .filter((r) => r.itemType === 'install' && !/site attendance/i.test(r.description ?? ''))
+      .reduce((acc, r) => acc + (r.unitCost * r.qty) / installHourlyCost, 0);
+    if (upliftHours > 0) {
+      resolved.push({
+        itemType: 'install',
+        description: `Out of Hours uplift (${round(upliftHours).toNumber()} hrs @ $${oohRateCost}/hr)`,
+        qty: 1,
+        unitCost: round(upliftHours * oohRateCost).toNumber(),
+        unitSell: round(upliftHours * oohRateSell).toNumber(),
+      });
+    }
+  }
+
+  const ext = (r: LcdResolvedLine) => r.unitSell * r.qty;
+  const sumWhere = (pred: (r: LcdResolvedLine) => boolean) =>
+    round(resolved.filter(pred).reduce((a, r) => a + ext(r), 0)).toNumber();
+  const priceScreenMediaplayer = sumWhere((r) => r.itemType === 'display' || r.itemType === 'mediaplayer');
+  const priceBracketShroud = sumWhere((r) => r.itemType === 'bracket');
+  const priceServices = sumWhere(
+    (r) => r.itemType === 'install' || r.itemType === 'labour' || r.itemType === 'location_fee',
+  );
+  const totalSell = resolved.reduce((a, r) => a + ext(r), 0);
+  const priceTotal = round(round(totalSell / 10, 0).toNumber() * 10).toNumber();
+
+  return { resolved, priceScreenMediaplayer, priceBracketShroud, priceServices, priceTotal };
+};
+
+/**
+ * Full re-edit of an existing LCD screen (V3) — replaces the screen's fields (name/orientation/
+ * display/install/service-hours/warranty) AND all its line items, re-pricing via the SAME
+ * {@link computeLcdScreenPricing} path as {@link addLcdScreen}. Preserves `id`/`sortOrder`.
+ * Recomputes the quote + audits.
+ */
+export const updateLcdScreen = async (
+  userId: bigint,
+  quoteId: bigint,
+  screenId: bigint,
+  input: LcdScreenInput,
+) => {
+  await getQuote(quoteId);
+  const screen = await prisma.quoteLcdScreen.findFirst({ where: { id: screenId, quoteId } });
+  if (!screen) throw notFound('LCD screen', screenId.toString());
+
+  const { resolved, priceScreenMediaplayer, priceBracketShroud, priceServices, priceTotal } =
+    await computeLcdScreenPricing(input);
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.quoteLcdScreen.update({
+      where: { id: screenId },
+      data: {
+        // id + sortOrder preserved (not in `data`).
+        screenName: input.screenName ?? null,
+        orientation: input.orientation ?? null,
+        displayId: input.displayId ? BigInt(input.displayId) : null,
+        installMethodId: input.installMethodId ? BigInt(input.installMethodId) : null,
+        serviceHoursId: input.serviceHoursId ? BigInt(input.serviceHoursId) : null,
+        warrantyId: input.warrantyId ? BigInt(input.warrantyId) : null,
+        priceScreenMediaplayer: priceScreenMediaplayer.toString(),
+        priceBracketShroud: priceBracketShroud.toString(),
+        priceServices: priceServices.toString(),
+        priceTotal: priceTotal.toString(),
+        items: {
+          deleteMany: {},
+          create: resolved.map((r) => ({
+            displayId: r.displayId ?? null,
+            itemType: r.itemType,
+            description: r.description,
+            qty: r.qty,
+            unitCost: r.unitCost.toString(),
+            unitSell: r.unitSell.toString(),
+          })),
+        },
+      },
+      include: { items: true },
+    });
+    await recordAudit(tx, {
+      quoteId,
+      userId,
+      action: 'update',
+      entityTable: 'quote_lcd_screens',
+      entityId: screenId,
+      changes: [{ field: 'price_total', oldValue: dec(screen.priceTotal), newValue: row.priceTotal?.toString() ?? null }],
+    });
+    return row;
+  });
+
+  await recomputeQuote(userId, quoteId);
+  return updated;
+};
+
+/**
  * Price and persist an LCD screen as the LCD-1 questionnaire — a set of qty-priced line items
  * across the sheet's sections (Display, Mediaplayer & Peripherals, Bracket & Shroud,
  * Configuration/Installation, Seen Labour, Location Fees). Faithful to the workbook:
@@ -908,91 +1176,8 @@ export const updateLedScreen = async (
  */
 export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdScreenInput) => {
   await getQuote(quoteId);
-  const config = await loadPricingConfig();
-  const margin = config.markups.lcdMargin;
-
-  // Out-of-hours? Service Hours is a lookup; the workbook keys off the literal "Business Hours".
-  const serviceHours = input.serviceHoursId
-    ? await prisma.serviceHoursOption.findUnique({ where: { id: BigInt(input.serviceHoursId) } })
-    : null;
-  const outOfHours = !!serviceHours && serviceHours.name !== 'Business Hours';
-  // Out-of-hours uplift is a LABOUR-COST calc: install hours = install-line cost ÷ install hourly cost,
-  // charged at the uplift rate per hour (cost/sell). Rates are settings (workbook/LCDRef defaults).
-  const settingNum = async (key: string, fallback: number): Promise<number> => {
-    const s = await prisma.setting.findUnique({ where: { key } });
-    return s ? Number(s.value) : fallback;
-  };
-  const installHourlyCost = await settingNum('install_hourly_cost', 95);
-  const oohRateCost = await settingNum('out_of_hours_rate_cost', 50);
-  const oohRateSell = await settingNum('out_of_hours_rate_sell', 80);
-
-  // Resolve every line's authoritative cost; catalog rows win over client-sent prices.
-  type Resolved = {
-    displayId?: bigint;
-    itemType: LcdScreenInput['items'][number]['itemType'];
-    description: string | null;
-    qty: number;
-    unitCost: number;
-    unitSell: number; // per-unit
-  };
-  const resolved: Resolved[] = [];
-  for (const i of input.items) {
-    const qty = Number(i.qty ?? 1);
-    let cost = Number(i.unitCost ?? 0);
-    let sell: number | null = i.unitSell !== undefined ? Number(i.unitSell) : null;
-    let description = i.description ?? null;
-    if (i.displayId) {
-      const row = await prisma.displayCatalog.findUnique({ where: { id: BigInt(i.displayId) } });
-      if (row) {
-        // Authoritative snapshot: cost = total_cost (LCDRef col 8); catalog sell is ignored in favour
-        // of the fixed-margin gross-up so the line sell stays consistent with the screen total.
-        cost = Number(row.totalCost ?? row.usd ?? 0);
-        sell = null; // recompute from margin below
-        if (!description) description = row.model;
-      }
-    }
-    // Sell: explicit manual price kept; otherwise gross cost up by the fixed margin (G54 per-line).
-    const unitSell = sell !== null ? sell : round(applyMargin(cost, margin)).toNumber();
-    resolved.push({
-      displayId: i.displayId ? BigInt(i.displayId) : undefined,
-      itemType: i.itemType,
-      description,
-      qty,
-      unitCost: round(cost).toNumber(),
-      unitSell: round(unitSell).toNumber(),
-    });
-  }
-
-  // Out-of-hours uplift (F31 = SUM(K28:K29) × rate): install labour HOURS charged at the uplift rate.
-  // Install hours = install-line cost ÷ install hourly cost; site-attendance is excluded (workbook /135,
-  // not part of SUM(K28:K29)). Sell uses the uplift sell rate directly (already a marked-up labour rate).
-  if (outOfHours && installHourlyCost > 0) {
-    const upliftHours = resolved
-      .filter((r) => r.itemType === 'install' && !/site attendance/i.test(r.description ?? ''))
-      .reduce((acc, r) => acc + (r.unitCost * r.qty) / installHourlyCost, 0);
-    if (upliftHours > 0) {
-      resolved.push({
-        itemType: 'install',
-        description: `Out of Hours uplift (${round(upliftHours).toNumber()} hrs @ $${oohRateCost}/hr)`,
-        qty: 1,
-        unitCost: round(upliftHours * oohRateCost).toNumber(),
-        unitSell: round(upliftHours * oohRateSell).toNumber(),
-      });
-    }
-  }
-
-  // Section subtotals (sell) into the dedicated columns.
-  const ext = (r: Resolved) => r.unitSell * r.qty;
-  const sumWhere = (pred: (r: Resolved) => boolean) =>
-    round(resolved.filter(pred).reduce((a, r) => a + ext(r), 0)).toNumber();
-  const priceScreenMediaplayer = sumWhere((r) => r.itemType === 'display' || r.itemType === 'mediaplayer');
-  const priceBracketShroud = sumWhere((r) => r.itemType === 'bracket');
-  const priceServices = sumWhere(
-    (r) => r.itemType === 'install' || r.itemType === 'labour' || r.itemType === 'location_fee',
-  );
-  // Screen total: workbook G54 — total grossed-up sell rounded to the nearest $10 (ROUND(…, -1)).
-  const totalSell = resolved.reduce((a, r) => a + ext(r), 0);
-  const priceTotal = round(round(totalSell / 10, 0).toNumber() * 10).toNumber();
+  const { resolved, priceScreenMediaplayer, priceBracketShroud, priceServices, priceTotal } =
+    await computeLcdScreenPricing(input);
 
   return prisma.$transaction(async (tx) => {
     const maxOrder = await tx.quoteLcdScreen.aggregate({ where: { quoteId }, _max: { sortOrder: true } });
