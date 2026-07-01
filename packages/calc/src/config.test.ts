@@ -273,6 +273,52 @@ describe('configureScreen — U2 manufacturer-priority ordering', () => {
   });
 });
 
+describe('configureScreen — per-model priority ordering', () => {
+  // Same manufacturer (priority 1) so the manufacturer key ties; the models differ only by modelPriority.
+  // The admin-set model priority must decide, overriding the best-fit + model-name tiebreaks below it.
+  const mk = (id: string, model: string, modelPriority: number, w = 500, h = 500): ConfigProduct => ({
+    id,
+    model,
+    minCabinetWMm: w,
+    minCabinetHMm: h,
+    pixelPitchHmm: 2.6,
+    pixelPitchVmm: 2.6,
+    manufacturerPriority: 1,
+    manufacturerName: 'LEDFul',
+    modelPriority,
+  });
+
+  it('orders by model priority within a manufacturer (lower wins), beating the model-name tiebreak', () => {
+    // Both are an exact 1000×1000 fit → identical area deviation. 'ZModel' has the lower model priority,
+    // so it must rank ahead of 'AModel' despite sorting later alphabetically.
+    const A = mk('a', 'AModel', 50);
+    const Z = mk('z', 'ZModel', 10);
+    const res = configureScreen([A, Z], { desiredWidthMm: 1000, desiredHeightMm: 1000, ratios: RATIOS }).options;
+    expect(res[0]!.model).toBe('ZModel');
+    expect(res[0]!.modelPriority).toBe(10);
+    expect(res[1]!.model).toBe('AModel');
+  });
+
+  it('manufacturer priority still WINS over model priority (mfr is primary)', () => {
+    // Preferred manufacturer (priority 1) with a HIGH model priority vs a worse manufacturer (priority 3)
+    // with a LOW model priority → the manufacturer key decides first.
+    const PREF = mk('p', 'HighModel', 900);
+    const OTHER: ConfigProduct = { ...mk('o', 'LowModel', 1), manufacturerPriority: 3, manufacturerName: 'Muxwave' };
+    const res = configureScreen([OTHER, PREF], { desiredWidthMm: 1000, desiredHeightMm: 1000, ratios: RATIOS }).options;
+    expect(res[0]!.manufacturerName).toBe('LEDFul');
+    expect(res[0]!.model).toBe('HighModel');
+  });
+
+  it('defaults to a neutral priority (100) when unset, so ranking is unchanged by fit', () => {
+    const res = configureScreen([mk('x', 'PlainNoPri', undefined as unknown as number)], {
+      desiredWidthMm: 1000,
+      desiredHeightMm: 1000,
+      ratios: RATIOS,
+    }).options;
+    expect(res[0]!.modelPriority).toBe(100);
+  });
+});
+
 describe('configureScreen — W0 environment filter (+ brightness fallback)', () => {
   // Four 500mm-square products that all fit 1000×1000 exactly; they differ only in environment/brightness:
   //  E1 explicit indoor;  E2 explicit outdoor;  B_HI no env + 5000 nits (→ outdoor via fallback);

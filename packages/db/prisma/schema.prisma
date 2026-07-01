@@ -321,6 +321,9 @@ model LedProduct {
   mechanicalOptions String? @map("mechanical_options")
   serviceAccess    String?  @map("service_access")
   priceValidFrom   DateTime? @map("price_valid_from")
+  /** Per-model recommendation priority (lower = preferred), admin-set. Secondary ranking key in the
+      config engine, applied within a manufacturer. Default 100 ⇒ neutral (rank by fit) until changed. */
+  priority         Int      @default(100)
   deprecated       Boolean  @default(false) @map("deprecated")
 
   commentary LedCommentary[]

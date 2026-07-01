@@ -511,6 +511,8 @@ interface ConfigOption {
   // U2: manufacturer-priority ordering + lead time + size-tolerance band.
   manufacturerName: string | null;
   leadTimeDays: number | null;
+  /** Per-model recommendation priority (admin-set, lower = preferred) — secondary ranking key. */
+  modelPriority: number;
   toleranceBand: number;
   // W0: pixel pitch (mm) + a fine-pitch GOB recommendation flag (from env/viewing-distance selection).
   pixelPitchMm: number;
@@ -583,12 +585,13 @@ function withinBand<T extends Pick<ConfigOption, 'sizeMode' | 'toleranceBand'>>(
 type ConfigSortKey =
   | 'model' | 'manufacturerName' | 'leadTimeDays' | 'size' | 'sizeDeltaPct'
   | 'toleranceBand' | 'resolution' | 'ratioLabel' | 'fillPercent' | 'cabinetCount'
-  | 'cutCabinetSuggested' | 'confidence' | 'pixelPitchMm';
+  | 'cutCabinetSuggested' | 'confidence' | 'pixelPitchMm' | 'modelPriority';
 
 // The human header labels shown in the table (also used as the clickable sort targets).
 const CONFIG_COLUMNS: Array<{ key: ConfigSortKey; label: string; num?: boolean }> = [
   { key: 'model', label: 'Product' },
   { key: 'manufacturerName', label: 'Manufacturer' },
+  { key: 'modelPriority', label: 'Model pri.', num: true },
   { key: 'pixelPitchMm', label: 'Pitch (mm)', num: true },
   { key: 'leadTimeDays', label: 'Lead (d)', num: true },
   { key: 'size', label: 'Size (mm)' },
@@ -617,6 +620,7 @@ function configSortValue(o: ConfigOption, key: ConfigSortKey): number | string |
   switch (key) {
     case 'model': return o.model ?? null;
     case 'manufacturerName': return o.manufacturerName ?? null;
+    case 'modelPriority': return o.modelPriority;
     case 'ratioLabel': return o.ratioLabel ?? null;
     case 'leadTimeDays': return o.leadTimeDays ?? null;
     case 'pixelPitchMm': return o.pixelPitchMm ?? null;
@@ -1433,6 +1437,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                         )}
                       </td>
                       <td>{o.manufacturerName ?? '—'}</td>
+                      <td className="cell-num">{o.modelPriority}</td>
                       <td className="cell-num">{o.pixelPitchMm != null ? o.pixelPitchMm : '—'}</td>
                       <td className="cell-num">{o.leadTimeDays ?? '—'}</td>
                       <td>{o.widthMm}×{o.heightMm}</td>

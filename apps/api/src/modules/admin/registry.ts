@@ -116,9 +116,11 @@ export const TABLES: TableDef[] = [
       f('powerMaxW', 'int'), f('powerAvgW', 'int'), f('kgPerSqm', 'decimal'), f('costPerSqmUsd', 'decimal'),
       f('modulePrice', 'decimal'), f('volumetricModifier', 'decimal'), f('includesReceivers', 'boolean'),
       f('gobIncluded', 'boolean'), f('packIncluded', 'boolean'), f('serviceAccess'),
+      // Per-model recommendation priority (lower = preferred) — secondary ranking key in the config engine.
+      f('priority', 'int'),
       f('upgradeOptions', 'text'), f('mechanicalOptions', 'text'), DEPRECATED,
     ],
-    listFields: ['vendor', 'model', 'pixelPitchH', 'brightnessNits', 'costPerSqmUsd', 'cabinetType', 'deprecated'],
+    listFields: ['vendor', 'model', 'priority', 'pixelPitchH', 'brightnessNits', 'costPerSqmUsd', 'cabinetType', 'deprecated'],
   },
   {
     resource: 'led-commentary', model: 'ledCommentary', label: 'LED Commentary', group: 'LED',

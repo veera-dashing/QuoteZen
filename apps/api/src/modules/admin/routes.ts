@@ -111,6 +111,10 @@ export const adminRoutes = async (app: FastifyInstance): Promise<void> => {
       const setting = await prisma.setting.findUnique({ where: { key: 'default_client_discount_pct' } });
       if (setting?.value != null) data.discountPct = Number(setting.value);
     }
+    // On CREATE, a blank optional field arrives as null. Dropping null keys lets the DB column DEFAULT
+    // apply (e.g. led_products.priority / manufacturers.priority default to 100) instead of Prisma
+    // rejecting null on a NOT NULL column. For nullable columns this is a no-op (they default to null).
+    for (const k of Object.keys(data)) if (data[k] === null) delete data[k];
     const fieldNames = def.fields.map((fld) => fld.name);
     // Create + audit in one transaction — a sensitive table is never mutated without a trail.
     const row = await prisma.$transaction(async (tx) => {

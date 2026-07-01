@@ -73,10 +73,20 @@ export interface ConfigProduct {
   manufacturerName?: string | null;
   /** Manufacturer lead time in days (carried through to the option for the UI). */
   leadTimeDays?: number | null;
+  /**
+   * Per-MODEL recommendation priority — lower wins. Secondary ranking key, applied WITHIN a
+   * manufacturer (after {@link manufacturerPriority}, before best-fit). Default
+   * {@link DEFAULT_MODEL_PRIORITY} when unset, so a catalogue where every model shares the default
+   * ranks purely by fit (unchanged) — an admin lowers a model's value to float it up.
+   */
+  modelPriority?: number | null;
 }
 
 /** Default priority for a product with no manufacturer — sorts after every real (lower) priority. */
 export const NO_MANUFACTURER_PRIORITY = 999;
+
+/** Neutral per-model priority (matches the DB default) — all-equal ⇒ model priority is a no-op tiebreak. */
+export const DEFAULT_MODEL_PRIORITY = 100;
 
 export interface ConfigRequest {
   desiredWidthMm: number;
@@ -172,6 +182,8 @@ export interface ConfigOption {
   manufacturerName: string | null;
   /** Manufacturer lead time in days (null when unknown). */
   leadTimeDays: number | null;
+  /** Per-model recommendation priority — SECONDARY sort key within a manufacturer (lower first). */
+  modelPriority: number;
 }
 
 export interface ConfigResult {
@@ -270,6 +282,7 @@ const buildOption = (
     manufacturerPriority: product.manufacturerPriority ?? NO_MANUFACTURER_PRIORITY,
     manufacturerName: product.manufacturerName ?? null,
     leadTimeDays: product.leadTimeDays ?? null,
+    modelPriority: product.modelPriority ?? DEFAULT_MODEL_PRIORITY,
   };
 };
 
@@ -376,19 +389,22 @@ export const configureScreen = (
     return { options: [], reasons: ['No valid cabinet fit for the requested opening.'] };
   }
 
-  // Rank (U2): manufacturer sourcing priority FIRST (lower = preferred), so options group by the
-  // manufacturer order the user wants to see; WITHIN each manufacturer, the existing best-fit ranking
-  // applies — closest area fit, then exact > under/over at equal deviation, then non-rotated preferred,
-  // then a preferred aspect ratio, then fewer cabinets. W0: when a viewing distance was requested, a
-  // MILD "coarsest pitch that still fits (best value)" preference is applied as a low-priority tiebreak
-  // (after all the fit/geometry keys, before the model-name final tiebreak) — it never reorders across
-  // manufacturers or better fits. Finally model name (stable & explainable). Order of keys:
-  //   1. manufacturerPriority  2. area deviation  3. exact>under>over  4. non-rotated
-  //   5. preferred ratio  6. fewer cabinets  7. [W0 viewing-distance] coarsest pitch  8. model name.
+  // Rank: manufacturer sourcing priority FIRST (U2, lower = preferred), then per-MODEL priority
+  // (admin-set, lower = preferred) as the SECONDARY key — so within a manufacturer the models the admin
+  // has prioritised come first; WITHIN an equal (manufacturer, model) priority the existing best-fit
+  // ranking applies — closest area fit, then exact > under/over at equal deviation, then non-rotated
+  // preferred, then a preferred aspect ratio, then fewer cabinets. W0: when a viewing distance was
+  // requested, a MILD "coarsest pitch that still fits (best value)" preference is applied as a
+  // low-priority tiebreak (after all the fit/geometry keys, before the model-name final tiebreak) — it
+  // never reorders across manufacturers or better fits. Finally model name (stable & explainable).
+  // Order of keys:
+  //   1. manufacturerPriority  2. modelPriority  3. area deviation  4. exact>under>over  5. non-rotated
+  //   6. preferred ratio  7. fewer cabinets  8. [W0 viewing-distance] coarsest pitch  9. model name.
   const sizeRank: Record<SizeMode, number> = { exact: 0, under: 1, over: 2 };
   const preferCoarsest = maxPitchMm != null; // only bias by pitch when the user gave a viewing distance
   deduped.sort((a, b) => {
     if (a.manufacturerPriority !== b.manufacturerPriority) return a.manufacturerPriority - b.manufacturerPriority;
+    if (a.modelPriority !== b.modelPriority) return a.modelPriority - b.modelPriority;
     const da = areaDeviation(a, req);
     const db = areaDeviation(b, req);
     if (da !== db) return da - db;
@@ -477,7 +493,10 @@ export const selectTiers = (
   const pitch = (o: ConfigOption) => lookup.pixelPitchMm.get(key(o)) ?? Number.POSITIVE_INFINITY;
   const nits = (o: ConfigOption) => lookup.brightnessNits?.get(key(o)) ?? 0;
 
-  // Recommended = the top-ranked (best-fit) config — index 0 of the ranked list.
+  // Recommended = the top-ranked config — index 0 of the ranked list, which already honours
+  // manufacturer + model priority (then best fit). Value/Premium below intentionally re-sort by their
+  // OWN axis (cheapest cost/sqm · finest pitch) — those are deliberate specialty picks, so they do NOT
+  // apply the admin priority order (only Recommended reflects it).
   const recommended = ranked[0]!;
 
   // Value = cheapest cost/sqm; tiebreak by best fit (earlier in ranked order), then model.

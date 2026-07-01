@@ -21,6 +21,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.client.deleteMany({ where: { name: { startsWith: 'ZZ-TEST-' } } });
+  await prisma.ledProduct.deleteMany({ where: { model: { startsWith: 'ZZ-PRI-' } } });
+  await prisma.manufacturer.deleteMany({ where: { name: { startsWith: 'ZZ-PRI-' } } });
   await app.close();
   await prisma.$disconnect();
 });
@@ -52,6 +54,50 @@ describe('catalog data is present (imported)', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().total).toBeGreaterThan(0);
+  });
+});
+
+describe('priority defaults to the medium value (100) on create', () => {
+  // A blank/omitted priority on create must fall back to the DB @default(100) for BOTH manufacturers
+  // and LED products (so an admin only sets it when they want to deviate), then be admin-editable.
+  it('manufacturer: null priority on create → 100, editable afterward', async () => {
+    const create = await app.inject({
+      method: 'POST',
+      url: '/admin/manufacturers',
+      headers: auth(),
+      payload: { name: `ZZ-PRI-${Math.floor(Math.random() * 1e9)}`, priority: null, leadTimeDays: null },
+    });
+    expect(create.statusCode).toBe(201);
+    expect(create.json().priority).toBe(100);
+    const id = create.json().id as string;
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: `/admin/manufacturers/${id}`,
+      headers: auth(),
+      payload: { priority: 5 },
+    });
+    expect(patched.json().priority).toBe(5);
+  });
+
+  it('led product: null priority on create → 100', async () => {
+    const create = await app.inject({
+      method: 'POST',
+      url: '/admin/led-products',
+      headers: auth(),
+      payload: { model: `ZZ-PRI-${Math.floor(Math.random() * 1e9)}`, priority: null },
+    });
+    expect(create.statusCode).toBe(201);
+    expect(create.json().priority).toBe(100);
+  });
+
+  it('led product: an explicit priority on create is honoured', async () => {
+    const create = await app.inject({
+      method: 'POST',
+      url: '/admin/led-products',
+      headers: auth(),
+      payload: { model: `ZZ-PRI-${Math.floor(Math.random() * 1e9)}`, priority: 10 },
+    });
+    expect(create.json().priority).toBe(10);
   });
 });
 

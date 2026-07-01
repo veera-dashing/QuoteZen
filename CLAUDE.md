@@ -614,3 +614,21 @@ confirmation of the CURRENT over-cap value (re-armed on any discount edit); `han
 OK; the debounced auto-save is suspended while the override is unconfirmed (so it can't slip through mid-typing); the
 field hint reflects the pending-confirmation state. Web-only — no schema/API change; the server remains the
 enforcement boundary.
+
+### Block 18 — per-model recommendation priority (admin-set, secondary ranking key)
+The LED config engine already ranked by **manufacturer priority** (`manufacturers.priority`, admin-editable, PRIMARY
+key). Added an admin-settable **per-model priority** so admins can order preferred *models* within a manufacturer for
+the recommended options. Both priority values are now admin-maintained in Reference data and drive the ranked configs
++ Good/Better/Best "Recommended" tier. 116 calc tests + full api suite green; typecheck + web build clean.
+- ✅ **Schema** — `led_products.priority` (`Int @default(100)`, migration `led_product_priority`); default 100 =
+  neutral, so existing catalogues rank exactly as before until an admin changes a value.
+- ✅ **Config engine** (`packages/calc/src/config.ts`) — `ConfigProduct.modelPriority` + `ConfigOption.modelPriority`
+  (`DEFAULT_MODEL_PRIORITY = 100`); the sort gains it as the **SECONDARY key**, right after `manufacturerPriority` and
+  before best-fit: `1. manufacturerPriority 2. modelPriority 3. area-fit 4. exact>under>over …`. So manufacturer order
+  wins first, then admin model order, then fit. Recommended tier = ranked[0], so it inherits both.
+- ✅ **API** — `screens.ts` maps `modelPriority: p.priority` into the ConfigProduct (alongside manufacturer priority);
+  admin registry exposes `priority` on `led-products` (editable + a list column). Prisma returns it by default (no
+  include change).
+- ✅ **Web** — the ranked configurations table gains a sortable **"Model pri."** column (`ConfigOption.modelPriority`).
+- **Not changed:** Value/Premium tiers still rank by cost/sqm and pitch by design (different axes); only the
+  best-fit/Recommended ordering honours the priorities.

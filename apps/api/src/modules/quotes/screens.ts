@@ -163,6 +163,8 @@ export const configureForQuote = async (
     manufacturerPriority: p.manufacturer?.priority ?? null,
     manufacturerName: p.manufacturer?.name ?? null,
     leadTimeDays: p.manufacturer?.leadTimeDays ?? null,
+    // Per-model recommendation priority (admin-set) — secondary ranking key within a manufacturer.
+    modelPriority: p.priority ?? null,
   }));
   const ratioRows = ratios.map((r) => ({
     minValue: Number(r.minValue),
@@ -251,6 +253,8 @@ export interface TierOption {
   // U2: manufacturer ordering + lead time + size-tolerance band (carried through from configureForQuote).
   manufacturerName: string | null;
   leadTimeDays: number | null;
+  /** Per-model recommendation priority (admin-set) — carried through for display/transparency. */
+  modelPriority: number;
   toleranceBand: number;
   /** Supply cost (AUD) — masked (null) for non-admin callers (BR-081). */
   supplyCostAud: string | null;
@@ -343,6 +347,7 @@ export const optionsForQuote = async (
       ratioGuidance: o.ratioGuidance,
       manufacturerName: o.manufacturerName,
       leadTimeDays: o.leadTimeDays,
+      modelPriority: o.modelPriority,
       toleranceBand: o.toleranceBand,
       supplyCostAud: showCost ? round(cost).toString() : null,
       supplySellAud: round(sell).toString(),
