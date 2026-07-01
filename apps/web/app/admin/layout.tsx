@@ -13,6 +13,7 @@ const NAV: Array<{ href: string; label: string; roles: Role[] }> = [
   { href: '/quotes', label: '📐 Quotes', roles: STAFF },
   { href: '/admin/users', label: '👥 Users & roles', roles: ['admin'] },
   { href: '/admin/margins', label: '💰 Margins & markups', roles: ['admin'] },
+  { href: '/admin/engine', label: '⚙️ Engine constraints', roles: ['admin'] },
   { href: '/admin/audit', label: '📜 Audit log', roles: ['admin'] },
   { href: '/admin/kb', label: '📚 Knowledge base', roles: STAFF },
   { href: '/admin/rules', label: '⚖️ Effective rules', roles: STAFF },
