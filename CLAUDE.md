@@ -456,3 +456,36 @@ FIRST part of the LED form and folded into the ranked configuration results. 203
 **Note on W0 vs Block 11's `environment`:** the earlier W0 draft mentioned in prior context is this block;
 `led_products.environment` is the only new catalog column. The indoor/outdoor decision uses the field first
 and falls back to `brightness_nits ≥ outdoor_brightness_nits` when the field is null.
+
+### Block 13 — LCD business-logic completion (validation + warranty/install pricing)
+Closed the two LCD gaps found auditing the LCD tab against the LED side: LCD had no validation engine, and
+`warrantyId`/`installMethodId` were captured but never priced. 219 tests green (9 shared + 104 calc + 106 api).
+- ✅ **X1 — LCD validation/conflict engine** — calc `validateLcdScreen` (+ `LcdValidationInput`) mirrors the
+  LED engine (same `ValidationFinding`/severity/`canFinalise`). Rules: **error `LCD_DISPLAY_REQUIRED`** (screen
+  has items but no `display` line with a real `displayId`; zero items → `cannot_evaluate`), **warning
+  `LCD_NO_MEDIAPLAYER`** (display present, no mediaplayer item, and the display description shows no built-in
+  player — chromecast/android/built-in; no description → `cannot_evaluate`), **warning `LCD_NO_BRACKET`**,
+  **warning `LCD_NO_ORIENTATION`**. `validate.ts` `lcdScreenToInput` appends LCD screens to the same
+  `screens[]` aggregate, so `changeStatus`'s existing validation guardrail gates LCD errors too (non-admin
+  409, admin override audited `validation_guardrail`) — no guardrail duplication; the Review Validation card
+  renders LCD entries with no change (it maps `validation.screens` generically).
+- ✅ **X2 — LCD warranty ($/extra-year) + install-method labour pricing** — migrations add
+  `warranty_options.per_year_cost`, `install_methods.default_hours` + `hourly_rate_cost`, and the `warranty`
+  value on the `LcdItemType` Postgres enum (a separate `ALTER TYPE … ADD VALUE` migration — enum values don't
+  surface in a column diff). In `computeLcdScreenPricing`:
+  - **Warranty** (fixed $/extra-year, beyond a 3-yr baseline): `extraYears = max(0, warranty.years −
+    standard_warranty_years[=3])`; line `unitCost = extraYears × per_year_cost`, sell via `lcd_margin`;
+    `Standard (3yr)` adds no line. Grouped into `priceServices`.
+  - **Install-method labour**: if `default_hours > 0`, line `unitCost = default_hours × (hourly_rate_cost ??
+    install_hourly_cost $95)`, sell via `lcd_margin`, pushed **before** the OOH block so it feeds the
+    out-of-hours uplift hours; warranty pushed **after** so it never does.
+  - **Auto-line dedup**: input items are stripped of prior auto lines (itemType `warranty`; `install` lines
+    whose description starts `"Installation — "` or matches `/^Out of Hours uplift/i`) before regenerating —
+    create + re-edit price identically and this **fixes a latent OOH double-count on re-edit**. The web edit
+    form applies the same filter on load. Admin CRUD gains the new fields; seed placeholders ($150/yr,
+    4 hrs) are **admin-editable** — the workbook has no warranty/install rate, so these are commercial
+    defaults, not sourced constants. **Warranty & install method are otherwise still descriptive** where a
+    rate isn't set (per_year_cost 0 / default_hours 0 ⇒ no line), so existing quotes are unaffected.
+
+**Still LED-only by design:** LCD is fixed-size hardware, so it stays out of the best-fit config engine,
+size-tolerance bands, and Good/Better/Best tiers (those are the LED "lego" flow).
