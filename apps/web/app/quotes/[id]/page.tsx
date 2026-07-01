@@ -6,18 +6,39 @@ import { api, ApiError, downloadFile, getRole, uploadFile } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
 
 interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string }
+// A stored LED component row (as returned on the screen) — carries the componentType + the one FK id.
+interface LedComponent {
+  id: string; componentType: string; qty: number;
+  controllerId?: string | null; ledPeripheralId?: string | null;
+  mediaplayerId?: string | null; peripheralId?: string | null;
+}
 interface LedScreen {
   id: string; screenName: string | null; qty: number;
   resolutionWpx: number | null; resolutionHpx: number | null; priceTotal: string | null;
   orientation?: string | null;
   aspectRatio?: { ratioLabel: string } | null;
+  // Full-edit pre-fill (V4): the panel + geometry inputs finalised at add time.
+  ledProductId?: string | null; desiredWidthMm?: number | null; desiredHeightMm?: number | null;
+  rotateCabinets?: boolean; aspectRatioId?: string | null;
+  components?: LedComponent[];
   // Secondary options/services (Form 2) — raw FK scalars + housing/notes, used to pre-fill the editor.
   gobId?: string | null; frameId?: string | null; trimId?: string | null; hangingBarId?: string | null;
   engineeringId?: string | null; installMethodId?: string | null; freightOptionId?: string | null;
   warrantyId?: string | null; serviceHoursId?: string | null; accessEquipmentId?: string | null;
   backCover?: boolean; frameNote?: string | null; serviceDescriptionSuffix?: string | null;
 }
-interface LcdScreen { id: string; screenName: string | null; priceTotal: string | null }
+// A stored LCD line item (as returned on the screen), used to pre-fill the LCD edit form.
+interface LcdItem {
+  id: string; itemType: LcdItemType; displayId?: string | null;
+  description?: string | null; qty: number; unitCost?: string | null; unitSell?: string | null;
+}
+interface LcdScreen {
+  id: string; screenName: string | null; priceTotal: string | null;
+  // Full-edit pre-fill (V4).
+  orientation?: string | null; displayId?: string | null;
+  installMethodId?: string | null; serviceHoursId?: string | null; warrantyId?: string | null;
+  items?: LcdItem[];
+}
 interface Licence { id: string; screenType: string; tier: string; qty: number; isInteractive: boolean }
 interface Quote {
   id: string; jobReference: string; status: string; lockVersion: number;
@@ -26,6 +47,7 @@ interface Quote {
   requestedShippingDate?: string | null; siteAddress?: string | null; projectNotes?: string | null;
   discountPct?: string | null; // stored as a fraction 0..1
   discountScope?: 'one_off' | 'recurring' | null; // U5 — upfront vs every renewal
+  discountMode?: 'stack' | 'item_only' | null; // V2 — item+quote discount vs per-item only
   totalEquipment: string; totalServices: string; totalRecurring: string; grandTotal: string;
   currency?: { code: string } | null;
   ledScreens: LedScreen[]; lcdScreens: LcdScreen[]; licences: Licence[];
@@ -659,13 +681,14 @@ function PreviewModal({ option, onClose }: { option: PreviewOption; onClose: () 
 // Good-Better-Best / specific-product selection + components + rotate. Adds the screen (POST
 // /led-screens) with panel + geometry + components only; secondary options/services are set
 // afterwards via the per-screen PATCH editor (LedOptionsEditor / Form 2).
-function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
+function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quote; onChange: () => Promise<void>; editScreen?: LedScreen; onCancelEdit?: () => void }) {
+  const isEditing = !!editScreen;
   const [products, setProducts] = useState<Opt[]>([]);
-  const [productId, setProductId] = useState('');
-  const [name, setName] = useState('');
-  const [w, setW] = useState('1120');
-  const [h, setH] = useState('1920');
-  const [rotate, setRotate] = useState(true);
+  const [productId, setProductId] = useState(editScreen?.ledProductId != null ? String(editScreen.ledProductId) : '');
+  const [name, setName] = useState(editScreen?.screenName ?? '');
+  const [w, setW] = useState(editScreen?.desiredWidthMm != null ? String(editScreen.desiredWidthMm) : '1120');
+  const [h, setH] = useState(editScreen?.desiredHeightMm != null ? String(editScreen.desiredHeightMm) : '1920');
+  const [rotate, setRotate] = useState(editScreen ? !!editScreen.rotateCabinets : true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [options, setOptions] = useState<ConfigOption[] | null>(null);
@@ -689,18 +712,27 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
   // U8: the option currently shown in the read-only cabinet-preview modal (null = closed).
   const [preview, setPreview] = useState<PreviewOption | null>(null);
   // The "Screen selection" accordion is open until a product is selected, then collapses to a
-  // compact summary; the user can re-open it any time to pick a different product.
-  const [accordionOpen, setAccordionOpen] = useState(true);
+  // compact summary; the user can re-open it any time to pick a different product. In edit mode a
+  // product is already chosen → start collapsed.
+  const [accordionOpen, setAccordionOpen] = useState(!isEditing);
 
   // S1: orientation + aspect ratio (with auto-dimension calc), components, back cover, notes.
-  const [orientation, setOrientation] = useState('');
-  const [aspectRatioId, setAspectRatioId] = useState('');
+  const [orientation, setOrientation] = useState(editScreen?.orientation ?? '');
+  const [aspectRatioId, setAspectRatioId] = useState(editScreen?.aspectRatioId != null ? String(editScreen.aspectRatioId) : '');
   const [ratios, setRatios] = useState<Array<{ id: string; ratioLabel: string }>>([]);
   // Component pickers: catalog rows per type + the user's chosen component rows + the add-row draft.
   const [componentRows, setComponentRows] = useState<Record<LedComponentType, Opt[]>>(
     () => Object.fromEntries(LED_COMPONENT_TABLES.map((t) => [t.componentType, [] as Opt[]])) as unknown as Record<LedComponentType, Opt[]>,
   );
-  const [components, setComponents] = useState<ComponentRow[]>([]);
+  // Pre-fill component rows from the screen's stored components (map its set FK id → itemId).
+  const [components, setComponents] = useState<ComponentRow[]>(
+    () => (editScreen?.components ?? []).flatMap((c) => {
+      const def = LED_COMPONENT_TABLES.find((t) => t.componentType === c.componentType);
+      if (!def) return [];
+      const itemId = c[def.idField as keyof LedComponent];
+      return itemId != null ? [{ componentType: def.componentType, itemId: String(itemId), qty: Number(c.qty) || 1 }] : [];
+    }),
+  );
   const [draftType, setDraftType] = useState<LedComponentType>('controller');
   const [draftItem, setDraftItem] = useState('');
   const [draftQty, setDraftQty] = useState('1');
@@ -711,11 +743,14 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
     () => Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, [] as Opt[]])) as unknown as Record<LedOptionKey, Opt[]>,
   );
   const [selectedOpts, setSelectedOpts] = useState<Record<LedOptionKey, string>>(
-    () => Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, ''])) as unknown as Record<LedOptionKey, string>,
+    () => Object.fromEntries(LED_OPTION_TABLES.map((t) => {
+      const v = editScreen ? (editScreen as unknown as Record<string, unknown>)[t.key] : undefined;
+      return [t.key, v != null ? String(v) : ''];
+    })) as unknown as Record<LedOptionKey, string>,
   );
-  const [backCover, setBackCover] = useState(false);
-  const [frameNote, setFrameNote] = useState('');
-  const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState('');
+  const [backCover, setBackCover] = useState(!!editScreen?.backCover);
+  const [frameNote, setFrameNote] = useState(editScreen?.frameNote ?? '');
+  const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(editScreen?.serviceDescriptionSuffix ?? '');
 
   useEffect(() => {
     // activeOnly=true hides deprecated catalog rows from NEW selections (P1-11.4); existing quotes
@@ -854,28 +889,37 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
     setBusy(true);
     setErr(null);
     try {
-      // Selected option FKs (omit empties), housing/notes — all carried in the one add POST.
+      // Selected option FKs (omit empties), housing/notes — all carried in the one add POST/PUT.
       const optionFks: Record<string, number> = {};
       for (const t of LED_OPTION_TABLES) if (selectedOpts[t.key]) optionFks[t.key] = Number(selectedOpts[t.key]);
-      await api(`/quotes/${quote.id}/led-screens`, {
-        method: 'POST',
-        body: JSON.stringify({
-          screenName: name || undefined,
-          ledProductId: Number(productId),
-          desiredWidthMm: Number(w),
-          desiredHeightMm: Number(h),
-          rotateCabinets: rotate,
-          // S1 inputs (only sent when set).
-          ...(orientation ? { orientation } : {}),
-          ...(aspectRatioId ? { aspectRatioId: Number(aspectRatioId) } : {}),
-          components: componentPayload(),
-          // Options & services FKs (only the selected ones).
-          ...optionFks,
-          backCover,
-          ...(frameNote.trim() ? { frameNote: frameNote.trim() } : {}),
-          ...(serviceDescriptionSuffix.trim() ? { serviceDescriptionSuffix: serviceDescriptionSuffix.trim() } : {}),
-        }),
-      });
+      const body = {
+        screenName: name || undefined,
+        ledProductId: Number(productId),
+        desiredWidthMm: Number(w),
+        desiredHeightMm: Number(h),
+        rotateCabinets: rotate,
+        // S1 inputs (only sent when set).
+        ...(orientation ? { orientation } : {}),
+        ...(aspectRatioId ? { aspectRatioId: Number(aspectRatioId) } : {}),
+        components: componentPayload(),
+        // Options & services FKs (only the selected ones).
+        ...optionFks,
+        backCover,
+        ...(frameNote.trim() ? { frameNote: frameNote.trim() } : {}),
+        ...(serviceDescriptionSuffix.trim() ? { serviceDescriptionSuffix: serviceDescriptionSuffix.trim() } : {}),
+      };
+      if (isEditing && editScreen) {
+        // V4 full re-edit — PUT the whole body (qty is preserved server-side when omitted).
+        await api(`/quotes/${quote.id}/led-screens/${editScreen.id}`, { method: 'PUT', body: JSON.stringify(body) });
+      } else {
+        await api(`/quotes/${quote.id}/led-screens`, { method: 'POST', body: JSON.stringify(body) });
+      }
+      if (isEditing) {
+        // Exit edit mode → parent resets the form back to a clean add flow + refetches.
+        await onChange();
+        onCancelEdit?.();
+        return;
+      }
       // Reset the whole form for the next screen and re-open the selection accordion.
       setName('');
       setProductId('');
@@ -922,6 +966,15 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
 
   return (
     <div>
+      {/* V4: editing an existing LED screen — banner + Cancel. */}
+      {isEditing && (
+        <div className="card" style={{ borderColor: 'var(--accent, #4f46e5)', background: 'var(--accent-bg, rgba(79,70,229,0.06))' }}>
+          <div className="list-row" style={{ alignItems: 'center' }}>
+            <span><b>Editing:</b> {editScreen?.screenName || 'LED screen'} <span className="muted">— change any field below and Save changes.</span></span>
+            <button className="ghost" onClick={() => onCancelEdit?.()} disabled={busy}>Cancel edit</button>
+          </div>
+        </div>
+      )}
       {/* U8: read-only cabinet preview for the option the user clicked "Preview" on. */}
       {preview && <PreviewModal option={preview} onClose={() => setPreview(null)} />}
       {/* Screen-selection accordion: collapses to a compact summary once a product is selected. */}
@@ -1316,13 +1369,19 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
           </p>
         )}
         <p className="muted" style={{ marginTop: 12 }}>
-          Adds the LED screen with the panel, geometry, components and the options &amp; services above —
-          all in one. You can still tweak options later in the per-screen editor.
+          {isEditing
+            ? 'Saves all changes (panel, geometry, components, options & services) to this screen and re-prices it.'
+            : 'Adds the LED screen with the panel, geometry, components and the options & services above — all in one. You can still tweak options later in the per-screen editor.'}
         </p>
         <div className="step-actions">
           <button className="primary" onClick={() => addScreen()} disabled={busy || !canAddSpecific}>
-            {busy ? 'Pricing…' : '+ Add screen'}
+            {busy ? (isEditing ? 'Saving…' : 'Pricing…') : isEditing ? 'Save changes' : '+ Add screen'}
           </button>
+          {isEditing && (
+            <button className="ghost" onClick={() => onCancelEdit?.()} disabled={busy} style={{ marginLeft: 8 }}>
+              Cancel edit
+            </button>
+          )}
         </div>
       </div>
       )}
@@ -1371,17 +1430,33 @@ const LCD_MANUAL_TEMPLATES: Record<string, Array<{ description: string; unitCost
 
 interface LcdLine { sectionKey: string; itemType: LcdItemType; displayId?: string; description: string; qty: number; unitCost?: number; manual: boolean }
 
-function LcdAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
+function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quote; onChange: () => Promise<void>; editScreen?: LcdScreen; onCancelEdit?: () => void }) {
+  const isEditing = !!editScreen;
   const [catalog, setCatalog] = useState<Opt[]>([]);
-  const [serviceHoursId, setServiceHoursId] = useState('');
-  const [warrantyId, setWarrantyId] = useState('');
-  const [installMethodId, setInstallMethodId] = useState('');
+  const [serviceHoursId, setServiceHoursId] = useState(editScreen?.serviceHoursId != null ? String(editScreen.serviceHoursId) : '');
+  const [warrantyId, setWarrantyId] = useState(editScreen?.warrantyId != null ? String(editScreen.warrantyId) : '');
+  const [installMethodId, setInstallMethodId] = useState(editScreen?.installMethodId != null ? String(editScreen.installMethodId) : '');
   const [serviceHours, setServiceHours] = useState<Opt[]>([]);
   const [warranties, setWarranties] = useState<Opt[]>([]);
   const [installMethods, setInstallMethods] = useState<Opt[]>([]);
-  const [orientation, setOrientation] = useState('');
-  const [screenName, setScreenName] = useState('');
-  const [lines, setLines] = useState<LcdLine[]>([]);
+  const [orientation, setOrientation] = useState(editScreen?.orientation ?? '');
+  const [screenName, setScreenName] = useState(editScreen?.screenName ?? '');
+  // Pre-fill line items from the screen's stored items (V4 edit). Manual = no displayId.
+  const [lines, setLines] = useState<LcdLine[]>(
+    () => (editScreen?.items ?? []).map((it) => {
+      const manual = it.displayId == null;
+      const sectionKey = LCD_SECTIONS.find((d) => d.itemType === it.itemType)?.key ?? it.itemType;
+      return {
+        sectionKey,
+        itemType: it.itemType,
+        displayId: it.displayId != null ? String(it.displayId) : undefined,
+        description: it.description ?? '',
+        qty: Number(it.qty) || 1,
+        unitCost: manual ? Number(it.unitCost ?? 0) : undefined,
+        manual,
+      };
+    }),
+  );
   // Per-section draft (catalog pick + qty) and per-section manual draft.
   const [pick, setPick] = useState<Record<string, string>>({});
   const [pickQty, setPickQty] = useState<Record<string, string>>({});
@@ -1445,18 +1520,23 @@ function LcdAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
         unitCost: l.manual ? (l.unitCost ?? 0) : undefined,
       }));
       const firstDisplay = lines.find((l) => l.itemType === 'display' && l.displayId)?.displayId;
-      await api(`/quotes/${quote.id}/lcd-screens`, {
-        method: 'POST',
-        body: JSON.stringify({
-          screenName: screenName || undefined,
-          orientation: orientation || undefined,
-          displayId: firstDisplay ? Number(firstDisplay) : undefined,
-          serviceHoursId: serviceHoursId ? Number(serviceHoursId) : undefined,
-          warrantyId: warrantyId ? Number(warrantyId) : undefined,
-          installMethodId: installMethodId ? Number(installMethodId) : undefined,
-          items,
-        }),
-      });
+      const body = {
+        screenName: screenName || undefined,
+        orientation: orientation || undefined,
+        displayId: firstDisplay ? Number(firstDisplay) : undefined,
+        serviceHoursId: serviceHoursId ? Number(serviceHoursId) : undefined,
+        warrantyId: warrantyId ? Number(warrantyId) : undefined,
+        installMethodId: installMethodId ? Number(installMethodId) : undefined,
+        items,
+      };
+      if (isEditing && editScreen) {
+        // V4 full re-edit — PUT replaces fields + items and re-prices.
+        await api(`/quotes/${quote.id}/lcd-screens/${editScreen.id}`, { method: 'PUT', body: JSON.stringify(body) });
+        await onChange();
+        onCancelEdit?.();
+        return;
+      }
+      await api(`/quotes/${quote.id}/lcd-screens`, { method: 'POST', body: JSON.stringify(body) });
       setLines([]);
       setScreenName('');
       await onChange();
@@ -1467,8 +1547,16 @@ function LcdAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
 
   return (
     <div>
+      {isEditing && (
+        <div className="card" style={{ borderColor: 'var(--accent, #4f46e5)', background: 'var(--accent-bg, rgba(79,70,229,0.06))' }}>
+          <div className="list-row" style={{ alignItems: 'center' }}>
+            <span><b>Editing:</b> {editScreen?.screenName || 'LCD screen'} <span className="muted">— change any field below and Save changes.</span></span>
+            <button className="ghost" onClick={() => onCancelEdit?.()} disabled={busy}>Cancel edit</button>
+          </div>
+        </div>
+      )}
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>New LCD screen (LCD-1)</h3>
+        <h3 style={{ marginTop: 0 }}>{isEditing ? 'Edit LCD screen (LCD-1)' : 'New LCD screen (LCD-1)'}</h3>
         <div className="grid3">
           <div><label>Screen name</label><input value={screenName} onChange={(e) => setScreenName(e.target.value)} placeholder="e.g. Foyer menu board" /></div>
           <div>
@@ -1551,7 +1639,14 @@ function LcdAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
           <span>{quote.currency?.code} {grand.toLocaleString()}</span>
         </div>
         <div className="step-actions">
-          <button className="primary" onClick={save} disabled={busy || lines.length === 0}>+ Add LCD screen</button>
+          <button className="primary" onClick={save} disabled={busy || lines.length === 0}>
+            {busy ? 'Saving…' : isEditing ? 'Save changes' : '+ Add LCD screen'}
+          </button>
+          {isEditing && (
+            <button className="ghost" onClick={() => onCancelEdit?.()} disabled={busy} style={{ marginLeft: 8 }}>
+              Cancel edit
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1659,6 +1754,250 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
   );
 }
 
+// The full PriceResult shape (mirrors service.ts priceQuote). Shared by the Review "Itemised price"
+// card and the V4 cost-breakdown drawer.
+interface PriceResult {
+  costVisible: boolean;
+  sections: PriceSection[];
+  overrides?: OverrideSummary[];
+  hasOverrides?: boolean;
+  licences: Array<{ screenType: string; tier: string; qty: number; isInteractive: boolean; annual: string }>;
+  discount?: { pct: number; source: 'quote' | 'client' | 'system'; scope?: 'one_off' | 'recurring'; amount: string };
+  discountMode?: 'stack' | 'item_only';
+  hasLineDiscounts?: boolean;
+  totals: {
+    equipment: string; services: string; recurring: string; grandTotal: string;
+    margin: string | null; marginFloor: number | null;
+  };
+}
+
+// V4 Part B — a right-side cost-breakdown drawer. Shows every priced section (LED/LCD/licences) with
+// per-line cost (admin-only) / sell / editable discount % / effective sell, a quote-wide discount-mode
+// toggle, and the totals block. Writers can edit discounts + mode; viewers get a read-only view.
+function CostBreakdownDrawer({ quote, onChange, onClose }: { quote: Quote; onChange: () => Promise<void>; onClose: () => void }) {
+  const role = getRole();
+  const canWrite = role !== 'viewer';
+  const cur = quote.currency?.code ?? '';
+  const [price, setPrice] = useState<PriceResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // Per-line discount inputs keyed by line id, shown as a % string (empty = cleared).
+  const [discDraft, setDiscDraft] = useState<Record<string, string>>({});
+  const [modeBusy, setModeBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const p = await api<PriceResult>(`/quotes/${quote.id}/price`, { method: 'POST' });
+      setPrice(p);
+      // Seed the draft inputs from the returned per-line discountPct fractions.
+      const seed: Record<string, string> = {};
+      for (const sec of p.sections) for (const l of sec.lines) {
+        seed[l.id] = l.discountPct != null ? String(Math.round(l.discountPct * 1000) / 10) : '';
+      }
+      setDiscDraft(seed);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Pricing failed');
+    } finally {
+      setLoading(false);
+    }
+  }, [quote.id]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // Persist a per-line discount. Routes by section type: LED cost-breakdown line vs LCD item.
+  const commitDiscount = async (type: 'led' | 'lcd' | 'licence', lineId: string, raw: string) => {
+    if (type === 'licence') return;
+    const trimmed = raw.trim();
+    let pct: number | null;
+    if (trimmed === '') pct = null;
+    else {
+      const n = Number(trimmed);
+      if (!Number.isFinite(n) || n < 0 || n > 100) { setErr('Discount must be 0–100%.'); return; }
+      pct = n / 100; // fraction 0..1
+    }
+    setErr(null);
+    const path = type === 'led'
+      ? `/quotes/${quote.id}/led-lines/${lineId}/discount`
+      : `/quotes/${quote.id}/lcd-items/${lineId}/discount`;
+    try {
+      await api(path, { method: 'PATCH', body: JSON.stringify({ discountPct: pct }) });
+      await load();      // refetch price → effective sells + totals update live.
+      await onChange();  // refresh parent quote totals (LED step, header).
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Discount update failed');
+    }
+  };
+
+  // Toggle the quote-wide discount mode (stack vs item_only) via updateQuote; refetch after.
+  const setMode = async (mode: 'stack' | 'item_only') => {
+    if (mode === (price?.discountMode ?? quote.discountMode ?? 'stack')) return;
+    setModeBusy(true);
+    setErr(null);
+    try {
+      await api(`/quotes/${quote.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ discountMode: mode, expectedVersion: quote.lockVersion }),
+      });
+      await onChange();  // refresh quote (advances lockVersion for the next mode change).
+      await load();
+    } catch (e) {
+      // A 409 means the quote moved; refetching realigns the lock token, so just reload.
+      if (e instanceof ApiError && e.code === 'conflict') { await onChange(); await load(); setErr('Quote changed elsewhere — reloaded.'); }
+      else setErr(e instanceof Error ? e.message : 'Could not change discount mode');
+    } finally {
+      setModeBusy(false);
+    }
+  };
+
+  const mode = price?.discountMode ?? quote.discountMode ?? 'stack';
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1200, display: 'flex', justifyContent: 'flex-end' }}
+    >
+      <div
+        className="card"
+        onClick={(e) => e.stopPropagation()}
+        style={{ margin: 0, width: 'min(760px, 96vw)', height: '100%', maxHeight: '100%', overflowY: 'auto', borderRadius: 0, boxSizing: 'border-box' }}
+      >
+        <div className="topbar" style={{ position: 'sticky', top: 0, background: 'var(--card, var(--bg))', zIndex: 1, paddingBottom: 8 }}>
+          <h3 style={{ margin: 0 }}>Cost breakdown</h3>
+          <span style={{ display: 'flex', gap: 8 }}>
+            <button className="ghost" onClick={() => void load()} disabled={loading}>{loading ? 'Loading…' : '↻ Refresh'}</button>
+            <button className="ghost" onClick={onClose} aria-label="Close">✕</button>
+          </span>
+        </div>
+
+        {err && <div className="error" style={{ marginTop: 8 }}>{err}</div>}
+        {loading && !price && <p className="muted">Loading price…</p>}
+
+        {price && (
+          <>
+            {/* Discount-mode segmented control (writers only). */}
+            {canWrite && (
+              <div style={{ margin: '10px 0 14px' }}>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Discount mode</label>
+                <div role="group" style={{ display: 'inline-flex', gap: 4 }}>
+                  <button className={mode === 'stack' ? 'primary' : 'ghost'} disabled={modeBusy} onClick={() => setMode('stack')} type="button">
+                    Stack (item + quote discount)
+                  </button>
+                  <button className={mode === 'item_only' ? 'primary' : 'ghost'} disabled={modeBusy} onClick={() => setMode('item_only')} type="button">
+                    Per-item only
+                  </button>
+                </div>
+                <p className="muted" style={{ margin: '6px 0 0' }}>
+                  {mode === 'stack'
+                    ? 'Per-line discounts and the quote/client discount both apply (they stack).'
+                    : 'Only per-line discounts apply; the quote/client discount is suppressed while any line discount exists.'}
+                </p>
+              </div>
+            )}
+            {!canWrite && <p className="muted" style={{ marginTop: 8 }}>Read-only role — discounts and mode are view-only.</p>}
+            {!price.costVisible && <p className="muted">Cost hidden for your role.</p>}
+
+            {price.sections.length === 0 && <p className="muted">No priced lines yet.</p>}
+            {price.sections.map((sec, si) => (
+              <div key={si} style={{ marginBottom: 16 }}>
+                <div className="topbar">
+                  <b>{sec.name} <span className="muted">· {sec.type.toUpperCase()}</span></b>
+                  <span>{cur} {Number(sec.total).toLocaleString()}</span>
+                </div>
+                <div className="table-wrap" style={{ marginTop: 6 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Label</th>
+                        <th className="cell-num">Qty</th>
+                        {price.costVisible && <th className="cell-num">Cost</th>}
+                        <th className="cell-num">Sell</th>
+                        <th className="cell-num">Disc %</th>
+                        <th className="cell-num">Effective sell</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sec.lines.map((l) => (
+                        <tr key={l.id}>
+                          <td>{l.label} <span className="muted">{l.category ? `· ${l.category}` : ''}</span></td>
+                          <td className="cell-num">{l.qty}</td>
+                          {price.costVisible && <td className="cell-num">{cur} {Number(l.cost ?? 0).toLocaleString()}</td>}
+                          <td className="cell-num">{cur} {Number(l.sell ?? 0).toLocaleString()}</td>
+                          <td className="cell-num">
+                            {canWrite && sec.type !== 'licence' ? (
+                              <input
+                                type="number" min={0} max={100} step="0.5"
+                                value={discDraft[l.id] ?? ''}
+                                placeholder="—"
+                                style={{ width: 68, textAlign: 'right' }}
+                                onChange={(e) => setDiscDraft((p) => ({ ...p, [l.id]: e.target.value }))}
+                                onBlur={(e) => commitDiscount(sec.type, l.id, e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                title="Per-line discount %. Clear to remove."
+                              />
+                            ) : (
+                              <span>{l.discountPct != null ? `${(l.discountPct * 100).toFixed(l.discountPct * 100 % 1 ? 1 : 0)}%` : '—'}</span>
+                            )}
+                          </td>
+                          <td className="cell-num">{cur} {Number(l.effectiveSell).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+
+            {price.licences.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <b>Licences</b>
+                <div className="table-wrap" style={{ marginTop: 6 }}>
+                  <table>
+                    <thead><tr><th>Screen type</th><th>Tier</th><th className="cell-num">Qty</th><th>Interactive</th><th className="cell-num">Annual</th></tr></thead>
+                    <tbody>
+                      {price.licences.map((l, li) => (
+                        <tr key={li}>
+                          <td>{l.screenType}</td><td className="muted">{l.tier}</td><td className="cell-num">{l.qty}</td>
+                          <td>{l.isInteractive ? 'Yes' : 'No'}</td><td className="cell-num">{cur} {Number(l.annual).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div className="totals">
+              <div className="stat"><div className="label">Equipment</div><div className="value">{cur} {Number(price.totals.equipment).toLocaleString()}</div></div>
+              <div className="stat"><div className="label">Services</div><div className="value">{cur} {Number(price.totals.services).toLocaleString()}</div></div>
+              <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(price.totals.recurring).toLocaleString()}</div></div>
+              {price.discount && price.discount.pct > 0 && (
+                <div className="stat">
+                  <div className="label">Discount ({(price.discount.pct * 100).toFixed(price.discount.pct * 100 % 1 ? 1 : 0)}% · {price.discount.scope === 'recurring' ? 'per renewal' : 'one-off'})</div>
+                  <div className="value" style={{ color: 'var(--danger, #dc2626)' }}>− {cur} {Number(price.discount.amount).toLocaleString()}</div>
+                </div>
+              )}
+              <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(price.totals.grandTotal).toLocaleString()}</div></div>
+              {price.totals.margin != null && (() => {
+                const margin = Number(price.totals.margin);
+                const floor = price.totals.marginFloor;
+                const below = floor != null && margin < floor;
+                return (
+                  <>
+                    <div className="stat"><div className="label">Margin</div><div className="value" style={below ? { color: 'var(--danger, #dc2626)' } : undefined}>{(margin * 100).toFixed(1)}%{below ? ' ⛔' : ''}</div></div>
+                    {floor != null && <div className="stat"><div className="label">Margin floor</div><div className="value">{(floor * 100).toFixed(1)}%</div></div>}
+                  </>
+                );
+              })()}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Merged "Select Screens" step (U1): a LED/LCD type selector drives which add-flow shows; below, a
 // combined list of every screen on the quote (LED + LCD), each labelled by type, with per-screen
 // controls (LED: qty/duplicate/reorder/delete + expandable Options & services editor; LCD as today).
@@ -1666,7 +2005,22 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
   const canWrite = getRole() !== 'viewer';
   const [screenType, setScreenType] = useState<'LED' | 'LCD'>('LED');
   const [expanded, setExpanded] = useState<string | null>(null);
+  // V4 Part A — which screen (if any) is being full-edited in-place, by type + id.
+  const [editing, setEditing] = useState<{ type: 'LED' | 'LCD'; id: string } | null>(null);
+  // V4 Part B — cost-breakdown drawer open state.
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const cur = quote.currency?.code ?? '';
+
+  // Resolve the currently-edited screen record (kept in sync with the refetched quote).
+  const editLed = editing?.type === 'LED' ? quote.ledScreens.find((s) => s.id === editing.id) : undefined;
+  const editLcd = editing?.type === 'LCD' ? quote.lcdScreens.find((s) => s.id === editing.id) : undefined;
+  const startEdit = (type: 'LED' | 'LCD', id: string) => {
+    setScreenType(type);
+    setEditing({ type, id });
+    setExpanded(null);
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const cancelEdit = () => setEditing(null);
 
   // LED list management.
   const removeLed = async (sid: string) => {
@@ -1695,24 +2049,46 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
 
   return (
     <div>
+      {drawerOpen && <CostBreakdownDrawer quote={quote} onChange={onChange} onClose={() => setDrawerOpen(false)} />}
+
       <div className="card">
         <div className="topbar">
           <h3 style={{ margin: 0 }}>Select Screens</h3>
-          {canWrite && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className={screenType === 'LED' ? 'primary' : 'ghost'} onClick={() => setScreenType('LED')}>LED</button>
-              <button className={screenType === 'LCD' ? 'primary' : 'ghost'} onClick={() => setScreenType('LCD')}>LCD</button>
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="ghost" onClick={() => setDrawerOpen(true)}>📊 Cost breakdown</button>
+            {canWrite && !editing && (
+              <>
+                <button className={screenType === 'LED' ? 'primary' : 'ghost'} onClick={() => setScreenType('LED')}>LED</button>
+                <button className={screenType === 'LCD' ? 'primary' : 'ghost'} onClick={() => setScreenType('LCD')}>LCD</button>
+              </>
+            )}
+          </div>
         </div>
         <p className="muted" style={{ marginTop: 0 }}>
-          Pick a screen type, then add screens with the {screenType} flow below. All screens on this
-          quote appear in the combined list.
+          {editing
+            ? `Editing a ${editing.type} screen below — Save changes or Cancel edit to return to the add flow.`
+            : `Pick a screen type, then add screens with the ${screenType} flow below. All screens on this quote appear in the combined list.`}
         </p>
       </div>
 
-      {canWrite && screenType === 'LED' && <LedAddForm quote={quote} onChange={onChange} />}
-      {canWrite && screenType === 'LCD' && <LcdAddForm quote={quote} onChange={onChange} />}
+      {canWrite && screenType === 'LED' && (
+        <LedAddForm
+          key={editLed ? `edit-${editLed.id}` : 'add'}
+          quote={quote}
+          onChange={onChange}
+          editScreen={editLed}
+          onCancelEdit={cancelEdit}
+        />
+      )}
+      {canWrite && screenType === 'LCD' && (
+        <LcdAddForm
+          key={editLcd ? `edit-${editLcd.id}` : 'add'}
+          quote={quote}
+          onChange={onChange}
+          editScreen={editLcd}
+          onCancelEdit={cancelEdit}
+        />
+      )}
 
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Screens on this quote ({totalScreens})</h3>
@@ -1751,6 +2127,14 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
                 <button className="ghost" onClick={() => setExpanded(expanded === s.id ? null : s.id)}>
                   {expanded === s.id ? '▴ Options & services' : '▾ Options & services'}
                 </button>
+                {canWrite && (
+                  <button
+                    className={editing?.type === 'LED' && editing.id === s.id ? 'primary' : 'ghost'}
+                    onClick={() => startEdit('LED', s.id)}
+                  >
+                    ✎ Edit
+                  </button>
+                )}
                 {canWrite && <button className="ghost" onClick={() => duplicateLed(s.id)}>Duplicate</button>}
                 {canWrite && <button className="danger" onClick={() => removeLed(s.id)}>Delete</button>}
               </div>
@@ -1765,7 +2149,17 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
               <span className="pill" style={{ marginRight: 6 }}>LCD</span>
               <b>{s.screenName || 'LCD screen'}</b>
             </div>
-            <span>{cur} {Number(s.priceTotal ?? 0).toLocaleString()}</span>
+            <div className="row-actions" style={{ alignItems: 'center' }}>
+              <span>{cur} {Number(s.priceTotal ?? 0).toLocaleString()}</span>
+              {canWrite && (
+                <button
+                  className={editing?.type === 'LCD' && editing.id === s.id ? 'primary' : 'ghost'}
+                  onClick={() => startEdit('LCD', s.id)}
+                >
+                  ✎ Edit
+                </button>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -1863,7 +2257,12 @@ interface QuoteValidation {
   screens: Array<{ screenId: string; screenName: string; findings: ValidationFinding[] }>;
 }
 
-interface PriceLine { label: string; category: string | null; qty: number; cost: string | null; sell: string | null }
+interface PriceLine {
+  id: string; label: string; category: string | null; qty: number;
+  cost: string | null; sell: string | null;
+  // V2 — per-line discount fraction 0..1 (null when none) + the effective (post-discount) sell.
+  discountPct: number | null; effectiveSell: string;
+}
 interface PriceSection {
   type: 'led' | 'lcd' | 'licence'; name: string; lines: PriceLine[]; total: string;
   overridden?: boolean; targetId?: string; computedTotal?: string;
@@ -1873,20 +2272,8 @@ interface OverrideSummary {
   originalValue: string; overrideValue: string; reason: string | null;
   createdBy: { id: string; name: string } | null; createdAt: string;
 }
-interface PriceResult {
-  costVisible: boolean;
-  sections: PriceSection[];
-  overrides?: OverrideSummary[];
-  hasOverrides?: boolean;
-  licences: Array<{ screenType: string; tier: string; qty: number; isInteractive: boolean; annual: string }>;
-  // U3/U5 — effective client discount; `scope` decides the base (one-off upfront vs every renewal).
-  discount?: { pct: number; source: 'quote' | 'client' | 'system'; scope?: 'one_off' | 'recurring'; amount: string };
-  totals: {
-    equipment: string; services: string; recurring: string; grandTotal: string;
-    margin: string | null; marginFloor: number | null;
-  };
-}
 interface OverrideResult { override: OverrideSummary; warning: string | null }
+// (PriceResult is declared above, near the CostBreakdownDrawer, and reused by ReviewStep.)
 
 // Two-stage Review & Approval (T1 / BR-001). A review is a reviewer's decision at one stage,
 // recorded against the revision (lockVersion) it was signed off on; history is preserved.
