@@ -518,7 +518,7 @@ const enforceDiscountGuardrail = async (
 };
 
 /** Where the effective discount came from. */
-export type DiscountSource = 'quote' | 'client' | 'system';
+export type DiscountSource = 'quote' | 'client' | 'tier' | 'system';
 
 export interface ResolvedDiscount {
   /** Fraction 0..1. */
@@ -529,14 +529,17 @@ export interface ResolvedDiscount {
 }
 
 /**
- * Resolve the effective commercial discount for a quote (U3). The quote-level override WINS over the
- * client default, which wins over the system default setting. Precedence:
- *   quote.discountPct → client.discountPct → `default_client_discount_pct` setting → 0.
- * The system-default value must be supplied (read once by the async caller) so this stays pure.
+ * Resolve the effective commercial discount for a quote (U3, extended by Z6 with the tier level). The
+ * quote-level override WINS over the client default, which wins over the client's TIER default, which
+ * wins over the system default setting. Precedence (global→tier→client, most-specific first):
+ *   quote.discountPct → client.discountPct → client.clientTier.defaultDiscountPct
+ *     → `default_client_discount_pct` setting → 0.
+ * The system-default value must be supplied (read once by the async caller) so this stays pure; the
+ * tier value rides along on the loaded `quote.client.clientTier` relation (see repository quoteInclude).
  *
  * U5 — `scope` is always the quote-level decision (`quote.discountScope`, default `one_off`). It is
- * independent of where the *rate* came from: a client/system-default rate still applies to whichever
- * base the quote elected (upfront vs recurring).
+ * independent of where the *rate* came from: a client/tier/system-default rate still applies to
+ * whichever base the quote elected (upfront vs recurring).
  */
 export const resolveDiscount = (
   quote: QuoteWithChildren,
@@ -547,6 +550,8 @@ export const resolveDiscount = (
   if (quote.client?.discountPct != null) {
     return { pct: Number(quote.client.discountPct), source: 'client', scope };
   }
+  const tierPct = quote.client?.clientTier?.defaultDiscountPct;
+  if (tierPct != null) return { pct: Number(tierPct), source: 'tier', scope };
   if (defaultDiscountPct > 0) return { pct: defaultDiscountPct, source: 'system', scope };
   return { pct: 0, source: 'system', scope };
 };

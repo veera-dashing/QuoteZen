@@ -746,13 +746,37 @@ model Client {
   discountPct            Decimal? @map("discount_pct") @db.Decimal(5, 4)
   /**
    * Commercial client tier (Z1). Free-text nullable String ('A' | 'A+' | 'B' | 'C' | null) rather than
-   * an enum, for flexibility. Not applied to pricing/guardrails yet — later blocks reconcile it.
+   * an enum. From Z6 this string is a relation-by-name FK into `client_tiers.name` (see clientTier).
    */
   tier                   String?  @map("tier")
+  /** Free-text per-client rule logic (Z6), surfaced on the Tiers & per-client rules admin page. */
+  rulesNote              String?  @map("rules_note")
+  /** Per-client preferred freight override (Z6) — wins over the tier's `preferredFreight`. */
+  preferredFreight       String?  @map("preferred_freight")
+  /** Z6: rule-bearing tier resolved by name (clients.tier → client_tiers.name). */
+  clientTier             ClientTier? @relation("ClientTierByName", fields: [tier], references: [name])
 
   quotes Quote[]
 
   @@map("clients")
+}
+
+// ── Z6: client tiers as rule-bearing entities ──
+// Tier-level structured rules (preferred freight + default discount %) shared by all clients in the
+// tier, overridable per client. Resolution order: global/system → tier → client. `name` matches the
+// `clients.tier` string (relation-by-name; @unique required).
+model ClientTier {
+  id                 BigInt   @id @default(autoincrement())
+  name               String   @unique // 'A+' | 'A' | 'B' (matches clients.tier)
+  label              String?
+  description        String?
+  installStandard    String?  @map("install_standard")
+  preferredFreight   String?  @map("preferred_freight")
+  defaultDiscountPct Decimal? @map("default_discount_pct") @db.Decimal(5, 4)
+  deprecated         Boolean  @default(false)
+  clients            Client[] @relation("ClientTierByName")
+
+  @@map("client_tiers")
 }
 
 // ── Z1: engine constraints & systemic rules — anomaly detection rules ──

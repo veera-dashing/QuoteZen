@@ -14,8 +14,10 @@ const idParam = z.object({ id: z.coerce.bigint() });
 export const ruleRoutes = async (app: FastifyInstance): Promise<void> => {
   app.get('/rules/client/:id/effective', { preHandler: [app.authenticate] }, async (request) => {
     const { id } = parse(idParam, request.params);
-    const client = await prisma.client.findUnique({ where: { id } });
+    // Z6: load the client's rule-bearing tier so discount/freight can layer global→tier→client.
+    const client = await prisma.client.findUnique({ where: { id }, include: { clientTier: true } });
     if (!client) throw notFound('Client', id.toString());
+    const tier = client.clientTier;
 
     const settings = await prisma.setting.findMany();
     const byKey = new Map(settings.map((s) => [s.key, Number(s.value)]));
@@ -45,17 +47,31 @@ export const ruleRoutes = async (app: FastifyInstance): Promise<void> => {
         // Guardrail wins: a below-floor client margin is clamped up to the floor.
         effective: belowFloor ? marginFloor : (clientMargin ?? marginFloor),
       },
-      // Client commercial discount (U3): client override → system default. Quote-level override is
-      // resolved per-quote at pricing time and is not a client-rule concept.
+      // Client commercial discount (U3, layered by Z6): client override → TIER default → system
+      // default. Quote-level override is resolved per-quote at pricing time and is not a client-rule
+      // concept.
       discount: (() => {
         const hasClient = client.discountPct != null;
-        const value = hasClient ? Number(client.discountPct) : defaultDiscount;
+        const tierPct = tier?.defaultDiscountPct != null ? Number(tier.defaultDiscountPct) : null;
+        const source = hasClient ? ('client' as const) : tierPct != null ? ('tier' as const) : ('system' as const);
+        const value = hasClient ? Number(client.discountPct) : tierPct != null ? tierPct : defaultDiscount;
         return {
           value,
-          source: hasClient ? ('client' as const) : ('system' as const),
-          overridesGlobal: hasClient,
+          source,
+          overridesGlobal: hasClient || tierPct != null,
+          tierDefault: tierPct,
           systemDefault: defaultDiscount,
         };
+      })(),
+      // Preferred freight (Z6): client override → tier preferred freight → none.
+      preferredFreight: (() => {
+        if (client.preferredFreight) {
+          return { value: client.preferredFreight, source: 'client' as const, overridesGlobal: true, tierDefault: tier?.preferredFreight ?? null };
+        }
+        if (tier?.preferredFreight) {
+          return { value: tier.preferredFreight, source: 'tier' as const, overridesGlobal: true, tierDefault: tier.preferredFreight };
+        }
+        return { value: null, source: 'system' as const, overridesGlobal: false, tierDefault: null };
       })(),
       preferredProductFamily: field(client.preferredProductFamily, Boolean(client.preferredProductFamily)),
       preferredPitchMm: field(
@@ -63,6 +79,17 @@ export const ruleRoutes = async (app: FastifyInstance): Promise<void> => {
         client.preferredPitchMm != null,
       ),
       excludedComponents: excluded,
+      // Z6: the rule-bearing tier block (null when the client has no tier / an unknown tier name).
+      tier: tier
+        ? {
+            name: tier.name,
+            description: tier.description,
+            installStandard: tier.installStandard,
+            preferredFreight: tier.preferredFreight,
+            defaultDiscountPct: tier.defaultDiscountPct != null ? Number(tier.defaultDiscountPct) : null,
+          }
+        : null,
+      rulesNote: client.rulesNote ?? null,
     };
   });
 };

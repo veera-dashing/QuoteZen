@@ -5,7 +5,8 @@ import type { Prisma } from '@quotezen/db';
 
 /** Children needed to recompute totals and render the full quote. */
 export const quoteInclude = {
-  client: true,
+  // Z6: include the client's rule-bearing tier so resolveDiscount can layer global→tier→client sync.
+  client: { include: { clientTier: true } },
   location: true,
   currency: true,
   ledScreens: {

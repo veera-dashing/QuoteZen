@@ -90,6 +90,43 @@ const MANUFACTURERS: Array<{ name: string; priority: number; leadTimeDays: numbe
 // ─── Z1: anomaly-detection rules (admin-configurable; block vs warn) ──────────
 // Upserted by key so a re-seed keeps them in sync. Nothing consumes these yet (Z1 = schema/seed/
 // registry only); later blocks evaluate them against a quote. paramNum carries the rule's threshold.
+// ── Z6: client tiers as rule-bearing entities (global→tier→client resolution) ──
+// Tier-level structured rules: preferred freight + default discount %, plus descriptive fields.
+// Values are reasonable admin-editable defaults from the "Tiers & per-client rules" mockup.
+const CLIENT_TIERS: Array<{
+  name: string;
+  label: string;
+  description: string;
+  installStandard: string;
+  preferredFreight: string;
+  defaultDiscountPct: number;
+}> = [
+  {
+    name: 'A+',
+    label: 'A+ tier',
+    description: 'Premium quality, top-tier freight, white-glove install.',
+    installStandard: 'White-glove',
+    preferredFreight: 'Air',
+    defaultDiscountPct: 0.12,
+  },
+  {
+    name: 'A',
+    label: 'A tier',
+    description: 'Standard spec, repeat workflows.',
+    installStandard: 'Standard',
+    preferredFreight: 'Road',
+    defaultDiscountPct: 0.08,
+  },
+  {
+    name: 'B',
+    label: 'B tier',
+    description: 'Competitive pricing — no mediaplayers by default.',
+    installStandard: 'Standard',
+    preferredFreight: 'Road',
+    defaultDiscountPct: 0.05,
+  },
+];
+
 const ANOMALY_RULES: Array<{
   key: string;
   label: string;
@@ -533,6 +570,29 @@ async function main(): Promise<void> {
     });
   }
   console.warn(`  anomalyRule: ${ANOMALY_RULES.length} upserted`);
+
+  // ── Z6: client tiers (upsert by unique name, keeps rule values in sync on re-seed) ──
+  for (const t of CLIENT_TIERS) {
+    await prisma.clientTier.upsert({
+      where: { name: t.name },
+      update: {
+        label: t.label,
+        description: t.description,
+        installStandard: t.installStandard,
+        preferredFreight: t.preferredFreight,
+        defaultDiscountPct: t.defaultDiscountPct,
+      },
+      create: {
+        name: t.name,
+        label: t.label,
+        description: t.description,
+        installStandard: t.installStandard,
+        preferredFreight: t.preferredFreight,
+        defaultDiscountPct: t.defaultDiscountPct,
+      },
+    });
+  }
+  console.warn(`  clientTier: ${CLIENT_TIERS.length} upserted`);
 
   console.warn('Seed complete.');
 }

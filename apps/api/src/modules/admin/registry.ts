@@ -317,10 +317,23 @@ export const TABLES: TableDef[] = [
       f('name', 'string', true), f('tier', 'enum', false, CLIENT_TIER),
       f('defaultMargin', 'decimal'), f('discountPct', 'decimal'),
       f('preferredProductFamily'),
-      f('preferredPitchMm', 'decimal'), f('excludedComponents'), f('marginNote', 'text'),
+      f('preferredPitchMm', 'decimal'), f('excludedComponents'),
+      f('preferredFreight'), f('rulesNote', 'text'), f('marginNote', 'text'),
       f('ledScreenNote', 'text'), f('gobNote', 'text'), f('mediaplayerNote', 'text'), f('ratioNote', 'text'),
     ],
     listFields: ['name', 'tier', 'defaultMargin', 'preferredProductFamily'],
+  },
+
+  // ── Clients: tier-level rule-bearing entities (Z6) ──
+  {
+    resource: 'client-tiers', model: 'clientTier', label: 'Client Tiers', group: 'Clients',
+    titleField: 'name', searchFields: ['name', 'label', 'description'],
+    fields: [
+      f('name', 'string', true), f('label'), f('description', 'text'),
+      f('installStandard'), f('preferredFreight'), f('defaultDiscountPct', 'decimal'),
+      DEPRECATED,
+    ],
+    listFields: ['name', 'preferredFreight', 'defaultDiscountPct'],
   },
 
   // ── System: anomaly rules (Z1) ──

@@ -544,3 +544,41 @@ size-tolerance bands, and Good/Better/Best tiers (those are the LED "lego" flow)
   (5) **Analysis block** (Hardware/Bracket/Services @ nominated margin + Total At Fixed Margin, tab rows
   47–54) shown in the LCD form. `lcd-automations.test.ts` (4) + `describeLcdScreen` calc tests. 234 tests
   green (9 shared + 110 calc + 119 api). No migration (all derivable from existing columns).
+
+### Block 15 — Engine constraints & systemic rules (governance) — Z-series
+From the "Engine constraints & systemic rules" + "Tiers & per-client rules" workshop mockups. Built as
+six ordered blocks (Z1–Z6), each verified against the full live-RDS suite before the next. Final:
+**247 tests green (9 shared + 110 calc + 133 api)**; typecheck + web build clean; `migrate status` clean.
+- ✅ **Z1 — Foundation** — new roles `director` + `manager` (+ demo logins director@/manager@quotezen.local,
+  pw `demo`); `clients.tier` (A+/A/B); five Financial-Bumper settings (`min_gross_margin` 0.28,
+  `walk_away_margin` 0.22, `lead_time_buffer_days` 3, `aud_usd_rate` 0.71, `human_in_the_loop` 1); and an
+  `anomaly_rules` table seeded with 5 rules (key/label/enabled/severity/paramNum). Admin CRUD registered.
+- ✅ **Z2 — RBAC wiring** — director/manager flow through the API `write` guards (+ /kb, /users/viewers) and
+  web nav as internal staff (viewers stay read-only). `USER_ROLES` + web `Role` widened.
+- ✅ **Z3 — Two-tier margin guardrail + lead-time buffer** — `changeStatus` gates finalisation by margin band:
+  **≥28% ok · 22–28% needs an approver (admin/director/manager) · <22% needs director-level (admin/director)**,
+  each override audited via `margin_guardrail`. `margin_floor` no longer gates (retained for the override
+  *warning* + snapshots); `/price` surfaces `min_gross_margin` as the floor + `walkAwayMargin` (admin). The
+  `lead_time_buffer_days` (+3) is added to every configured option's manufacturer lead time in the API layer
+  (`calc/config.ts` stays pure). Updated the pre-existing below-floor tests to the two-tier behaviour.
+- ✅ **Z4 — Configurable anomaly-rules engine** — `evaluateAnomalies(quote)` reads the enabled `anomaly_rules`
+  (thresholds live from `paramNum`) and enforces the 5 rules in `validateQuote` (folded into counts +
+  `canFinalise` + a new `anomalies[]`): nonstandard cabinet (block, cut-cabinet per the config engine's
+  tolerance), discount>12% on A+ (warn), outdoor <2500nit (warn), air-freight + lead <5wk (block), custom
+  engineering (warn, +$1590). `changeStatus` gates on `collectAllErrors` (anomaly blocks incl.) with approver
+  override. Disabled rows ⇒ no findings. Web Validation card renders anomalies.
+- ✅ **Z5 — Engine constraints admin panel** — `/admin/engine` (admin-only) matching the mockup: 6 Financial
+  Bumpers with Edit (value + ACTIVE) + 5 Anomaly Rules with BLOCK/WARN badges + Configure (enabled/severity/
+  param), all via the existing generic admin CRUD (settings + anomaly-rules). `aud_usd_rate` is managed here
+  as the "assumption of record" (live USD→AUD conversion still uses the Currencies exchange rate).
+- ✅ **Z6 — Client tiers as rule-bearing entities** — `client_tiers` table (A+/A/B: description, install
+  standard, **preferred freight**, **default discount %**); `clients.tier` relates to it by name;
+  `clients.rulesNote` (free-text per-client logic) + `clients.preferredFreight` (override). Rule resolution
+  is now **global → tier → client**: `resolveDiscount` layers quote → client → **tier.defaultDiscountPct** →
+  system default (new `'tier'` source); `/rules/client/:id/effective` reports the tier block + winning source
+  + tier freight. Pixel pitch and mediaplayer-exclusion stay per-client. New `/admin/tiers` page (tier cards
+  with client chips + editable per-client logic notes). `getQuote` loads `client.clientTier`.
+
+**Interpretation applied:** walk-away (<22% margin) is **Director-approvable** (not an absolute block) — the
+Director role exists precisely for that authority. `aud_usd_rate` is managed/displayed but not wired into live
+FX conversion (that would change workbook-verified pricing) — flagged as a follow-up.
