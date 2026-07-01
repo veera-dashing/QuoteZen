@@ -21,7 +21,8 @@ export default function QuotesLayout({ children }: { children: ReactNode }) {
 
   if (!ready) return <div className="center">Loading…</div>;
 
-  const canSeeReference = role === 'admin' || role === 'sales';
+  // Reference data is visible to all internal staff (everyone except read-only viewers).
+  const canSeeReference = role !== null && role !== 'viewer';
 
   return (
     <div>

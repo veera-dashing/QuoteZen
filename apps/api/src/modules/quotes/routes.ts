@@ -106,7 +106,8 @@ export const quoteRoutes = async (
   const uploadDir = opts.config.UPLOAD_DIR;
   const auth = { preHandler: [app.authenticate] };
   // Mutations require a writer role; `viewer` is read-only (P1-19g.1 RBAC).
-  const write = { preHandler: [app.requireRole('admin', 'sales')] };
+  // Internal staff who can operate on quotes: authors (admin/sales) + approvers (director/manager).
+  const write = { preHandler: [app.requireRole('admin', 'sales', 'director', 'manager')] };
   const userId = (request: { user: { id: string } }): bigint => BigInt(request.user.id);
   const actor = (request: { user: { id: string; role: UserRole } }): Actor => ({
     id: BigInt(request.user.id),
@@ -262,7 +263,7 @@ export const quoteRoutes = async (
     getAllAuditLog(parse(auditFilterQuery, request.query)),
   );
 
-  app.get('/kb', { preHandler: [app.requireRole('admin', 'sales')] }, (request) =>
+  app.get('/kb', { preHandler: [app.requireRole('admin', 'sales', 'director', 'manager')] }, (request) =>
     listKbEntries(parse(z.object({ outcome: z.string().optional(), client: z.string().optional() }), request.query)),
   );
 

@@ -5,7 +5,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 const TOKEN_KEY = 'quotezen_token';
 const USER_KEY = 'quotezen_user';
 
-export type Role = 'admin' | 'sales' | 'viewer';
+export type Role = 'admin' | 'sales' | 'viewer' | 'director' | 'manager';
 export interface SessionUser {
   id: string;
   email: string;

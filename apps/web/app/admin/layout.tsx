@@ -8,13 +8,14 @@ import { api, clearToken, getRole, getToken, type Role } from '@/lib/api';
 import type { TableDef } from '@/lib/types';
 
 // Top-level nav items and which roles may see them.
+const STAFF: Role[] = ['admin', 'sales', 'director', 'manager']; // internal staff (not viewer)
 const NAV: Array<{ href: string; label: string; roles: Role[] }> = [
-  { href: '/quotes', label: '📐 Quotes', roles: ['admin', 'sales'] },
+  { href: '/quotes', label: '📐 Quotes', roles: STAFF },
   { href: '/admin/users', label: '👥 Users & roles', roles: ['admin'] },
   { href: '/admin/margins', label: '💰 Margins & markups', roles: ['admin'] },
   { href: '/admin/audit', label: '📜 Audit log', roles: ['admin'] },
-  { href: '/admin/kb', label: '📚 Knowledge base', roles: ['admin', 'sales'] },
-  { href: '/admin/rules', label: '⚖️ Effective rules', roles: ['admin', 'sales'] },
+  { href: '/admin/kb', label: '📚 Knowledge base', roles: STAFF },
+  { href: '/admin/rules', label: '⚖️ Effective rules', roles: STAFF },
 ];
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
@@ -36,14 +37,10 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
       return;
     }
     setRole(r);
-    // Reference data is for admin + sales only.
-    if (r === 'admin' || r === 'sales') {
-      api<{ tables: TableDef[] }>('/admin/_meta')
-        .then((res) => setTables(res.tables))
-        .catch((e) => setError(e.message));
-    } else {
-      setTables([]);
-    }
+    // Reference data is for all internal staff (everyone except read-only viewers, redirected above).
+    api<{ tables: TableDef[] }>('/admin/_meta')
+      .then((res) => setTables(res.tables))
+      .catch((e) => setError(e.message));
   }, [router]);
 
   const groups = useMemo(() => {
