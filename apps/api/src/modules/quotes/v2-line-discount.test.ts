@@ -53,7 +53,7 @@ const newQuoteWithScreen = async (
     payload: {
       jobReference: `${JOB_PREFIX}${Math.floor(Math.random() * 1e9)}`,
       currencyCode: 'AUD',
-      ...(opts.discountPct !== undefined ? { discountPct: opts.discountPct } : {}),
+      ...(opts.discountPct !== undefined ? { discountPct: opts.discountPct, discountNote: 'test justification' } : {}),
       ...(opts.clientId !== undefined ? { clientId: opts.clientId } : {}),
     },
   });

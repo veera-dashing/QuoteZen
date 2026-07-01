@@ -38,6 +38,8 @@ export const createQuoteSchema = z.object({
   discountPct: z.coerce.number().min(0).max(1).optional(),
   /** Where the discount applies (U5): one-off upfront concession (default) vs every renewal. */
   discountScope: z.enum(DISCOUNT_SCOPES).default('one_off'),
+  /** Manager justification note for the quote discount — required above the note threshold (5%). */
+  discountNote: z.string().max(500).optional(),
   /** Quote-wide PI capture (U0). */
   siteAddress: z.string().max(500).optional(),
   projectNotes: z.string().max(2000).optional(),
@@ -56,6 +58,8 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   discountScope: z.enum(DISCOUNT_SCOPES).optional(),
   /** Per-quote discount mode (V2): how per-line discounts fold with the quote/client discount. */
   discountMode: z.enum(DISCOUNT_MODES).optional(),
+  /** Discount justification note (nullish on update so it can be cleared). */
+  discountNote: z.string().max(500).nullish(),
   siteAddress: z.string().max(500).nullish(),
   projectNotes: z.string().max(2000).nullish(),
   /** Optimistic-locking token from the last read; a mismatch is a 409 conflict (P1-05.2). */

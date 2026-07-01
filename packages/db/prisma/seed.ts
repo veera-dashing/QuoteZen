@@ -51,6 +51,11 @@ const SETTINGS: Array<{ key: string; label: string; value?: number; valueText?: 
   { key: 'out_of_hours_rate_sell', label: 'Out-of-Hours Uplift Sell (per hour)', value: 80, unit: '$' },
   // U0 — client discount system default (fraction 0..1); new clients inherit this when none is set.
   { key: 'default_client_discount_pct', label: 'Default Client Discount %', value: 0, unit: 'fraction' },
+  // Quote-level discount guardrail (A+): hard CAP (fraction 0..1) on the quote discount override —
+  // non-admins are blocked above it; an admin may exceed it (audited). Above the NOTE THRESHOLD a
+  // manager justification note is required (any writer). Both are admin-editable.
+  { key: 'discount_cap_pct', label: 'Quote Discount Cap %', value: 0.12, unit: 'fraction' },
+  { key: 'discount_note_threshold_pct', label: 'Quote Discount Note Threshold %', value: 0.05, unit: 'fraction' },
   // LED ONLY — size-tolerance bands (% CSV): how far the whole-cabinet LED build may differ from the
   // required opening (LED is built up from available cabinet sizes, so an exact match isn't always
   // possible). Not brand-related; not used for LCD (fixed-size displays).

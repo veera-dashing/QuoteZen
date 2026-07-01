@@ -771,6 +771,8 @@ model Quote {
   discountScope         String      @default("one_off") @map("discount_scope")
   /** How per-line discounts interact with the quote/client discount (V2): `stack` = both apply; `item_only` = the quote/client discount is suppressed when any per-line discount exists. */
   discountMode          String      @default("stack") @map("discount_mode")
+  /** Manager justification note for the quote-level discount. Required when the discount exceeds `discount_note_threshold_pct` (default 5%); the hard cap is `discount_cap_pct` (default 12%, admin-overridable). */
+  discountNote          String?     @map("discount_note")
   /** Quote-wide PI capture (U0): the install site address and free-text project notes. */
   siteAddress           String?     @map("site_address")
   projectNotes          String?     @map("project_notes")

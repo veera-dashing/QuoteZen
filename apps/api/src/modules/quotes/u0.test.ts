@@ -79,7 +79,7 @@ describe('U0 — quote persists discountPct / siteAddress / projectNotes', () =>
       method: 'PATCH',
       url: `/quotes/${id}`,
       headers: auth(),
-      payload: { discountPct: 0.1, projectNotes: 'Updated notes' },
+      payload: { discountPct: 0.1, discountNote: 'test justification', projectNotes: 'Updated notes' },
     });
     expect(patched.statusCode).toBe(200);
     expect(Number(patched.json().discountPct)).toBe(0.1);

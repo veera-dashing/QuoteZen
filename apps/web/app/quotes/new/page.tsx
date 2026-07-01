@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { api } from '@/lib/api';
+import { api, getRole } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
 
 interface Option {
@@ -22,6 +22,13 @@ export default function NewQuote() {
   const [siteAddress, setSiteAddress] = useState('');
   const [projectNotes, setProjectNotes] = useState('');
   const [discountPctInput, setDiscountPctInput] = useState('');
+  // A+ discount guardrail: note required above 5%; hard cap 12% (admin-overridable).
+  const [discountNote, setDiscountNote] = useState('');
+  const isAdmin = getRole() === 'admin';
+  const discPctNum = discountPctInput.trim() === '' ? null : Number(discountPctInput);
+  const needsNote = discPctNum != null && discPctNum > 5 && !discountNote.trim();
+  const capBlocked = discPctNum != null && discPctNum > 12 && !isAdmin;
+  const discountBlocked = needsNote || capBlocked;
   // U5 — where the discount applies: one-off upfront concession (default) vs every renewal.
   const [discountScope, setDiscountScope] = useState<'one_off' | 'recurring'>('one_off');
   const [clients, setClients] = useState<Option[]>([]);
@@ -73,6 +80,7 @@ export default function NewQuote() {
           siteAddress: siteAddress.trim() || undefined,
           projectNotes: projectNotes.trim() || undefined,
           discountPct: discountPctInput.trim() === '' ? undefined : Number(discountPctInput) / 100,
+          discountNote: discountNote.trim() || undefined,
           discountScope,
         }),
       });
@@ -132,8 +140,17 @@ export default function NewQuote() {
           <div className="field">
             <label>Discount override (%)</label>
             <input type="number" min={0} max={99} step="0.5" value={discountPctInput} onChange={(e) => setDiscountPctInput(e.target.value)} placeholder="(default)" />
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: 12, color: capBlocked ? 'var(--danger, #dc2626)' : undefined }}>
+              {capBlocked ? 'Exceeds the 12% cap — admin approval required.' : 'Capped at 12%. Above 5% requires a manager note.'}
+            </p>
           </div>
         </div>
+        {discPctNum != null && discPctNum > 5 && (
+          <div className="field">
+            <label>Manager note (required for discounts above 5%){needsNote && <span style={{ color: 'var(--danger, #dc2626)' }}> *</span>}</label>
+            <textarea value={discountNote} onChange={(e) => setDiscountNote(e.target.value)} rows={2} style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box', borderColor: needsNote ? 'var(--danger, #dc2626)' : undefined }} placeholder="Justification for the discount…" />
+          </div>
+        )}
         <div className="field">
           <label>Discount applies to</label>
           <select value={discountScope} onChange={(e) => setDiscountScope(e.target.value as 'one_off' | 'recurring')}>
@@ -172,7 +189,7 @@ export default function NewQuote() {
         )}
         {error && <div className="error">{error}</div>}
         <div className="step-actions">
-          <button className="primary" type="submit" disabled={busy || !jobReference}>
+          <button className="primary" type="submit" disabled={busy || !jobReference || discountBlocked}>
             {busy ? 'Creating…' : 'Create & continue'}
           </button>
           <button type="button" className="ghost" onClick={() => router.push('/quotes')} disabled={busy}>

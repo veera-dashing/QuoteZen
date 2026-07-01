@@ -44,6 +44,7 @@ const QUOTE_HEADER_FIELDS = [
   'discountPct',
   'discountScope',
   'discountMode',
+  'discountNote',
   'siteAddress',
   'projectNotes',
 ] as const;
@@ -113,12 +114,19 @@ const resolveModedDiscount = (quote: QuoteWithChildren, defaultDiscountPct: numb
   return resolved;
 };
 
-export const createQuote = async (userId: bigint, input: CreateQuoteInput) => {
+export const createQuote = async (userId: bigint, input: CreateQuoteInput, actorRole?: UserRole) => {
   if (await findQuoteByJobRef(input.jobReference)) {
     throw conflict(`Job reference "${input.jobReference}" already exists`);
   }
   const currency = await findCurrencyByCode(input.currencyCode);
   if (!currency) throw notFound('Currency', input.currencyCode);
+
+  // Quote-level discount guardrail (A+): 12% cap (admin-overridable) + note required above 5%.
+  const { capOverride } = await enforceDiscountGuardrail(
+    input.discountPct,
+    input.discountNote,
+    actorRole === 'admin',
+  );
 
   return prisma.$transaction(async (tx) => {
     const quote = await tx.quote.create({
@@ -132,6 +140,7 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput) => {
         requestedShippingDate: input.requestedShippingDate ?? null,
         discountPct: input.discountPct ?? null,
         discountScope: input.discountScope ?? 'one_off',
+        discountNote: input.discountNote ?? null,
         siteAddress: input.siteAddress ?? null,
         projectNotes: input.projectNotes ?? null,
         createdById: userId,
@@ -147,9 +156,12 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput) => {
       action: 'create',
       entityTable: 'quotes',
       entityId: quote.id,
-      changes: input.viewerUserIds?.length
-        ? [{ field: 'viewers', oldValue: null, newValue: input.viewerUserIds.join(',') }]
-        : undefined,
+      changes: [
+        ...(input.viewerUserIds?.length
+          ? [{ field: 'viewers', oldValue: null, newValue: input.viewerUserIds.join(',') }]
+          : []),
+        ...(capOverride ? [{ field: 'discount_guardrail', oldValue: null, newValue: capOverride }] : []),
+      ],
     });
     return quote;
   });
@@ -270,7 +282,12 @@ export const getAuditLog = async (id: bigint, filters?: AuditFilters) => {
   return listAuditLog(id, filters);
 };
 
-export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuoteInput) => {
+export const updateQuote = async (
+  userId: bigint,
+  id: bigint,
+  input: UpdateQuoteInput,
+  actorRole?: UserRole,
+) => {
   const existing = await getQuote(id);
 
   // Optimistic locking (P1-05.2): reject stale writes instead of last-write-wins.
@@ -282,6 +299,14 @@ export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuote
     );
   }
 
+  // Quote-level discount guardrail (A+): evaluate the EFFECTIVE discount + note after this update
+  // (fall back to the stored values when a field isn't being changed) so the 12% cap and the
+  // above-5% note requirement hold whether the user changes the pct, the note, or both.
+  const effectivePct =
+    input.discountPct !== undefined ? input.discountPct : existing.discountPct != null ? Number(existing.discountPct) : null;
+  const effectiveNote = input.discountNote !== undefined ? input.discountNote : existing.discountNote;
+  const { capOverride } = await enforceDiscountGuardrail(effectivePct, effectiveNote, actorRole === 'admin');
+
   const data: Record<string, unknown> = { lockVersion: { increment: 1 } };
   if (input.jobReference !== undefined) data.jobReference = input.jobReference;
   if (input.clientId !== undefined) data.clientId = input.clientId;
@@ -292,6 +317,7 @@ export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuote
   if (input.discountPct !== undefined) data.discountPct = input.discountPct;
   if (input.discountScope !== undefined) data.discountScope = input.discountScope;
   if (input.discountMode !== undefined) data.discountMode = input.discountMode;
+  if (input.discountNote !== undefined) data.discountNote = input.discountNote;
   if (input.siteAddress !== undefined) data.siteAddress = input.siteAddress;
   if (input.projectNotes !== undefined) data.projectNotes = input.projectNotes;
   if (input.currencyCode !== undefined) {
@@ -306,6 +332,7 @@ export const updateQuote = async (userId: bigint, id: bigint, input: UpdateQuote
       data,
       QUOTE_HEADER_FIELDS,
     );
+    if (capOverride) changes.push({ field: 'discount_guardrail', oldValue: null, newValue: capOverride });
     await tx.quote.update({ where: { id }, data: { ...data, updatedById: userId } });
     // Replace viewer assignments when provided.
     if (input.viewerUserIds !== undefined) {
@@ -400,6 +427,55 @@ export const getDefaultDiscountPct = async (): Promise<number> => {
     where: { key: 'default_client_discount_pct' },
   });
   return setting ? Number(setting.value) : 0;
+};
+
+/** Hard cap (fraction 0..1) on the quote-level discount override; non-admins can't exceed it (default 12%). */
+export const getDiscountCapPct = async (): Promise<number> => {
+  const s = await prisma.setting.findUnique({ where: { key: 'discount_cap_pct' } });
+  return s ? Number(s.value) : 0.12;
+};
+
+/** Above this discount (fraction 0..1) a manager justification note is required (default 5%). */
+export const getDiscountNoteThresholdPct = async (): Promise<number> => {
+  const s = await prisma.setting.findUnique({ where: { key: 'discount_note_threshold_pct' } });
+  return s ? Number(s.value) : 0.05;
+};
+
+/**
+ * Quote-level discount guardrail (A+): the discount override is CAPPED at `discount_cap_pct` (default
+ * 12%) — a non-admin is blocked above it; an admin may exceed it (allowed, returned as an audit note).
+ * Above `discount_note_threshold_pct` (default 5%) a manager justification note is required (any role).
+ * `pct` is the effective quote discount override (fraction 0..1) after the update, or null to inherit
+ * the client/system default (no guardrail then). Returns a `capOverride` audit string when an admin
+ * exceeds the cap, else null. Throws (403 cap / 422 note) when a rule is violated.
+ */
+const enforceDiscountGuardrail = async (
+  pct: number | null | undefined,
+  note: string | null | undefined,
+  isAdminActor: boolean,
+): Promise<{ capOverride: string | null }> => {
+  if (pct == null) return { capOverride: null }; // inheriting the client/system default — not gated
+  const cap = await getDiscountCapPct();
+  const threshold = await getDiscountNoteThresholdPct();
+  let capOverride: string | null = null;
+  if (pct > cap) {
+    if (!isAdminActor) {
+      throw new AppError(
+        'forbidden',
+        `Quote discount ${(pct * 100).toFixed(1)}% exceeds the ${(cap * 100).toFixed(0)}% cap. Admin approval required.`,
+        { pct, cap },
+      );
+    }
+    capOverride = `discount cap override: ${(pct * 100).toFixed(1)}% > cap ${(cap * 100).toFixed(0)}%`;
+  }
+  if (pct > threshold && !note?.trim()) {
+    throw new AppError(
+      'validation_error',
+      `A quote discount above ${(threshold * 100).toFixed(0)}% requires a manager note.`,
+      { pct, threshold },
+    );
+  }
+  return { capOverride };
 };
 
 /** Where the effective discount came from. */

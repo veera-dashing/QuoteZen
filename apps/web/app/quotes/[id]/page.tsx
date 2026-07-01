@@ -50,6 +50,7 @@ interface Quote {
   // Quote-level PI / commercial fields (U1).
   requestedShippingDate?: string | null; siteAddress?: string | null; projectNotes?: string | null;
   discountPct?: string | null; // stored as a fraction 0..1
+  discountNote?: string | null; // manager justification, required above 5%
   discountScope?: 'one_off' | 'recurring' | null; // U5 — upfront vs every renewal
   discountMode?: 'stack' | 'item_only' | null; // V2 — item+quote discount vs per-item only
   totalEquipment: string; totalServices: string; totalRecurring: string; grandTotal: string;
@@ -138,6 +139,14 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
   const [discountPctInput, setDiscountPctInput] = useState(
     quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
   );
+  // A+ discount guardrail: a manager note is required above 5%; the hard cap is 12% (admin-overridable).
+  const [discountNote, setDiscountNote] = useState(quote.discountNote ?? '');
+  const isAdmin = getRole() === 'admin';
+  const discPctNum = discountPctInput.trim() === '' ? null : Number(discountPctInput);
+  const needsNote = discPctNum != null && discPctNum > 5 && !discountNote.trim();
+  const overCap = discPctNum != null && discPctNum > 12;
+  const capBlocked = overCap && !isAdmin;
+  const discountBlocked = needsNote || capBlocked;
   // U5 — where the discount applies (one-off upfront vs every renewal).
   const [discountScope, setDiscountScope] = useState<'one_off' | 'recurring'>(
     quote.discountScope === 'recurring' ? 'recurring' : 'one_off',
@@ -205,6 +214,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
           siteAddress: siteAddress.trim() ? siteAddress.trim() : null,
           projectNotes: projectNotes.trim() ? projectNotes.trim() : null,
           discountPct: discountPctInput.trim() === '' ? null : Number(discountPctInput) / 100,
+          discountNote: discountNote.trim() ? discountNote.trim() : null,
           discountScope,
           // Optimistic concurrency: server rejects (409) if the quote moved since we loaded it.
           expectedVersion: quote.lockVersion,
@@ -220,7 +230,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
     } finally {
       setBusy(false);
     }
-  }, [quote.id, quote.lockVersion, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, discountPctInput, discountScope, onChange]);
+  }, [quote.id, quote.lockVersion, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, discountPctInput, discountNote, discountScope, onChange]);
 
   const save = persist;
 
@@ -228,13 +238,15 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
   // on the prop-sync re-render after a save/refetch — only genuine user edits arm the timer. When a
   // conflict is showing, auto-save is suspended until the user reloads (which resets dirty).
   useEffect(() => {
-    if (!canWrite || !dirty || conflict || !jobReference) return;
+    // Suspend auto-save while the discount guardrail is unmet (missing note / over cap) so the user
+    // isn't hit with a mid-typing 422/403; the explicit Save still surfaces the server error.
+    if (!canWrite || !dirty || conflict || !jobReference || discountBlocked) return;
     const t = setTimeout(() => {
       setDirty(false);
       void persist();
     }, 1500);
     return () => clearTimeout(t);
-  }, [dirty, conflict, canWrite, jobReference, persist]);
+  }, [dirty, conflict, canWrite, jobReference, discountBlocked, persist]);
 
   if (!canWrite) {
     return (
@@ -327,6 +339,9 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
         <div>
           <label>Discount override (%)</label>
           <input type="number" min={0} max={99} step="0.5" value={discountPctInput} onChange={(e) => { setDiscountPctInput(e.target.value); setDirty(true); }} placeholder="(default)" />
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: 12, color: capBlocked ? 'var(--danger, #dc2626)' : undefined }}>
+            {capBlocked ? 'Exceeds the 12% cap — admin approval required.' : 'Capped at 12%. Above 5% requires a manager note.'}
+          </p>
         </div>
         <div>
           <label>Discount applies to</label>
@@ -336,6 +351,18 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
           </select>
         </div>
       </div>
+      {discPctNum != null && discPctNum > 5 && (
+        <div style={{ marginTop: 8 }}>
+          <label>Manager note (required for discounts above 5%){needsNote && <span style={{ color: 'var(--danger, #dc2626)' }}> *</span>}</label>
+          <textarea
+            value={discountNote}
+            onChange={(e) => { setDiscountNote(e.target.value); setDirty(true); }}
+            rows={2}
+            style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box', borderColor: needsNote ? 'var(--danger, #dc2626)' : undefined }}
+            placeholder="Justification for the discount (e.g. strategic account, competitive tender)…"
+          />
+        </div>
+      )}
       <div style={{ marginTop: 8 }}>
         <label>Project notes</label>
         <textarea value={projectNotes} onChange={(e) => { setProjectNotes(e.target.value); setDirty(true); }} rows={3} style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box' }} placeholder="Internal project notes…" />
@@ -365,9 +392,14 @@ function DetailsStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
       {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
 
       <div className="step-actions">
-        <button className="primary" onClick={() => { setDirty(false); void save(); }} disabled={busy || !jobReference}>
+        <button className="primary" onClick={() => { setDirty(false); void save(); }} disabled={busy || !jobReference || discountBlocked}>
           {busy ? 'Saving…' : 'Save details'}
         </button>
+        {discountBlocked && (
+          <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>
+            {needsNote ? 'Add a manager note to save (discount above 5%).' : 'Discount exceeds the 12% cap.'}
+          </span>
+        )}
       </div>
     </div>
   );

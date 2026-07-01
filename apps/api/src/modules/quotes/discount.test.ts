@@ -24,11 +24,15 @@ beforeAll(async () => {
   app = await buildApp(loadConfig());
   adminToken = await login('admin@quotezen.local');
   salesToken = await login('sales@quotezen.local');
+  // These tests exercise the MARGIN-FLOOR guardrail via deep quote discounts; lift the discount CAP
+  // so those deep discounts are creatable (the cap is covered by discount-guardrail.test.ts).
+  await prisma.setting.update({ where: { key: 'discount_cap_pct' }, data: { value: 1 } }).catch(() => undefined);
 });
 
 afterAll(async () => {
   await prisma.quote.deleteMany({ where: { jobReference: { startsWith: JOB_PREFIX } } });
   await prisma.setting.update({ where: { key: 'margin_floor' }, data: { value: 0.2 } }).catch(() => undefined);
+  await prisma.setting.update({ where: { key: 'discount_cap_pct' }, data: { value: 0.12 } }).catch(() => undefined);
   await app.close();
   await prisma.$disconnect();
 });
@@ -51,7 +55,7 @@ const newQuoteWithScreen = async (
     payload: {
       jobReference: `${JOB_PREFIX}${Math.floor(Math.random() * 1e9)}`,
       currencyCode: 'AUD',
-      ...(opts.discountPct !== undefined ? { discountPct: opts.discountPct } : {}),
+      ...(opts.discountPct !== undefined ? { discountPct: opts.discountPct, discountNote: 'test justification' } : {}),
       ...(opts.clientId !== undefined ? { clientId: opts.clientId } : {}),
     },
   });

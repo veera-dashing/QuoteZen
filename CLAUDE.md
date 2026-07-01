@@ -489,3 +489,22 @@ Closed the two LCD gaps found auditing the LCD tab against the LED side: LCD had
 
 **Still LED-only by design:** LCD is fixed-size hardware, so it stays out of the best-fit config engine,
 size-tolerance bands, and Good/Better/Best tiers (those are the LED "lego" flow).
+
+### Block 14 — quote-level discount guardrail (A+) + UX polish
+- ✅ **Inline cost breakdown** — the per-screen cost breakdown moved out of the right-side drawer to an
+  expandable panel on each screen row in "Screens on this quote" (LED + LCD), with a "Quote totals"
+  summary card (discount mode + totals + licences) beneath the list. `PriceSection` gained a uniform
+  `screenId` (LED + LCD) so each row matches its section.
+- ✅ **"Manufacturer - Model" screen labels** — screen rows show e.g. "LEDFul - ISD320 / IF1.5-160"
+  (`ledScreenLabel`/`lcdScreenLabel`) when unnamed; a user-set name still wins. Quote include loads
+  `ledProduct.manufacturer`.
+- ✅ **Best-fit ⇄ Good/Better/Best are mutually exclusive** — running one clears the other in the LED
+  add form (only the selected view shows).
+- ✅ **Discount guardrail (A+)** — the quote-level discount override is **capped at 12%** and requires a
+  **manager note above 5%**. Settings `discount_cap_pct` (0.12) + `discount_note_threshold_pct` (0.05),
+  admin-editable; `quotes.discount_note` column (migration `quote_discount_note`). `enforceDiscountGuardrail`
+  in the quote service runs on create + update over the EFFECTIVE pct/note: **> cap** → non-admin 403,
+  admin override allowed + audited (`discount_guardrail`); **> threshold without a note** → 422. New-quote
+  form + Details step show the note field (required >5%), cap/threshold hints, and gate save (auto-save
+  suspends while unmet). Tested (`discount-guardrail.test.ts`, 6 cases); deep-discount margin/scope tests
+  lift the cap to isolate the margin-floor behaviour. 225 tests green (9 shared + 104 calc + 112 api).

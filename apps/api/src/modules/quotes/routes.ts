@@ -118,7 +118,7 @@ export const quoteRoutes = async (
 
   app.post('/quotes', write, async (request, reply) => {
     const input = parse(createQuoteSchema, request.body);
-    const quote = await createQuote(userId(request), input);
+    const quote = await createQuote(userId(request), input, actor(request).role);
     return reply.code(201).send(quote);
   });
 
@@ -132,7 +132,7 @@ export const quoteRoutes = async (
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const input = parse(updateQuoteSchema, request.body);
-    return updateQuote(userId(request), id, input);
+    return updateQuote(userId(request), id, input, actor(request).role);
   });
 
   // Soft-delete / restore (P1-05.1): the row + audit are preserved; the quote is hidden from the
