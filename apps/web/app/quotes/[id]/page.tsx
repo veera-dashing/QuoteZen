@@ -421,6 +421,19 @@ function sizeLabel(o: Pick<ConfigOption, 'sizeMode' | 'sizeDeltaPct'>): string {
   return `${sign}${pct}% ${o.sizeMode}`;
 }
 
+// U2: human "Tolerance" indicator — how far the panel sits from the opening, as a ±% band.
+function toleranceLabel(o: Pick<ConfigOption, 'sizeMode' | 'toleranceBand'>): string {
+  if (o.sizeMode === 'exact' || o.toleranceBand === 0) return 'exact';
+  return `±${o.toleranceBand}%`;
+}
+
+// A view filter: keep options within the selected tolerance band. `band === null` means "All"; an
+// exact/0-delta option always passes. Over-band options are already excluded server-side.
+function withinBand<T extends Pick<ConfigOption, 'sizeMode' | 'toleranceBand'>>(rows: T[], band: number | null): T[] {
+  if (band === null) return rows;
+  return rows.filter((o) => o.sizeMode === 'exact' || o.toleranceBand <= band);
+}
+
 // Form 1 (U1): select & finalise an LED panel — opening size + orientation/ratio + configure /
 // Good-Better-Best / specific-product selection + components + rotate. Adds the screen (POST
 // /led-screens) with panel + geometry + components only; secondary options/services are set
@@ -436,6 +449,10 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const [err, setErr] = useState<string | null>(null);
   const [options, setOptions] = useState<ConfigOption[] | null>(null);
   const [reasons, setReasons] = useState<string[]>([]);
+  // U2: user-facing "Allowed size tolerance" — the bands come from the configure response
+  // (size_tolerance_bands setting); `selectedBand` is a pure view filter (null = "All").
+  const [toleranceBands, setToleranceBands] = useState<number[]>([]);
+  const [selectedBand, setSelectedBand] = useState<number | null>(null);
   // Good / Better / Best tiered options (T2).
   const [tiers, setTiers] = useState<TierOption[] | null>(null);
   const [tierReasons, setTierReasons] = useState<string[]>([]);
@@ -540,12 +557,16 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
     setBusy(true);
     setErr(null);
     try {
-      const res = await api<{ options: ConfigOption[]; reasons: string[] }>(
+      const res = await api<{ options: ConfigOption[]; reasons: string[]; toleranceBands?: number[] }>(
         `/quotes/${quote.id}/screens/configure`,
         { method: 'POST', body: JSON.stringify({ desiredWidthMm: Number(w), desiredHeightMm: Number(h), allowRotation: rotate }) },
       );
       setOptions(res.options);
       setReasons(res.reasons);
+      // Surface the allowed tolerance bands and default the filter to the widest (least restrictive).
+      const bands = (res.toleranceBands ?? []).slice().sort((a, b) => a - b);
+      setToleranceBands(bands);
+      if (selectedBand === null && bands.length > 0) setSelectedBand(bands[bands.length - 1]!);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed');
     } finally {
@@ -558,13 +579,18 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
     setBusy(true);
     setErr(null);
     try {
-      const res = await api<{ options: TierOption[]; reasons: string[]; distinctProducts: number }>(
+      const res = await api<{ options: TierOption[]; reasons: string[]; distinctProducts: number; toleranceBands?: number[] }>(
         `/quotes/${quote.id}/screens/options`,
         { method: 'POST', body: JSON.stringify({ desiredWidthMm: Number(w), desiredHeightMm: Number(h), allowRotation: rotate }) },
       );
       setTiers(res.options);
       setTierReasons(res.reasons);
       setDistinctProducts(res.distinctProducts);
+      const bands = (res.toleranceBands ?? []).slice().sort((a, b) => a - b);
+      if (bands.length > 0) {
+        setToleranceBands(bands);
+        if (selectedBand === null) setSelectedBand(bands[bands.length - 1]!);
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed');
     } finally {
@@ -620,6 +646,7 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
       setProductId('');
       setOptions(null);
       setTiers(null);
+      setSelectedBand(null);
       setComponents([]);
       setOrientation('');
       setAspectRatioId('');
@@ -648,6 +675,8 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
 
   // The selected product's model name, for the collapsed accordion summary.
   const selectedModel = products.find((p) => p.id === productId)?.model ?? '';
+  // Resolved aspect-ratio label (for the collapsed summary + tolerance filtering context).
+  const selectedRatioLabel = ratios.find((r) => r.id === aspectRatioId)?.ratioLabel ?? '';
 
   // Required-field gating (P1-12.3): the essentials before "+ Add screen".
   const missing: string[] = [];
@@ -665,7 +694,10 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
             <div>
               <span className="pill" style={{ marginRight: 6 }}>Selected</span>
               <b>{selectedModel || `Product ${productId}`}</b>{rotate ? ' (rot)' : ''}{' '}
-              <span className="muted">· {w}×{h}mm</span>
+              <span className="muted">
+                · {w}×{h}mm
+                {(orientation || selectedRatioLabel) ? ` · ${[orientation, selectedRatioLabel].filter(Boolean).join(' ')}` : ''}
+              </span>
             </div>
             <button className="ghost" onClick={() => setAccordionOpen(true)}>Expand / change</button>
           </div>
@@ -676,16 +708,45 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
           <h3 style={{ margin: 0 }}>Screen selection</h3>
           {productId && <button className="ghost" onClick={() => setAccordionOpen(false)}>Collapse</button>}
         </div>
-        <p className="muted">Enter the opening size; the engine ranks every LED product that fits. Pick one to attach the screen details below.</p>
+        <p className="muted">Enter the full screen details — opening size, orientation and aspect ratio — then the engine ranks every LED product that fits. Pick one to attach components &amp; services below.</p>
         <div className="grid3">
           <div><label>Screen name</label><input value={name} onChange={(e) => setName(e.target.value)} /></div>
-          <div><label>Width (mm)</label><input type="number" value={w} onChange={(e) => setW(e.target.value)} /></div>
-          <div><label>Height (mm)</label><input type="number" value={h} onChange={(e) => setH(e.target.value)} /></div>
+          <div>
+            <label style={Number(w) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Width (mm) *</label>
+            <input type="number" value={w} onChange={(e) => recalcDim('w', e.target.value)} />
+          </div>
+          <div>
+            <label style={Number(h) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Height (mm) *</label>
+            <input type="number" value={h} onChange={(e) => recalcDim('h', e.target.value)} />
+          </div>
+          <div>
+            <label>Orientation</label>
+            <SearchSelect
+              value={orientation}
+              onChange={onOrientationChange}
+              allowEmpty
+              placeholder="Select orientation…"
+              options={[{ value: 'Landscape', label: 'Landscape' }, { value: 'Portrait', label: 'Portrait' }]}
+            />
+          </div>
+          <div>
+            <label>Aspect ratio</label>
+            <SearchSelect
+              value={aspectRatioId}
+              onChange={onRatioChange}
+              allowEmpty
+              placeholder="Select aspect ratio…"
+              options={ratios.map((r) => ({ value: r.id, label: r.ratioLabel }))}
+            />
+          </div>
           <div>
             <label>Allow rotation</label>
             <input type="checkbox" checked={rotate} onChange={(e) => setRotate(e.target.checked)} style={{ width: 'auto' }} />
           </div>
         </div>
+        <p className="muted" style={{ marginTop: 4 }}>
+          Pick orientation + an aspect ratio and one dimension auto-fills the other (still editable).
+        </p>
         {err && <div className="error">{err}</div>}
         <div className="step-actions">
           <button className="primary" onClick={configure} disabled={busy}>
@@ -696,11 +757,43 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
           </button>
         </div>
 
-      {tiers && (
+        {/* U2: user-facing "Allowed size tolerance" — a segmented filter over the returned bands. */}
+        {toleranceBands.length > 0 && (options || tiers) && (
+          <div style={{ marginTop: 14 }}>
+            <label style={{ display: 'block', marginBottom: 4 }}>Allowed size tolerance</label>
+            <p className="muted" style={{ margin: '0 0 6px' }}>Show only panels within this % of the opening.</p>
+            <div role="group" style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+              {toleranceBands.map((b) => (
+                <button
+                  key={b}
+                  className={selectedBand === b ? 'primary' : 'ghost'}
+                  onClick={() => setSelectedBand(b)}
+                  type="button"
+                >
+                  ±{b}%
+                </button>
+              ))}
+              <button
+                className={selectedBand === null ? 'primary' : 'ghost'}
+                onClick={() => setSelectedBand(null)}
+                type="button"
+              >
+                All
+              </button>
+            </div>
+          </div>
+        )}
+
+      {tiers && (() => {
+        const shownTiers = withinBand(tiers, selectedBand);
+        return (
         <div className="card">
           <h3 style={{ marginTop: 0 }}>Good / Better / Best</h3>
           {tiers.length === 0 && <p className="muted">No options: {tierReasons.join(' ')}</p>}
-          {tiers.length > 0 && (
+          {tiers.length > 0 && shownTiers.length === 0 && (
+            <p className="muted">No tiers within ±{selectedBand}% — widen the allowed size tolerance above.</p>
+          )}
+          {shownTiers.length > 0 && (
             <>
               {distinctProducts < 3 && (
                 <p className="muted">
@@ -713,7 +806,7 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
                 comparison; install, frame and components are added when you place the screen.
               </p>
               <div className="grid3" style={{ alignItems: 'stretch' }}>
-                {tiers.map((t) => (
+                {shownTiers.map((t) => (
                   <div
                     key={t.tier}
                     className="card"
@@ -746,6 +839,13 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
                         <tr><td className="muted">Fill %</td><td>{t.fillPercent}</td></tr>
                         <tr><td className="muted">Cabinets</td><td>{t.cabinetCount}</td></tr>
                         <tr><td className="muted">Cut?</td><td>{t.cutCabinetSuggested ? '⚠️ yes' : '—'}</td></tr>
+                        <tr>
+                          <td className="muted">Sizing</td>
+                          <td style={{ color: t.sizeMode === 'over' ? 'var(--danger, #dc2626)' : t.sizeMode === 'under' ? 'var(--warn, #b45309)' : 'var(--ok, #15803d)' }}>
+                            {sizeLabel(t)}
+                          </td>
+                        </tr>
+                        <tr><td className="muted">Tolerance</td><td>{toleranceLabel(t)}</td></tr>
                         <tr><td className="muted">Supply sell</td><td>${t.supplySellAud}</td></tr>
                         {getRole() === 'admin' && (
                           <>
@@ -764,24 +864,30 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
             </>
           )}
         </div>
-      )}
+        );
+      })()}
 
-      {options && (
+      {options && (() => {
+        const shownOptions = withinBand(options, selectedBand);
+        return (
         <div className="card">
-          <h3 style={{ marginTop: 0 }}>Ranked configurations ({options.length})</h3>
+          <h3 style={{ marginTop: 0 }}>Ranked configurations ({shownOptions.length}{selectedBand !== null && shownOptions.length !== options.length ? ` of ${options.length}` : ''})</h3>
           {options.length === 0 && <p className="muted">No fit: {reasons.join(' ')}</p>}
-          {options.length > 0 && (
+          {options.length > 0 && shownOptions.length === 0 && (
+            <p className="muted">No configurations within ±{selectedBand}% — widen the allowed size tolerance above.</p>
+          )}
+          {shownOptions.length > 0 && (
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
                     <th>Product</th><th>Manufacturer</th><th className="cell-num">Lead (d)</th>
-                    <th>Size (mm)</th><th>Sizing</th><th>Resolution</th><th>Ratio</th>
+                    <th>Size (mm)</th><th>Sizing</th><th>Tolerance</th><th>Resolution</th><th>Ratio</th>
                     <th className="cell-num">Fill %</th><th className="cell-num">Cabinets</th><th>Cut?</th><th></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {options.slice(0, 25).map((o, i) => (
+                  {shownOptions.slice(0, 25).map((o, i) => (
                     <tr key={`${o.productId}-${o.rotated}-${o.sizeMode}-${i}`}>
                       <td>{o.model}{o.rotated ? ' (rot)' : ''}</td>
                       <td>{o.manufacturerName ?? '—'}</td>
@@ -800,6 +906,7 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
                           {sizeLabel(o)}
                         </span>
                       </td>
+                      <td>{toleranceLabel(o)}</td>
                       <td>{o.resolutionWpx}×{o.resolutionHpx}</td>
                       <td>
                         {o.ratioLabel ?? '—'}
@@ -822,7 +929,8 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
       </div>
       )}
 
@@ -830,39 +938,10 @@ function LedAddForm({ quote, onChange }: { quote: Quote; onChange: () => Promise
       {productId && (
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Screen details</h3>
-        <p className="muted">Geometry, orientation, components and options &amp; services for the selected product — all sent in one go when you add the screen.</p>
-        <div className="grid3">
-          <div>
-            <label style={Number(w) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Width (mm) *</label>
-            <input type="number" value={w} onChange={(e) => recalcDim('w', e.target.value)} />
-          </div>
-          <div>
-            <label style={Number(h) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Height (mm) *</label>
-            <input type="number" value={h} onChange={(e) => recalcDim('h', e.target.value)} />
-          </div>
-          <div>
-            <label>Orientation</label>
-            <SearchSelect
-              value={orientation}
-              onChange={onOrientationChange}
-              allowEmpty
-              placeholder="Select orientation…"
-              options={[{ value: 'Landscape', label: 'Landscape' }, { value: 'Portrait', label: 'Portrait' }]}
-            />
-          </div>
-          <div>
-            <label>Aspect ratio</label>
-            <SearchSelect
-              value={aspectRatioId}
-              onChange={onRatioChange}
-              allowEmpty
-              placeholder="Select aspect ratio…"
-              options={ratios.map((r) => ({ value: r.id, label: r.ratioLabel }))}
-            />
-          </div>
-        </div>
-        <p className="muted" style={{ marginTop: 4 }}>
-          Pick orientation + an aspect ratio and one dimension auto-fills the other (still editable).
+        <p className="muted">
+          Components and options &amp; services for <b>{selectedModel || `product ${productId}`}</b>
+          {rotate ? ' (rotated)' : ''} · {w}×{h}mm{(orientation || selectedRatioLabel) ? ` · ${[orientation, selectedRatioLabel].filter(Boolean).join(' ')}` : ''}.
+          Panel &amp; geometry are set above; edit them via <b>Expand / change</b>. All sent in one go when you add the screen.
         </p>
 
         <h4 style={{ margin: '16px 0 4px' }}>Components</h4>
