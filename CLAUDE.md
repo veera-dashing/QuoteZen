@@ -656,3 +656,19 @@ version is a COMPLETE, tamper-proof record of the rules that produced it, and th
   param; manufacturer priorities) as small tables. Tolerates pre-capture snapshots (missing keys skipped). Read-only.
 - **Already met (no change):** (a) see history, (c) restore-as-active (history-preserving rollback), (d) immutable
   separate instance per state.
+
+### Block 20 — Quotes dashboard: summary cards + Pending-approval tab + last-two-months default (web)
+`apps/web/app/quotes/page.tsx` refinements (web-only; no API/schema change — the `/quotes` list already supports
+from/to/clientId/q/archived filters):
+- **Default date window = last two months** — `from` initialises to `isoMonthsAgo(2)` (to = open-ended). "Clear
+  filters" resets to this window (clear the "Created from" field manually for all-time); `hasFilters` compares against
+  the default.
+- **Summary cards** — four clickable KPI cards above the tabs (Total/Archived · Drafts · Pending approval · Finished),
+  counts derived from the current filtered set; clicking a card switches to that tab. Reuses `.totals`/`.stat` styling.
+- **Pending-approval tab** — new `pending` tab + `PENDING_STATUSES = ['in_review','technical_review','commercial_review']`
+  (the mid-review/approval states). `DRAFT_STATUSES` narrowed to `['draft']` (in_review moved to pending). Tabs order:
+  All · Drafts · Pending approval · Finished · Archived.
+- **Fetch keyed on the archived flag + filters (not the tab)** — the draft/pending/finished/all grouping is client-side
+  (`tabStatuses`), so switching among non-archived tabs is instant (no refetch) and the summary stays stable. Raw
+  `fetched` set drives both `rows` (tab-grouped) and `summary` via `useMemo`. Empty-state message is tab-aware
+  (e.g. "No quotes pending approval." when other quotes exist in the window). Verified live in-browser.

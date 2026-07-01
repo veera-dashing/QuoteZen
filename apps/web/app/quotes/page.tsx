@@ -22,30 +22,48 @@ interface ClientOption {
 }
 
 /** Dashboard tabs (P1-19d.1). Each maps to the set of statuses it shows. */
-type Tab = 'drafts' | 'finished' | 'all' | 'archived';
-const DRAFT_STATUSES = ['draft', 'in_review'];
+type Tab = 'drafts' | 'pending' | 'finished' | 'all' | 'archived';
+const DRAFT_STATUSES = ['draft'];
+// "Pending approval" — anything mid review/approval workflow (T1 two-stage review + legacy in_review).
+const PENDING_STATUSES = ['in_review', 'technical_review', 'commercial_review'];
 const FINISHED_STATUSES = ['approved', 'issued', 'won', 'lost'];
 const TABS: Array<{ key: Tab; label: string }> = [
-  { key: 'drafts', label: 'Drafts' },
-  { key: 'finished', label: 'Finished' },
   { key: 'all', label: 'All' },
+  { key: 'drafts', label: 'Drafts' },
+  { key: 'pending', label: 'Pending approval' },
+  { key: 'finished', label: 'Finished' },
   { key: 'archived', label: 'Archived' },
 ];
 
+/** Which status-group a tab shows (null = every status, i.e. All/Archived). */
+const tabStatuses = (t: Tab): string[] | null =>
+  t === 'drafts' ? DRAFT_STATUSES : t === 'pending' ? PENDING_STATUSES : t === 'finished' ? FINISHED_STATUSES : null;
+
+/** YYYY-MM-DD for `monthsAgo` months before today (local) — used for the default "last two months" window. */
+const isoMonthsAgo = (monthsAgo: number): string => {
+  const d = new Date();
+  d.setMonth(d.getMonth() - monthsAgo);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 export default function QuotesList() {
-  const [rows, setRows] = useState<QuoteRow[] | null>(null);
+  // Raw fetched set (for the current date/client/search + archived flag), before tab grouping — the
+  // summary cards + each tab's list are both derived from this.
+  const [fetched, setFetched] = useState<QuoteRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('all');
   const [busyId, setBusyId] = useState<string | null>(null);
   const canWrite = getRole() !== 'viewer';
 
-  // Filter controls.
+  // Filter controls. Default to the last two months (from = 2 months ago, to = open-ended).
+  const defaultFrom = useMemo(() => isoMonthsAgo(2), []);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [clientId, setClientId] = useState('');
-  const [from, setFrom] = useState('');
+  const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState('');
   const [clients, setClients] = useState<ClientOption[]>([]);
+  const isArchived = tab === 'archived';
 
   // Populate the client filter once.
   useEffect(() => {
@@ -65,42 +83,55 @@ export default function QuotesList() {
     [clients],
   );
 
+  // Fetch is keyed on the archived flag + filters (NOT the tab) — the draft/pending/finished/all
+  // grouping is done client-side, so switching between those tabs is instant (no refetch) and the
+  // summary cards stay stable.
   const load = useCallback(() => {
-    setRows(null);
+    setFetched(null);
     setError(null);
     const params = new URLSearchParams();
-    if (tab === 'archived') params.set('archived', 'true');
-    // "Finished" is a status group; we fetch the group and filter client-side (the server `status`
-    // param is a single value). Drafts is also a group. "All"/"Archived" carry no status param.
+    if (isArchived) params.set('archived', 'true');
     if (debouncedSearch) params.set('q', debouncedSearch);
     if (clientId) params.set('clientId', clientId);
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     const qs = params.toString();
     api<QuoteRow[]>(`/quotes${qs ? `?${qs}` : ''}`)
-      .then((data) => {
-        const grouped =
-          tab === 'drafts'
-            ? data.filter((q) => DRAFT_STATUSES.includes(q.status))
-            : tab === 'finished'
-              ? data.filter((q) => FINISHED_STATUSES.includes(q.status))
-              : data;
-        setRows(grouped);
-      })
+      .then((data) => setFetched(data))
       .catch((e) => setError(e.message));
-  }, [tab, debouncedSearch, clientId, from, to]);
+  }, [isArchived, debouncedSearch, clientId, from, to]);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  // Rows for the active tab (client-side status grouping).
+  const rows = useMemo(() => {
+    if (!fetched) return null;
+    const statuses = tabStatuses(tab);
+    return statuses ? fetched.filter((q) => statuses.includes(q.status)) : fetched;
+  }, [fetched, tab]);
+
+  // Summary counts over the current (date/client/search-filtered) set, mirroring the tabs.
+  const summary = useMemo(() => {
+    const f = fetched ?? [];
+    return {
+      total: f.length,
+      drafts: f.filter((q) => DRAFT_STATUSES.includes(q.status)).length,
+      pending: f.filter((q) => PENDING_STATUSES.includes(q.status)).length,
+      finished: f.filter((q) => FINISHED_STATUSES.includes(q.status)).length,
+    };
+  }, [fetched]);
+
+  // Reset to the default view (last two months, no client/search). Full-time can be had by clearing
+  // the "Created from" field manually.
   const clearFilters = () => {
     setSearch('');
     setClientId('');
-    setFrom('');
+    setFrom(defaultFrom);
     setTo('');
   };
-  const hasFilters = Boolean(search || clientId || from || to);
+  const hasFilters = Boolean(search || clientId || to || from !== defaultFrom);
 
   const archive = async (id: string, archived: boolean) => {
     setBusyId(id);
@@ -124,6 +155,34 @@ export default function QuotesList() {
             <button className="primary">+ New quote</button>
           </Link>
         )}
+      </div>
+
+      {/* Summary cards — counts over the current date/client/search filter, and quick tab nav. */}
+      <div
+        className="totals"
+        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginBottom: 16 }}
+      >
+        {([
+          { key: 'all', label: isArchived ? 'Archived' : 'Total', value: summary.total },
+          { key: 'drafts', label: 'Drafts', value: summary.drafts },
+          { key: 'pending', label: 'Pending approval', value: summary.pending },
+          { key: 'finished', label: 'Finished', value: summary.finished },
+        ] as Array<{ key: Tab; label: string; value: number }>).map((c) => (
+          <button
+            key={c.key}
+            type="button"
+            className="stat"
+            onClick={() => setTab(c.key)}
+            style={{
+              textAlign: 'left',
+              cursor: 'pointer',
+              borderColor: tab === c.key ? 'var(--accent)' : undefined,
+            }}
+          >
+            <div className="label">{c.label}</div>
+            <div className="value">{fetched ? c.value : '—'}</div>
+          </button>
+        ))}
       </div>
 
       {/* Tabs */}
@@ -192,9 +251,14 @@ export default function QuotesList() {
         <p className="muted">
           {tab === 'archived'
             ? 'No archived quotes.'
-            : hasFilters
-              ? 'No quotes match these filters.'
-              : 'No quotes yet. Create your first one.'}
+            : summary.total === 0
+              ? hasFilters
+                ? 'No quotes match these filters.'
+                : 'No quotes yet. Create your first one.'
+              : // other quotes exist in this window, just none in the active group
+                `No quotes ${
+                  tab === 'pending' ? 'pending approval' : tab === 'drafts' ? 'in draft' : tab === 'finished' ? 'finished' : 'match these filters'
+                }${hasFilters ? ' in this window' : ''}.`}
         </p>
       )}
       {rows && rows.length > 0 && (
