@@ -175,6 +175,9 @@ export default function NewQuote() {
           <button className="primary" type="submit" disabled={busy || !jobReference}>
             {busy ? 'Creating…' : 'Create & continue'}
           </button>
+          <button type="button" className="ghost" onClick={() => router.push('/quotes')} disabled={busy}>
+            Cancel
+          </button>
         </div>
       </form>
     </div>
