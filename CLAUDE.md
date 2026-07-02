@@ -777,6 +777,18 @@ price-sensitivity hint; LED+LCD tier cards show a "Client typically selects…" 
 emphasis. PM handoff `commercial` block; `clientMustHaves` folded into the assumptions register. DetailsStep "Commercial"
 sub-block. 176 api tests green (+11 `aa6a-commercial.test.ts`); calc 135 (+5); typecheck + web build clean.
 
+### Block AA6b — region/product freight overrides (workshop Group F, part 2 / rule #18)
+Migration `aa6b_freight_overrides`: new `freight_overrides` lookup (nullable `location_id`/`manufacturer_id` FKs,
+`rate_per_screen_aud`, `note`, `deprecated`; reverse relations on `Location`/`Manufacturer`). calc `install.ts`
+`LedInstallInput.freightOverridePerScreenAud?` — when defined it REPLACES the weight-based freight component (still
+service-marked-up); when `undefined` the math is byte-for-byte identical. API `resolveFreightOverride(locationId,
+manufacturerId)` loads active overrides, picks the most-specific match (both-set > one-set > none; lowest-id tiebreak),
+**fast-paths `null` on an empty table** — strict no-op by default (ZERO rows seeded). Wired into
+`computeLedScreenPricing` (add / options-PATCH / full-edit share it); a match relabels the services line
+`"Install, labour & freight (Freight override — …)"` so it surfaces in `/price` + BOM. Handles the "free-to-location
+but charged ~$90/screen" case. Admin `freight-overrides` CRUD. **Canonical samples unchanged** (LED 12380 / 5046.92,
+LCD 10120). 177 api tests green (+1 `aa6b-freight-overrides.test.ts`); calc 138 (+3); typecheck + web build clean.
+
 ### Block — collapsible Quote summary panel (web)
 The right-hand Quote summary is now collapsible (`quotes/[id]/page.tsx`): a "✕ Hide" button in its header collapses
 it; when hidden the aside is dropped from the flex row so the left step-content column (`flex: 1`) expands to the full
@@ -784,3 +796,7 @@ available width, and a slim "◀ Summary" button (top-right of the content) rest
 `localStorage['quotezen_summary_open']` (read on mount) so it stays hidden across steps/quotes — handy on smaller
 screens. Web-only; typecheck + build clean; verified live (Hide → left col 921px full-width + Show button; reload with
 persisted=0 loads collapsed).
+- *Follow-up (fixed floating restore tab):* when hidden, the restore control is now a **fixed floating side-tab**
+  (`.summary-tab` in `globals.css`: `position: fixed`, pinned to the right edge, vertically centred, `writing-mode:
+  vertical-rl`, accent-coloured) instead of an inline button. Being out of flow, it consumes no layout row, so the left
+  step column fully reclaims the width when the panel is hidden. Same `toggleSummary(true)` + persisted-state behaviour.

@@ -266,9 +266,36 @@ model Location {
   trimFreight       Decimal @map("trim_freight") @db.Decimal(12, 2)
   hourlyUplift      Decimal @map("hourly_uplift") @db.Decimal(12, 2)
 
-  quotes Quote[]
+  quotes           Quote[]
+  freightOverrides FreightOverride[]
 
   @@map("locations")
+}
+
+/**
+ * AA6b — region/product-specific freight override (workshop rule #18: "global freight card + region-
+ * & product-specific overrides; handle free-to-location-but-charged ~$90/screen"). Layered ON TOP of
+ * the global weight-based freight card: when a row matches a LED screen, the screen's freight becomes
+ * a flat `ratePerScreenAud` (per screen), replacing the computed weight-based location freight.
+ *
+ * Match rule: `locationId` null OR == the quote's location, AND `manufacturerId` null OR == the LED
+ * product's manufacturer. Most-specific match wins (both set > one set > none). NO ROWS ARE SEEDED —
+ * with an empty table this is a strict no-op and every existing price is unchanged.
+ */
+model FreightOverride {
+  id               BigInt   @id @default(autoincrement())
+  locationId       BigInt?  @map("location_id")
+  manufacturerId   BigInt?  @map("manufacturer_id")
+  ratePerScreenAud Decimal  @map("rate_per_screen_aud") @db.Decimal(12, 2)
+  note             String?
+  deprecated       Boolean  @default(false)
+
+  location     Location?     @relation(fields: [locationId], references: [id])
+  manufacturer Manufacturer? @relation(fields: [manufacturerId], references: [id])
+
+  @@index([locationId])
+  @@index([manufacturerId])
+  @@map("freight_overrides")
 }
 
 /**
@@ -284,7 +311,8 @@ model Manufacturer {
   leadTimeDays Int?    @map("lead_time_days")
   deprecated   Boolean @default(false)
 
-  ledProducts LedProduct[]
+  ledProducts      LedProduct[]
+  freightOverrides FreightOverride[]
 
   @@map("manufacturers")
 }

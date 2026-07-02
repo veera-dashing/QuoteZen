@@ -164,3 +164,27 @@ td.actions { text-align: right; }
 .ss-opt:hover { background: var(--surface-2); }
 .ss-opt.sel { background: var(--accent); color: var(--on-accent); }
 .ss-empty { padding: 8px 10px; color: var(--muted); font-size: 13px; }
+
+/* Fixed floating side-tab that restores the hidden quote-summary panel.
+   position: fixed keeps it out of flow so the left step column reclaims the full width;
+   pinned to the right edge, vertically centred, writing-mode makes it a slim vertical tab. */
+.summary-tab {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 40;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  padding: 14px 6px;
+  background: var(--accent);
+  color: var(--on-accent);
+  border: none;
+  border-radius: 8px 0 0 8px;
+  box-shadow: -2px 0 12px var(--shadow);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.summary-tab:hover { filter: brightness(1.08); }

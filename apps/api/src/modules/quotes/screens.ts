@@ -494,6 +494,38 @@ export const lcdOptionsForQuote = async (
   return { options, reasons, distinctProducts: selection.distinctProducts, commercialHints };
 };
 
+/**
+ * AA6b — resolve the best-matching freight override for a LED screen (workshop rule #18). Loads the
+ * ACTIVE (non-deprecated) `freight_overrides` once and picks the most-specific match:
+ *   • `locationId` null OR == the quote's location, AND `manufacturerId` null OR == the product's mfr;
+ *   • specificity = (locationId set ? 1 : 0) + (manufacturerId set ? 1 : 0) — both-set beats one-set
+ *     beats none; ties broken by lowest id for determinism.
+ * Returns `null` when nothing matches — with the table empty (the default), this is a strict no-op and
+ * the weight-based freight path is used unchanged.
+ */
+const resolveFreightOverride = async (
+  quoteLocationId: bigint | null,
+  productManufacturerId: bigint | null,
+): Promise<{ ratePerScreenAud: number; note: string | null; locationId: bigint | null } | null> => {
+  const rows = await prisma.freightOverride.findMany({ where: { deprecated: false } });
+  if (rows.length === 0) return null; // fast path: no overrides configured → strict no-op
+  const matches = rows.filter(
+    (r) =>
+      (r.locationId === null || (quoteLocationId !== null && r.locationId === quoteLocationId)) &&
+      (r.manufacturerId === null || (productManufacturerId !== null && r.manufacturerId === productManufacturerId)),
+  );
+  if (matches.length === 0) return null;
+  const specificity = (r: (typeof matches)[number]): number =>
+    (r.locationId !== null ? 1 : 0) + (r.manufacturerId !== null ? 1 : 0);
+  matches.sort((a, b) => {
+    const s = specificity(b) - specificity(a);
+    if (s !== 0) return s;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; // lowest id wins on a tie (deterministic)
+  });
+  const best = matches[0]!;
+  return { ratePerScreenAud: Number(best.ratePerScreenAud), note: best.note, locationId: best.locationId };
+};
+
 interface LedScreenPricing {
   spec: ReturnType<typeof ledSpec> | null;
   lines: PricedLine[];
@@ -703,6 +735,10 @@ const computeLedScreenPricing = async (
       throw new AppError('bad_request', `Freight option "${freightOpt.name}" has no rate configured`);
     }
     const freightCostAud = freightOpt && freightKg ? freightKg * Number(freightOpt.rate) : 0;
+    // AA6b — region/product freight override: if a row matches (quote location, product manufacturer)
+    // the freight component becomes a FLAT per-screen rate, replacing the weight-based figure. With no
+    // override rows (the default) this is `null` → the existing freight path is used, byte-for-byte.
+    const freightOverride = await resolveFreightOverride(quote.location?.id ?? null, product?.manufacturerId ?? null);
     labourHours = estimateInstallHours({
       areaSqm: area,
       frameInstallHours: frame ? Number(frame.installHours) : 0,
@@ -713,12 +749,18 @@ const computeLedScreenPricing = async (
         labourHours,
         locationHourlyUplift: quote.location ? Number(quote.location.hourlyUplift) : 0,
         accessEquipmentDayRate: access ? Number(access.dayRate) : 0,
+        // The override (flat per-screen) replaces the weight-based freight inside the marked-up total.
         freightCostAud,
+        freightOverridePerScreenAud: freightOverride ? freightOverride.ratePerScreenAud : undefined,
         engineeringPrice: engineering ? Number(engineering.price) : 0,
       },
       config,
     );
-    lines.push(fixedLine('Install, labour & freight', 'services', install.costAud, install.sellAud));
+    // Label the services line so the override is visible in the itemised price + BOM cost lines.
+    const installLabel = freightOverride
+      ? `Install, labour & freight (Freight override — ${freightOverride.note ?? quote.location?.name ?? 'per screen'})`
+      : 'Install, labour & freight';
+    lines.push(fixedLine(installLabel, 'services', install.costAud, install.sellAud));
   }
 
   const totals = composeScreenTotals(lines);
