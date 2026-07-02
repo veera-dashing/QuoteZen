@@ -1,12 +1,15 @@
 import {
   canFinalise,
+  resolveScreenRatio,
   validateScreen,
   validateLcdScreen,
+  type ScreenRatioRow,
   type ValidationFinding,
   type ValidationInput,
   type LcdValidationInput,
 } from '@quotezen/calc';
 import { getQuote } from './service.js';
+import { loadRatios } from './outputs.js';
 import { evaluateAnomalies, type AnomalyFinding } from './anomaly.js';
 import type { QuoteWithChildren } from './repository.js';
 
@@ -37,9 +40,31 @@ export interface QuoteValidation {
   anomalies: AnomalyFinding[];
 }
 
+/** Context threaded into per-screen validation for the AA2 client-scoped rules. */
+interface LedValidationContext {
+  ratios: ScreenRatioRow[];
+  allowedRatios: string[];
+  clientPreferredPitchMm: number | null;
+}
+
+/**
+ * The achieved aspect-ratio label of a stored screen (AA2). Prefers the built pixel grid
+ * (resolutionWpx/Hpx), falling back to the desired opening dims; null when neither is available.
+ */
+const achievedRatioLabel = (
+  screen: QuoteWithChildren['ledScreens'][number],
+  ratios: ScreenRatioRow[],
+): string | null => {
+  const w = screen.resolutionWpx ?? screen.desiredWidthMm ?? null;
+  const h = screen.resolutionHpx ?? screen.desiredHeightMm ?? null;
+  if (w == null || h == null || h <= 0) return null;
+  return resolveScreenRatio(w, h, ratios);
+};
+
 /** Build the calc validation input for one stored LED screen from its loaded relations. */
 const ledScreenToInput = (
   screen: QuoteWithChildren['ledScreens'][number],
+  ctx: LedValidationContext,
 ): ValidationInput => {
   // The most capable selected controller governs the pixel-capacity check.
   const controllers = screen.components.filter((c) => c.controller);
@@ -52,6 +77,13 @@ const ledScreenToInput = (
 
   const pitch = screen.ledProduct?.pixelPitchH != null ? Number(screen.ledProduct.pixelPitchH) : null;
 
+  // AA2 — compatibility groups: screen product, selected controllers, and the frame/bracket.
+  const controllerCompatibilityGroups = controllers
+    .map((c) => c.controller?.compatibilityGroup ?? null)
+    .filter((g): g is string => g != null && g !== '');
+
+  const achieved = achievedRatioLabel(screen, ctx.ratios);
+
   return {
     pixelPitchMm: pitch,
     gobSelected: screen.gobId != null,
@@ -62,6 +94,14 @@ const ledScreenToInput = (
     heightMm: screen.desiredHeightMm ?? null,
     // Environment / orientation / outdoor deps are not captured per-screen in this prototype, so
     // those rules naturally fall to cannot_evaluate / non-applicable — never a false error.
+    // ── AA2 ──
+    achievedRatioLabel: achieved,
+    allowedRatios: ctx.allowedRatios,
+    productCompatibilityGroup: screen.ledProduct?.compatibilityGroup ?? null,
+    controllerCompatibilityGroups,
+    frameCompatibilityGroup: screen.frame?.compatibilityGroup ?? null,
+    clientPreferredPitchMm: ctx.clientPreferredPitchMm,
+    contentRatioLabel: screen.contentRatio ?? null,
   };
 };
 
@@ -83,10 +123,22 @@ const lcdScreenToInput = (
 export const validateQuote = async (id: bigint): Promise<QuoteValidation> => {
   const quote = await getQuote(id);
 
+  // AA2 — client-scoped context: the ratio lookup, the client's allowed ratios, and preferred pitch.
+  const ratios = await loadRatios();
+  const ledCtx: LedValidationContext = {
+    ratios,
+    allowedRatios: (quote.client?.allowedRatios ?? '')
+      .split(',')
+      .map((r) => r.trim())
+      .filter((r) => r.length > 0),
+    clientPreferredPitchMm:
+      quote.client?.preferredPitchMm != null ? Number(quote.client.preferredPitchMm) : null,
+  };
+
   const ledScreens: ScreenValidation[] = quote.ledScreens.map((s) => ({
     screenId: s.id.toString(),
     screenName: s.screenName ?? 'LED screen',
-    findings: validateScreen(ledScreenToInput(s)),
+    findings: validateScreen(ledScreenToInput(s, ledCtx)),
   }));
 
   const lcdScreens: ScreenValidation[] = quote.lcdScreens.map((s) => ({

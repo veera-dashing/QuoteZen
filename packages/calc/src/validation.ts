@@ -36,6 +36,21 @@ export interface ValidationInput {
   orientation?: string | null;
   portraitSupported?: boolean;
   isVideoWall?: boolean;
+  // ─── AA2: LED selection rules ───────────────────────────────────────────────
+  /** The achieved aspect-ratio label of the configured screen (e.g. '16:9'). Null → cannot evaluate. */
+  achievedRatioLabel?: string | null;
+  /** Client's allowed aspect-ratio labels; empty/undefined → no ratio restriction. */
+  allowedRatios?: readonly string[];
+  /** The screen PRODUCT's compatibility group (AA2). Null → the controller/bracket checks can't fire. */
+  productCompatibilityGroup?: string | null;
+  /** Compatibility groups of the selected controller components (nulls dropped). */
+  controllerCompatibilityGroups?: readonly string[];
+  /** The selected frame/bracket's compatibility group. Null → the bracket check can't fire. */
+  frameCompatibilityGroup?: string | null;
+  /** Client's preferred fixed pixel pitch (mm); undefined/null → no fixed-pitch check. */
+  clientPreferredPitchMm?: number | null;
+  /** The aspect ratio the CONTENT is authored for (e.g. '16:9'); null/empty → no content-ratio check. */
+  contentRatioLabel?: string | null;
 }
 
 const GOB_PITCH_THRESHOLD = 2.5;
@@ -100,6 +115,75 @@ export const validateScreen = (input: ValidationInput): ValidationFinding[] => {
   // ── Video-wall dependency hint ──
   if (input.isVideoWall && input.environment === 'outdoor' && !input.hasMultifunctionCard) {
     findings.push({ rule: 'VIDEO_WALL_DEPS', severity: 'warning', message: 'Outdoor video wall typically needs multifunction cards across cabinets.' });
+  }
+
+  // ── AA2 rule 1: per-customer allowed aspect ratios (advisory) ──
+  // Only fires when the client has restricted the allowed set. A stored screen whose achieved ratio
+  // isn't in that set is flagged (warning, not error — the estimator may knowingly deviate).
+  const allowedRatios = (input.allowedRatios ?? []).map((r) => r.trim()).filter((r) => r.length > 0);
+  if (allowedRatios.length > 0 && input.achievedRatioLabel != null && input.achievedRatioLabel !== '') {
+    if (!allowedRatios.includes(input.achievedRatioLabel)) {
+      findings.push({
+        rule: 'RATIO_NOT_ALLOWED',
+        severity: 'warning',
+        message: `Achieved ratio ${input.achievedRatioLabel} is not in the client's allowed ratios (${allowedRatios.join(', ')}).`,
+      });
+    }
+  }
+
+  // ── AA2 rule 2: component conflict matrix (controller↔screen, bracket↔screen) ──
+  // Fires only when BOTH sides carry a compatibility group and they DIFFER. A null on either side →
+  // no finding (never a false error on missing data).
+  const productGroup = input.productCompatibilityGroup;
+  if (productGroup != null && productGroup !== '') {
+    const controllerGroups = (input.controllerCompatibilityGroups ?? []).filter((g) => g != null && g !== '');
+    for (const cg of controllerGroups) {
+      if (cg !== productGroup) {
+        findings.push({
+          rule: 'CONTROLLER_SCREEN_MISMATCH',
+          severity: 'error',
+          message: `Controller compatibility group "${cg}" does not match the screen product group "${productGroup}".`,
+        });
+        break; // one finding is enough — don't repeat per controller
+      }
+    }
+    const frameGroup = input.frameCompatibilityGroup;
+    if (frameGroup != null && frameGroup !== '' && frameGroup !== productGroup) {
+      findings.push({
+        rule: 'BRACKET_SCREEN_MISMATCH',
+        severity: 'error',
+        message: `Bracket/frame compatibility group "${frameGroup}" does not match the screen product group "${productGroup}".`,
+      });
+    }
+  }
+
+  // ── AA2 rule 3: fixed-pitch-per-customer (advisory) ──
+  // Client prefers a specific pixel pitch; flag when the product's pitch differs (small tolerance).
+  if (
+    input.clientPreferredPitchMm != null &&
+    input.pixelPitchMm != null &&
+    Math.abs(input.pixelPitchMm - input.clientPreferredPitchMm) > 0.01
+  ) {
+    findings.push({
+      rule: 'PITCH_NOT_CLIENT_PREFERRED',
+      severity: 'warning',
+      message: `Product pitch ${input.pixelPitchMm}mm differs from the client's preferred pitch ${input.clientPreferredPitchMm}mm.`,
+    });
+  }
+
+  // ── AA2 rule 4: content ratio vs achieved screen ratio (advisory) ──
+  if (
+    input.contentRatioLabel != null &&
+    input.contentRatioLabel !== '' &&
+    input.achievedRatioLabel != null &&
+    input.achievedRatioLabel !== '' &&
+    input.contentRatioLabel !== input.achievedRatioLabel
+  ) {
+    findings.push({
+      rule: 'CONTENT_RATIO_MISMATCH',
+      severity: 'warning',
+      message: `Content ratio ${input.contentRatioLabel} does not match the screen's achieved ratio ${input.achievedRatioLabel}.`,
+    });
   }
 
   return findings;

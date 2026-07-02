@@ -703,3 +703,17 @@ Migration `aa1_site_context`: `quotes` gains `end_customer`, `airside_landside`,
 (`outputs.ts`) emits a defensive "Site context" section + per-screen recess depth. Web `DetailsStep` gains a Site-context
 sub-block (text + SearchSelect enums + window-facing checkbox); LED & LCD forms gain a Recess depth (mm) input.
 Descriptive only — no pricing change. 146 api tests green (+3 `aa1-site-context.test.ts`); typecheck + web build clean.
+
+### Block AA2 — LED selection rules (workshop rules, Group B)
+Migration `aa2_led_rules`: `led_products`/`controllers`/`frames` gain `compatibility_group`; `clients` gains
+`allowed_ratios` (CSV); `quote_led_screens` gains `content_ratio`/`content_supplier`/`flatness_required`. Seed adds a
+`6:1` ticker ratio (+ disjoint bands so it resolves) and an example `"HX"` compatibility group. Rules (all through the
+existing `validateScreen`/`validate.ts` aggregate + Review card; error-severity gate finalisation):
+- **Allowed ratios per client** — `ConfigRequest.allowedRatios` filters offered configs (empty-with-reasons if none fit,
+  like the environment filter); `RATIO_NOT_ALLOWED` (warn) on a stored screen outside the set.
+- **Conflict matrix** — `CONTROLLER_SCREEN_MISMATCH` / `BRACKET_SCREEN_MISMATCH` (error) when a chosen controller/frame
+  compatibility group differs from the screen product's (no-op when either side null — never a false error).
+- **Fixed-pitch-per-customer** — `PITCH_NOT_CLIENT_PREFERRED` (warn) vs `clients.preferredPitchMm`.
+- **Content-ratio match** — `CONTENT_RATIO_MISMATCH` (warn) when `content_ratio` ≠ achieved ratio; content supplier +
+  flatness captured (LED form + PM handoff). Admin registry exposes the new catalog/client fields.
+150 api tests green (+4 `aa2-led-rules.test.ts`); calc 116 (+3); typecheck + web build clean.

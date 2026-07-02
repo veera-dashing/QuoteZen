@@ -132,7 +132,12 @@ export const configureForQuote = async (
   quoteId: bigint,
   input: ConfigureInput,
 ): Promise<ConfigureResult> => {
-  await getQuote(quoteId);
+  const quote = await getQuote(quoteId);
+  // AA2 — per-customer allowed aspect ratios (CSV on the client); empty → no ratio restriction.
+  const allowedRatios = (quote.client?.allowedRatios ?? '')
+    .split(',')
+    .map((r) => r.trim())
+    .filter((r) => r.length > 0);
   const [products, ratios, toleranceBands, outdoorThreshold, leadTimeBuffer] = await Promise.all([
     prisma.ledProduct.findMany({
       // P1-11.4: deprecated LED products are retained for old quotes but excluded from NEW configs.
@@ -180,6 +185,8 @@ export const configureForQuote = async (
     environment: input.environment,
     viewingDistanceM: input.viewingDistanceM,
     outdoorBrightnessNits: outdoorThreshold,
+    // AA2: restrict offered configs to the client's allowed ratios (empty → no restriction).
+    allowedRatios,
   });
 
   // U2: annotate with tolerance band; drop options beyond the largest band (noting how many).
@@ -598,6 +605,9 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
         backCover: input.backCover,
         frameNote: input.frameNote ?? null,
         serviceDescriptionSuffix: input.serviceDescriptionSuffix ?? null,
+        contentRatio: input.contentRatio ?? null,
+        contentSupplier: input.contentSupplier ?? null,
+        flatnessRequired: input.flatnessRequired ?? null,
         gobId: input.gobId ? BigInt(input.gobId) : null,
         frameId: input.frameId ? BigInt(input.frameId) : null,
         trimId: input.trimId ? BigInt(input.trimId) : null,
@@ -703,6 +713,9 @@ export const duplicateLedScreen = async (userId: bigint, quoteId: bigint, screen
         backCover: source.backCover,
         frameNote: source.frameNote,
         serviceDescriptionSuffix: source.serviceDescriptionSuffix,
+        contentRatio: source.contentRatio,
+        contentSupplier: source.contentSupplier,
+        flatnessRequired: source.flatnessRequired,
         gobId: source.gobId,
         frameId: source.frameId,
         trimId: source.trimId,
@@ -994,6 +1007,9 @@ export const updateLedScreenFull = async (
         backCover: input.backCover,
         frameNote: input.frameNote ?? null,
         serviceDescriptionSuffix: input.serviceDescriptionSuffix ?? null,
+        contentRatio: input.contentRatio ?? null,
+        contentSupplier: input.contentSupplier ?? null,
+        flatnessRequired: input.flatnessRequired ?? null,
         gobId: input.gobId ? BigInt(input.gobId) : null,
         frameId: input.frameId ? BigInt(input.frameId) : null,
         trimId: input.trimId ? BigInt(input.trimId) : null,

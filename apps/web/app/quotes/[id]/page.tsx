@@ -29,6 +29,7 @@ interface LedScreen {
   engineeringId?: string | null; installMethodId?: string | null; freightOptionId?: string | null;
   warrantyId?: string | null; serviceHoursId?: string | null; accessEquipmentId?: string | null;
   backCover?: boolean; frameNote?: string | null; serviceDescriptionSuffix?: string | null;
+  contentRatio?: string | null; contentSupplier?: string | null; flatnessRequired?: boolean | null;
 }
 // A stored LCD line item (as returned on the screen), used to pre-fill the LCD edit form.
 interface LcdItem {
@@ -994,6 +995,10 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
   const [frameNote, setFrameNote] = useState(editScreen?.frameNote ?? '');
   const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(editScreen?.serviceDescriptionSuffix ?? '');
+  // AA2 — content ratio + supplier + flatness.
+  const [contentRatio, setContentRatio] = useState(editScreen?.contentRatio ?? '');
+  const [contentSupplier, setContentSupplier] = useState(editScreen?.contentSupplier ?? '');
+  const [flatnessRequired, setFlatnessRequired] = useState(!!editScreen?.flatnessRequired);
 
   useEffect(() => {
     // activeOnly=true hides deprecated catalog rows from NEW selections (P1-11.4); existing quotes
@@ -1167,6 +1172,10 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
         ...(frameNote.trim() ? { frameNote: frameNote.trim() } : {}),
         ...(serviceDescriptionSuffix.trim() ? { serviceDescriptionSuffix: serviceDescriptionSuffix.trim() } : {}),
+        // AA2 — content ratio / supplier / flatness.
+        ...(contentRatio.trim() ? { contentRatio: contentRatio.trim() } : {}),
+        ...(contentSupplier.trim() ? { contentSupplier: contentSupplier.trim() } : {}),
+        flatnessRequired,
       };
       if (isEditing && editScreen) {
         // V4 full re-edit — PUT the whole body (qty is preserved server-side when omitted).
@@ -1698,6 +1707,21 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
           <div>
             <label>Service description suffix</label>
             <input value={serviceDescriptionSuffix} onChange={(e) => setServiceDescriptionSuffix(e.target.value)} placeholder="optional" />
+          </div>
+        </div>
+        <h4 style={{ margin: '14px 0 4px' }}>Content &amp; flatness</h4>
+        <div className="grid3">
+          <div>
+            <label>Content ratio</label>
+            <input value={contentRatio} onChange={(e) => setContentRatio(e.target.value)} placeholder="e.g. 16:9" />
+          </div>
+          <div>
+            <label>Content supplier</label>
+            <input value={contentSupplier} onChange={(e) => setContentSupplier(e.target.value)} placeholder="optional" />
+          </div>
+          <div>
+            <label>Flatness critical</label>
+            <input type="checkbox" checked={flatnessRequired} onChange={(e) => setFlatnessRequired(e.target.checked)} style={{ width: 'auto' }} />
           </div>
         </div>
 

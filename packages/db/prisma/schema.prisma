@@ -324,6 +324,9 @@ model LedProduct {
   /** Per-model recommendation priority (lower = preferred), admin-set. Secondary ranking key in the
       config engine, applied within a manufacturer. Default 100 ⇒ neutral (rank by fit) until changed. */
   priority         Int      @default(100)
+  /** AA2 — component compatibility group. When set on BOTH a screen product and a selected controller
+      or frame (bracket) with a DIFFERENT group, validation flags a mismatch (error). Null → no check. */
+  compatibilityGroup String? @map("compatibility_group")
   deprecated       Boolean  @default(false) @map("deprecated")
 
   commentary LedCommentary[]
@@ -353,6 +356,8 @@ model Controller {
   maxPixels BigInt? @map("max_pixels")
   maxWidth  Int?    @map("max_width")
   price     Decimal @db.Decimal(12, 2)
+  /** AA2 — component compatibility group (see LedProduct.compatibilityGroup). Null → no check. */
+  compatibilityGroup String? @map("compatibility_group")
   deprecated Boolean @default(false) @map("deprecated")
 
   ledComponents QuoteLedComponent[]
@@ -411,6 +416,8 @@ model Frame {
   price         Decimal @db.Decimal(12, 2)
   backcoverCost Decimal @default(0) @map("backcover_cost") @db.Decimal(12, 2)
   installHours  Decimal @default(0) @map("install_hours") @db.Decimal(6, 2)
+  /** AA2 — component compatibility group (see LedProduct.compatibilityGroup). Null → no check. */
+  compatibilityGroup String? @map("compatibility_group")
   deprecated    Boolean @default(false) @map("deprecated")
 
   ledScreens QuoteLedScreen[]
@@ -759,6 +766,13 @@ model Client {
   rulesNote              String?  @map("rules_note")
   /** Per-client preferred freight override (Z6) — wins over the tier's `preferredFreight`. */
   preferredFreight       String?  @map("preferred_freight")
+  /**
+   * AA2 — CSV of allowed aspect-ratio labels for this client (e.g. "16:9,9:16,6:1"). When non-empty,
+   * the config engine only offers configurations whose achieved ratio label is in this set, and a
+   * stored screen whose ratio is outside it is flagged (RATIO_NOT_ALLOWED, warning). Empty/null → no
+   * restriction.
+   */
+  allowedRatios          String?  @map("allowed_ratios")
   /** Z6: rule-bearing tier resolved by name (clients.tier → client_tiers.name). */
   clientTier             ClientTier? @relation("ClientTierByName", fields: [tier], references: [name])
 
@@ -954,6 +968,14 @@ model QuoteLedScreen {
   backCover           Boolean  @default(false) @map("back_cover")
   frameNote           String?  @map("frame_note")
   serviceDescriptionSuffix String? @map("service_description_suffix")
+  // AA2 — content-ratio + supplier + flatness (descriptive; content ratio also feeds a validation rule).
+  /** AA2 — the aspect ratio the CONTENT is authored for (e.g. "16:9"). Mismatch vs the achieved screen
+      ratio → CONTENT_RATIO_MISMATCH (warning). Null → no check. */
+  contentRatio        String?  @map("content_ratio")
+  /** AA2 — who supplies the content (descriptive; surfaced in the PM handoff). */
+  contentSupplier     String?  @map("content_supplier")
+  /** AA2 — flatness is critical for this screen (descriptive; feeds a product-selection note). */
+  flatnessRequired    Boolean? @map("flatness_required")
   gobId               BigInt?  @map("gob_id")
   frameId             BigInt?  @map("frame_id")
   trimId              BigInt?  @map("trim_id")

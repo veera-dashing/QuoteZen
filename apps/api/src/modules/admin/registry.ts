@@ -118,9 +118,11 @@ export const TABLES: TableDef[] = [
       f('gobIncluded', 'boolean'), f('packIncluded', 'boolean'), f('serviceAccess'),
       // Per-model recommendation priority (lower = preferred) — secondary ranking key in the config engine.
       f('priority', 'int'),
+      // AA2 — component compatibility group (matched against controller/frame groups in validation).
+      f('compatibilityGroup'),
       f('upgradeOptions', 'text'), f('mechanicalOptions', 'text'), DEPRECATED,
     ],
-    listFields: ['vendor', 'model', 'priority', 'pixelPitchH', 'brightnessNits', 'costPerSqmUsd', 'cabinetType', 'deprecated'],
+    listFields: ['vendor', 'model', 'priority', 'pixelPitchH', 'brightnessNits', 'compatibilityGroup', 'costPerSqmUsd', 'cabinetType', 'deprecated'],
   },
   {
     resource: 'led-commentary', model: 'ledCommentary', label: 'LED Commentary', group: 'LED',
@@ -131,8 +133,8 @@ export const TABLES: TableDef[] = [
   {
     resource: 'controllers', model: 'controller', label: 'Controllers', group: 'LED',
     titleField: 'name', searchFields: ['name', 'type'],
-    fields: [f('name', 'string', true), f('type'), f('maxPorts', 'int'), f('maxWidth', 'int'), f('price', 'decimal', true), DEPRECATED],
-    listFields: ['name', 'type', 'maxPorts', 'price', 'deprecated'],
+    fields: [f('name', 'string', true), f('type'), f('maxPorts', 'int'), f('maxWidth', 'int'), f('price', 'decimal', true), f('compatibilityGroup'), DEPRECATED],
+    listFields: ['name', 'type', 'maxPorts', 'price', 'compatibilityGroup', 'deprecated'],
   },
   {
     resource: 'led-peripherals', model: 'ledPeripheral', label: 'LED Peripherals', group: 'LED',
@@ -161,8 +163,8 @@ export const TABLES: TableDef[] = [
   {
     resource: 'frames', model: 'frame', label: 'Frames', group: 'LED',
     titleField: 'name', searchFields: ['name'],
-    fields: [f('name', 'string', true), f('price', 'decimal', true), f('backcoverCost', 'decimal'), f('installHours', 'decimal'), DEPRECATED],
-    listFields: ['name', 'price', 'installHours', 'deprecated'],
+    fields: [f('name', 'string', true), f('price', 'decimal', true), f('backcoverCost', 'decimal'), f('installHours', 'decimal'), f('compatibilityGroup'), DEPRECATED],
+    listFields: ['name', 'price', 'installHours', 'compatibilityGroup', 'deprecated'],
   },
   {
     resource: 'engineering-options', model: 'engineeringOption', label: 'Engineering Options', group: 'LED',
@@ -320,6 +322,7 @@ export const TABLES: TableDef[] = [
       f('defaultMargin', 'decimal'), f('discountPct', 'decimal'),
       f('preferredProductFamily'),
       f('preferredPitchMm', 'decimal'), f('excludedComponents'),
+      f('allowedRatios'),
       f('preferredFreight'), f('rulesNote', 'text'), f('marginNote', 'text'),
       f('ledScreenNote', 'text'), f('gobNote', 'text'), f('mediaplayerNote', 'text'), f('ratioNote', 'text'),
     ],

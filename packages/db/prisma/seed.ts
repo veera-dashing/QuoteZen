@@ -275,7 +275,10 @@ const HANGING_BARS: Array<[string, number]> = [
 
 // ─── Reference Data: screen ratios (A231:C251) ────────────────────────────────
 const SCREEN_RATIOS: Array<[number, number, string]> = [
-  [3.78, 10.0, '4:1'],
+  // AA2: split the old 4:1 band (was 3.78–10.0) so the 6:1 ticker band below can resolve distinctly.
+  [6.5, 10.0, '8:1'],
+  [5.51, 6.49, '6:1'],
+  [3.78, 5.5, '4:1'],
   [3.28, 3.77, '32:9'],
   [2.84, 3.27, '3:1'],
   [2.51, 2.83, '8:3'],
@@ -593,6 +596,50 @@ async function main(): Promise<void> {
     });
   }
   console.warn(`  clientTier: ${CLIENT_TIERS.length} upserted`);
+
+  // ── AA2: idempotent extra screen ratios (6:1 ticker + ensure 9:16 exists) ──
+  // screen_ratios has no unique on ratioLabel, so upsert by findFirst-then-create. 6:1 = 6.0 (a wide
+  // "ticker" band); 9:16 (~0.5625) is the standard portrait label. Both are safe to re-run. On an
+  // existing DB the old 4:1 band spanned 3.78–10.0 (which SWALLOWS 6.0), so narrow it to 3.78–5.5 and
+  // add an 8:1 catch-all above 6:1 — resolveScreenRatio uses the FIRST matching band, so the ranges
+  // must be disjoint for 6:1 to resolve.
+  const EXTRA_RATIOS: Array<[number, number, string]> = [
+    [6.5, 10.0, '8:1'],
+    [5.51, 6.49, '6:1'],
+    [0.54, 0.59, '9:16'],
+  ];
+  for (const [min, max, label] of EXTRA_RATIOS) {
+    const existing = await prisma.screenRatio.findFirst({ where: { ratioLabel: label } });
+    if (!existing) {
+      await prisma.screenRatio.create({ data: { minValue: min, maxValue: max, ratioLabel: label } });
+    }
+  }
+  // Narrow a legacy wide 4:1 band so 6:1 can win its own range (no-op once already narrowed).
+  await prisma.screenRatio.updateMany({
+    where: { ratioLabel: '4:1', maxValue: { gt: 5.5 } },
+    data: { maxValue: 5.5 },
+  });
+  console.warn(`  screenRatio: ensured ${EXTRA_RATIOS.map(([, , l]) => l).join(', ')}; narrowed 4:1`);
+
+  // ── AA2: example component compatibility groups (demonstrable; most rows stay null) ──
+  // Give one controller + one LED product a SHARED group ("HX") so a controller↔screen match/mismatch
+  // is demonstrable, and one frame a group ("HX") too. Idempotent (updateMany by name/first row).
+  await prisma.controller.updateMany({
+    where: { name: 'Sending Box - MCTRL300' },
+    data: { compatibilityGroup: 'HX' },
+  });
+  const firstFrame = await prisma.frame.findFirst({ orderBy: { id: 'asc' } });
+  if (firstFrame) {
+    await prisma.frame.update({ where: { id: firstFrame.id }, data: { compatibilityGroup: 'HX' } });
+  }
+  const firstLed = await prisma.ledProduct.findFirst({
+    where: { compatibilityGroup: null },
+    orderBy: { id: 'asc' },
+  });
+  if (firstLed) {
+    await prisma.ledProduct.update({ where: { id: firstLed.id }, data: { compatibilityGroup: 'HX' } });
+  }
+  console.warn('  compatibilityGroup: example "HX" group set on a controller, frame + LED product');
 
   console.warn('Seed complete.');
 }

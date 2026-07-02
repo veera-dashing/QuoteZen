@@ -89,6 +89,46 @@ describe('configureScreen', () => {
     expect(res.options).toEqual([]);
     expect(res.reasons[0]).toMatch(/complete cabinet/);
   });
+
+  // AA2 — per-customer allowed-ratios filter.
+  it('AA2: allowedRatios keeps only configs whose ratio label is in the set', () => {
+    // 1000×1000 on the 500² cabinet → exact 1:1. Restricting to ['1:1'] keeps it.
+    const res = configureScreen([PRODUCTS[1]!], {
+      desiredWidthMm: 1000,
+      desiredHeightMm: 1000,
+      ratios: RATIOS,
+      allowedRatios: ['1:1'],
+    });
+    expect(res.options.length).toBeGreaterThan(0);
+    for (const o of res.options) expect(o.ratioLabel).toBe('1:1');
+    expect(res.reasons).toEqual([]);
+  });
+
+  it('AA2: allowedRatios excluding the achievable ratio → empty-with-reasons (never throws)', () => {
+    const res = configureScreen([PRODUCTS[1]!], {
+      desiredWidthMm: 1000,
+      desiredHeightMm: 1000,
+      ratios: RATIOS,
+      allowedRatios: ['16:9'], // the 1:1 build can't satisfy this
+    });
+    expect(res.options).toEqual([]);
+    expect(res.reasons[0]).toMatch(/allowed ratios/);
+  });
+
+  it('AA2: an empty allowedRatios array is a no-op (unchanged behaviour)', () => {
+    const withEmpty = configureScreen([PRODUCTS[1]!], {
+      desiredWidthMm: 1000,
+      desiredHeightMm: 1000,
+      ratios: RATIOS,
+      allowedRatios: [],
+    });
+    const baseline = configureScreen([PRODUCTS[1]!], {
+      desiredWidthMm: 1000,
+      desiredHeightMm: 1000,
+      ratios: RATIOS,
+    });
+    expect(withEmpty.options.length).toBe(baseline.options.length);
+  });
 });
 
 describe('configConfidence (U8)', () => {

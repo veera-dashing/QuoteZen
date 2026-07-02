@@ -115,6 +115,13 @@ export interface ConfigRequest {
    * (too coarse → visible pixels at that distance). Null/omitted → no distance filter.
    */
   viewingDistanceM?: number;
+  /**
+   * AA2 — per-customer allowed aspect-ratio labels (e.g. ['16:9','9:16','6:1']). When provided and
+   * NON-EMPTY, only configurations whose achieved `ratioLabel` is in this set are returned; if none
+   * fit, the result is empty with a clear reason (mirrors the environment filter). Absent/empty →
+   * no ratio restriction (unchanged behaviour).
+   */
+  allowedRatios?: readonly string[];
 }
 
 /** Default outdoor-brightness threshold (nits) for the environment fallback (mirrors the seeded setting). */
@@ -389,6 +396,20 @@ export const configureScreen = (
     return { options: [], reasons: ['No valid cabinet fit for the requested opening.'] };
   }
 
+  // AA2 — per-customer allowed-ratios filter. Applied AFTER options are built (ratioLabel is per-option
+  // geometry) and BEFORE ranking. Empty/absent → no restriction. Empty-with-reasons when nothing fits.
+  const allowed = (req.allowedRatios ?? []).map((r) => r.trim()).filter((r) => r.length > 0);
+  let ratioFiltered = deduped;
+  if (allowed.length > 0) {
+    ratioFiltered = deduped.filter((o) => o.ratioLabel !== null && allowed.includes(o.ratioLabel));
+    if (ratioFiltered.length === 0) {
+      return {
+        options: [],
+        reasons: [`No configuration matches the client's allowed ratios (${allowed.join(', ')}).`],
+      };
+    }
+  }
+
   // Rank: manufacturer sourcing priority FIRST (U2, lower = preferred), then per-MODEL priority
   // (admin-set, lower = preferred) as the SECONDARY key — so within a manufacturer the models the admin
   // has prioritised come first; WITHIN an equal (manufacturer, model) priority the existing best-fit
@@ -402,7 +423,7 @@ export const configureScreen = (
   //   6. preferred ratio  7. fewer cabinets  8. [W0 viewing-distance] coarsest pitch  9. model name.
   const sizeRank: Record<SizeMode, number> = { exact: 0, under: 1, over: 2 };
   const preferCoarsest = maxPitchMm != null; // only bias by pitch when the user gave a viewing distance
-  deduped.sort((a, b) => {
+  ratioFiltered.sort((a, b) => {
     if (a.manufacturerPriority !== b.manufacturerPriority) return a.manufacturerPriority - b.manufacturerPriority;
     if (a.modelPriority !== b.modelPriority) return a.modelPriority - b.modelPriority;
     const da = areaDeviation(a, req);
@@ -417,7 +438,7 @@ export const configureScreen = (
     return a.model.localeCompare(b.model);
   });
 
-  return { options: deduped, reasons: [] };
+  return { options: ratioFiltered, reasons: [] };
 };
 
 /**

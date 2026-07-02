@@ -151,6 +151,10 @@ export const ledScreenSchema = z.object({
   backCover: z.boolean().default(false),
   frameNote: z.string().max(500).optional(),
   serviceDescriptionSuffix: z.string().max(500).optional(),
+  // AA2 — content ratio + supplier + flatness (content ratio also feeds a validation rule).
+  contentRatio: z.string().max(40).optional(),
+  contentSupplier: z.string().max(120).optional(),
+  flatnessRequired: z.boolean().optional(),
   gobId: idSchema.optional(),
   frameId: idSchema.optional(),
   trimId: idSchema.optional(),

@@ -272,6 +272,10 @@ export const buildPmHandoff = (quote: QuoteWithChildren) => ({
     serviceAccess: s.serviceAccess ?? null,
     // AA1 — recess/cavity depth (mm); omitted (null) when not captured.
     recessDepthMm: s.recessDepthMm ?? null,
+    // AA2 — content authoring + flatness notes (null/false when not captured).
+    contentRatio: s.contentRatio ?? null,
+    contentSupplier: s.contentSupplier ?? null,
+    flatnessRequired: s.flatnessRequired ?? null,
     componentsToProcure: s.components.map((c) => ({ name: componentName(c), qty: c.qty })),
   })),
   lcdScreens: quote.lcdScreens.map((s) => ({
