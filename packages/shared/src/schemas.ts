@@ -52,6 +52,14 @@ export const createQuoteSchema = z.object({
   powerDataAvailable: z.string().max(20).optional(),
   controllerLocation: z.string().max(200).optional(),
   windowFacing: z.boolean().optional(),
+  /** AA5 — software/hardware dependency intake fields (Group E). Descriptive; no pricing impact. */
+  mediaPlayerSupply: z.string().max(50).optional(),
+  sharedDevicePlayers: z.coerce.number().int().nonnegative().optional(),
+  sharedDeviceScreens: z.coerce.number().int().nonnegative().optional(),
+  storeSizeSqm: z.coerce.number().nonnegative().optional(),
+  customContentCuration: z.boolean().optional(),
+  pcRequired: z.boolean().optional(),
+  hardDriveRequired: z.boolean().optional(),
   /** Viewer users this quote is shared with (they can read only quotes assigned to them). */
   viewerUserIds: z.array(idSchema).optional(),
 });
@@ -79,6 +87,14 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   powerDataAvailable: z.string().max(20).nullish(),
   controllerLocation: z.string().max(200).nullish(),
   windowFacing: z.boolean().nullish(),
+  /** AA5 — software/hardware dependency intake fields (nullish on update so they can be cleared). */
+  mediaPlayerSupply: z.string().max(50).nullish(),
+  sharedDevicePlayers: z.coerce.number().int().nonnegative().nullish(),
+  sharedDeviceScreens: z.coerce.number().int().nonnegative().nullish(),
+  storeSizeSqm: z.coerce.number().nonnegative().nullish(),
+  customContentCuration: z.boolean().nullish(),
+  pcRequired: z.boolean().nullish(),
+  hardDriveRequired: z.boolean().nullish(),
   /** Optimistic-locking token from the last read; a mismatch is a 409 conflict (P1-05.2). */
   expectedVersion: z.coerce.number().int().nonnegative().optional(),
 });

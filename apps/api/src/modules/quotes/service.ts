@@ -54,6 +54,13 @@ const QUOTE_HEADER_FIELDS = [
   'powerDataAvailable',
   'controllerLocation',
   'windowFacing',
+  'mediaPlayerSupply',
+  'sharedDevicePlayers',
+  'sharedDeviceScreens',
+  'storeSizeSqm',
+  'customContentCuration',
+  'pcRequired',
+  'hardDriveRequired',
 ] as const;
 
 const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toString() : '0');
@@ -166,6 +173,13 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput, actor
         powerDataAvailable: input.powerDataAvailable ?? null,
         controllerLocation: input.controllerLocation ?? null,
         windowFacing: input.windowFacing ?? null,
+        mediaPlayerSupply: input.mediaPlayerSupply ?? null,
+        sharedDevicePlayers: input.sharedDevicePlayers ?? null,
+        sharedDeviceScreens: input.sharedDeviceScreens ?? null,
+        storeSizeSqm: input.storeSizeSqm ?? null,
+        customContentCuration: input.customContentCuration ?? null,
+        pcRequired: input.pcRequired ?? null,
+        hardDriveRequired: input.hardDriveRequired ?? null,
         createdById: userId,
         viewers: input.viewerUserIds?.length
           ? { create: input.viewerUserIds.map((uid) => ({ userId: BigInt(uid) })) }
@@ -361,6 +375,13 @@ export const updateQuote = async (
   if (input.powerDataAvailable !== undefined) data.powerDataAvailable = input.powerDataAvailable;
   if (input.controllerLocation !== undefined) data.controllerLocation = input.controllerLocation;
   if (input.windowFacing !== undefined) data.windowFacing = input.windowFacing;
+  if (input.mediaPlayerSupply !== undefined) data.mediaPlayerSupply = input.mediaPlayerSupply;
+  if (input.sharedDevicePlayers !== undefined) data.sharedDevicePlayers = input.sharedDevicePlayers;
+  if (input.sharedDeviceScreens !== undefined) data.sharedDeviceScreens = input.sharedDeviceScreens;
+  if (input.storeSizeSqm !== undefined) data.storeSizeSqm = input.storeSizeSqm;
+  if (input.customContentCuration !== undefined) data.customContentCuration = input.customContentCuration;
+  if (input.pcRequired !== undefined) data.pcRequired = input.pcRequired;
+  if (input.hardDriveRequired !== undefined) data.hardDriveRequired = input.hardDriveRequired;
   if (input.currencyCode !== undefined) {
     const currency = await findCurrencyByCode(input.currencyCode);
     if (!currency) throw notFound('Currency', input.currencyCode);

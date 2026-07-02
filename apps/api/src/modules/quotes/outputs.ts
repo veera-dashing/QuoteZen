@@ -217,6 +217,8 @@ export const buildSolutionSummary = (quote: QuoteWithChildren, showCost: boolean
     recurring: dec(quote.totalRecurring),
     grandTotal: dec(quote.grandTotal),
   },
+  // Software & hardware dependencies (AA5): quote-level dependency intake; omitted when none captured.
+  dependencies: buildDependencies(quote),
   assumptions: DEFAULT_ASSUMPTIONS,
   exclusions: DEFAULT_EXCLUSIONS,
 });
@@ -248,6 +250,27 @@ const buildSiteContext = (quote: QuoteWithChildren): Record<string, string> | nu
   return Object.keys(ctx).length > 0 ? ctx : null;
 };
 
+/**
+ * Software & hardware dependencies (AA5): quote-level intake/dependency fields (Group E).
+ * Descriptive only (no pricing impact). Defensive — only set fields are surfaced (nulls omitted).
+ * Returns `null` when none are populated so consumers can omit the section entirely.
+ */
+const buildDependencies = (quote: QuoteWithChildren): Record<string, string> | null => {
+  const dep: Record<string, string> = {};
+  if (quote.mediaPlayerSupply) dep.mediaPlayerSupply = quote.mediaPlayerSupply;
+  if (quote.sharedDevicePlayers != null && quote.sharedDeviceScreens != null) {
+    dep.sharedDeviceRatio = `${quote.sharedDevicePlayers} player${
+      quote.sharedDevicePlayers === 1 ? '' : 's'
+    } per ${quote.sharedDeviceScreens} screen${quote.sharedDeviceScreens === 1 ? '' : 's'}`;
+  }
+  if (quote.storeSizeSqm != null) dep.storeSizeSqm = `${dec(quote.storeSizeSqm)} m²`;
+  if (quote.customContentCuration != null)
+    dep.customContentCuration = quote.customContentCuration ? 'Yes' : 'No';
+  if (quote.pcRequired != null) dep.pcRequired = quote.pcRequired ? 'Yes' : 'No';
+  if (quote.hardDriveRequired != null) dep.hardDriveRequired = quote.hardDriveRequired ? 'Yes' : 'No';
+  return Object.keys(dep).length > 0 ? dep : null;
+};
+
 /** PM handoff (P1-18.5): execution-focused subset of the approved quote. */
 export const buildPmHandoff = (quote: QuoteWithChildren) => ({
   jobReference: quote.jobReference,
@@ -256,6 +279,8 @@ export const buildPmHandoff = (quote: QuoteWithChildren) => ({
   status: quote.status,
   // Site context (AA1): intake/PI site details; omitted when none are captured.
   siteContext: buildSiteContext(quote),
+  // Software & hardware dependencies (AA5): quote-level dependency intake; omitted when none captured.
+  dependencies: buildDependencies(quote),
   // Assumptions & risks register (T4): assumptions reuse terms (kind=assumption); risks are manual.
   assumptions: quote.terms.filter((t) => t.kind === 'assumption').map((t) => t.text),
   risks: sortedRisks(quote).map((r) => ({

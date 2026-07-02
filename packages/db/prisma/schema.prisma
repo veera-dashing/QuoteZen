@@ -878,6 +878,21 @@ model Quote {
   controllerLocation    String?     @map("controller_location")
   /** Window-facing / glare risk flag. */
   windowFacing          Boolean?    @map("window_facing")
+  // AA5 — software/hardware dependency intake fields (Group E). Descriptive; feed the PM handoff + solution summary; no pricing impact.
+  /** Who supplies the media player: 'Seen' / 'Client-supplied' / 'Mandated'. */
+  mediaPlayerSupply     String?     @map("media_player_supply")
+  /** Shared-device ratio — N players … (paired with sharedDeviceScreens). */
+  sharedDevicePlayers   Int?        @map("shared_device_players")
+  /** Shared-device ratio — … per M screens (paired with sharedDevicePlayers). */
+  sharedDeviceScreens   Int?        @map("shared_device_screens")
+  /** Store size (m²) — drives music-service sizing. */
+  storeSizeSqm          Decimal?    @map("store_size_sqm") @db.Decimal(10, 2)
+  /** Custom content curation required. */
+  customContentCuration Boolean?    @map("custom_content_curation")
+  /** A PC dependency beyond the per-LCD-screen flag. */
+  pcRequired            Boolean?    @map("pc_required")
+  /** A hard-drive dependency. */
+  hardDriveRequired     Boolean?    @map("hard_drive_required")
   /** Soft-delete / archive timestamp (P1-05.1); null = active. The row is never hard-deleted. */
   archivedAt            DateTime?   @map("archived_at")
   estimatedCost         Decimal?    @map("estimated_cost") @db.Decimal(12, 2)

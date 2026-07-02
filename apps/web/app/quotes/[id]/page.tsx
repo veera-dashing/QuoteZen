@@ -63,6 +63,10 @@ interface Quote {
   endCustomer?: string | null; airsideLandside?: string | null; sunExposure?: string | null;
   wallSubstrate?: string | null; powerDataAvailable?: string | null; controllerLocation?: string | null;
   windowFacing?: boolean | null;
+  // AA5 — software/hardware dependency intake fields (Group E). Descriptive; no pricing impact.
+  mediaPlayerSupply?: string | null; sharedDevicePlayers?: number | null; sharedDeviceScreens?: number | null;
+  storeSizeSqm?: string | null; customContentCuration?: boolean | null;
+  pcRequired?: boolean | null; hardDriveRequired?: boolean | null;
   discountPct?: string | null; // stored as a fraction 0..1
   discountNote?: string | null; // manager justification, required above 5%
   discountScope?: 'one_off' | 'recurring' | null; // U5 — upfront vs every renewal
@@ -393,6 +397,20 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   const [powerDataAvailable, setPowerDataAvailable] = useState(quote?.powerDataAvailable ?? '');
   const [controllerLocation, setControllerLocation] = useState(quote?.controllerLocation ?? '');
   const [windowFacing, setWindowFacing] = useState<boolean>(quote?.windowFacing ?? false);
+  // AA5 — software/hardware dependency intake fields (Group E).
+  const [mediaPlayerSupply, setMediaPlayerSupply] = useState(quote?.mediaPlayerSupply ?? '');
+  const [sharedDevicePlayers, setSharedDevicePlayers] = useState(
+    quote?.sharedDevicePlayers != null ? String(quote.sharedDevicePlayers) : '',
+  );
+  const [sharedDeviceScreens, setSharedDeviceScreens] = useState(
+    quote?.sharedDeviceScreens != null ? String(quote.sharedDeviceScreens) : '',
+  );
+  const [storeSizeSqm, setStoreSizeSqm] = useState(
+    quote?.storeSizeSqm != null && quote.storeSizeSqm !== '' ? String(quote.storeSizeSqm) : '',
+  );
+  const [customContentCuration, setCustomContentCuration] = useState<boolean>(quote?.customContentCuration ?? false);
+  const [pcRequired, setPcRequired] = useState<boolean>(quote?.pcRequired ?? false);
+  const [hardDriveRequired, setHardDriveRequired] = useState<boolean>(quote?.hardDriveRequired ?? false);
   const [discountPctInput, setDiscountPctInput] = useState(
     quote?.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
   );
@@ -489,6 +507,14 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       powerDataAvailable: powerDataAvailable || null,
       controllerLocation: controllerLocation.trim() ? controllerLocation.trim() : null,
       windowFacing,
+      // AA5 — software/hardware dependency intake fields (null clears; the flags are booleans).
+      mediaPlayerSupply: mediaPlayerSupply || null,
+      sharedDevicePlayers: sharedDevicePlayers.trim() === '' ? null : Number(sharedDevicePlayers),
+      sharedDeviceScreens: sharedDeviceScreens.trim() === '' ? null : Number(sharedDeviceScreens),
+      storeSizeSqm: storeSizeSqm.trim() === '' ? null : Number(storeSizeSqm),
+      customContentCuration,
+      pcRequired,
+      hardDriveRequired,
       discountPct: discountPctInput.trim() === '' ? null : Number(discountPctInput) / 100,
       discountNote: discountNote.trim() ? discountNote.trim() : null,
       discountScope,
@@ -519,7 +545,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
     } finally {
       setBusy(false);
     }
-  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, endCustomer, airsideLandside, sunExposure, wallSubstrate, powerDataAvailable, controllerLocation, windowFacing, discountPctInput, discountNote, discountScope, onChange]);
+  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, endCustomer, airsideLandside, sunExposure, wallSubstrate, powerDataAvailable, controllerLocation, windowFacing, mediaPlayerSupply, sharedDevicePlayers, sharedDeviceScreens, storeSizeSqm, customContentCuration, pcRequired, hardDriveRequired, discountPctInput, discountNote, discountScope, onChange]);
 
   const save = persist;
 
@@ -762,6 +788,52 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
           <input type="checkbox" checked={windowFacing} onChange={(e) => { setWindowFacing(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
           Window-facing / glare risk
+        </label>
+      </div>
+
+      {/* AA5 — software/hardware dependency intake fields (Group E). Descriptive; no pricing impact. */}
+      <h4 style={{ margin: '18px 0 4px' }}>Software &amp; dependencies</h4>
+      <p className="muted" style={{ marginTop: 0 }}>Media-player supply, shared-device ratio, and content/hardware dependencies (informational — feeds the PM handoff).</p>
+      <div className="grid3">
+        <div>
+          <label>Media player supply</label>
+          <SearchSelect
+            value={mediaPlayerSupply}
+            onChange={(v) => { setMediaPlayerSupply(v); setDirty(true); }}
+            allowEmpty
+            placeholder="—"
+            options={[
+              { value: 'Seen', label: 'Seen' },
+              { value: 'Client-supplied', label: 'Client-supplied' },
+              { value: 'Mandated', label: 'Mandated' },
+            ]}
+          />
+        </div>
+        <div>
+          <label>Shared-device ratio (players)</label>
+          <input type="number" min={0} value={sharedDevicePlayers} onChange={(e) => { setSharedDevicePlayers(e.target.value); setDirty(true); }} placeholder="e.g. 1" />
+        </div>
+        <div>
+          <label>… per (screens)</label>
+          <input type="number" min={0} value={sharedDeviceScreens} onChange={(e) => { setSharedDeviceScreens(e.target.value); setDirty(true); }} placeholder="e.g. 4" />
+        </div>
+        <div>
+          <label>Store size (m²)</label>
+          <input type="number" min={0} step="0.01" value={storeSizeSqm} onChange={(e) => { setStoreSizeSqm(e.target.value); setDirty(true); }} placeholder="for music sizing" />
+        </div>
+      </div>
+      <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={customContentCuration} onChange={(e) => { setCustomContentCuration(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
+          Custom content curation
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={pcRequired} onChange={(e) => { setPcRequired(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
+          PC required
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={hardDriveRequired} onChange={(e) => { setHardDriveRequired(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
+          Hard drive required
         </label>
       </div>
 

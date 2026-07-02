@@ -756,3 +756,11 @@ Discount (quote %, "Within cap"/"Over cap" pill from `/quotes/discount-policy`, 
 display item); Totals (grand total + recurring). **Stage-aware accent-border emphasis**: Details→Completeness+Discount,
 Select Screens→Screens+Stats, Licences→Totals, Review→Totals+Completeness. Flex row, wraps below on narrow viewports.
 Web-only (reuses existing card/pill/theme vars). typecheck + web build clean; verified live in-browser.
+
+### Block AA5 — software/hardware dependency intake fields (workshop Group E)
+Migration `aa5_dependencies`: `quotes` gains `media_player_supply` (Seen/Client-supplied/Mandated),
+`shared_device_players`/`shared_device_screens` (ratio), `store_size_sqm` (music sizing), `custom_content_curation`,
+`pc_required`, `hard_drive_required` (all nullable, descriptive — no pricing). Shared schemas + createQuote/updateQuote
+persist them (audit-tracked); `outputs.ts` `buildDependencies()` emits a "Software & hardware dependencies" section on
+the PM handoff + solution summary (shared-device ratio → "1 player per 4 screens"; omits nulls). Web DetailsStep gains a
+"Software & dependencies" sub-block. 165 api tests green (+2 `aa5-dependencies.test.ts`); typecheck + web build clean.
