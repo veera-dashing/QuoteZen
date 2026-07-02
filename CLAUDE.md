@@ -717,3 +717,12 @@ existing `validateScreen`/`validate.ts` aggregate + Review card; error-severity 
 - **Content-ratio match** — `CONTENT_RATIO_MISMATCH` (warn) when `content_ratio` ≠ achieved ratio; content supplier +
   flatness captured (LED form + PM handoff). Admin registry exposes the new catalog/client fields.
 150 api tests green (+4 `aa2-led-rules.test.ts`); calc 116 (+3); typecheck + web build clean.
+
+### Block AA3a — LCD constraint rules (workshop rules, Group C part 1)
+Migration `aa3a_lcd_rules`: `display_catalog` gains `brand`, `built_in_android`, `depth_mm`, `min_size_in`,
+`max_size_in`, `portrait_capable`; `quote_lcd_screens` gains `requires_android`, `max_depth_mm`, `needs_pc`,
+`needs_hard_drive`. Rules via the existing `validateLcdScreen`/`validate.ts` aggregate (all warning-severity, null-safe):
+`LCD_DEPTH_EXCEEDED` (site max depth < display depth), `LCD_ANDROID_REQUIRED` (requires-Android vs non-Android
+display), `LCD_BRACKET_SUBRANGE` (panel size outside the bracket's size range / portrait on a non-portrait bracket),
+`LCD_PC_DEPENDENCY` (needs-PC / needs-hard-drive flagged). LcdStep "Site requirements" block + admin `display-catalog`
+fields + PM handoff updated. 156 api tests green (+6 `aa3a-lcd-rules.test.ts`); typecheck + web build clean.

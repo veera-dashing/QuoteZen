@@ -203,12 +203,36 @@ export interface LcdValidationItem {
   displayId?: string | number | bigint | null;
   /** Snapshotted display model/description text (from `displayCatalog.model`) — drives the built-in-player check. */
   description?: string | null;
+  // ─── AA3a: bracket-item constraint data (only meaningful on itemType === 'bracket') ───
+  /** Bracket's supported minimum panel size (inches). Null → the sub-range check can't fire. */
+  bracketMinSizeIn?: number | null;
+  /** Bracket's supported maximum panel size (inches). Null → the sub-range check can't fire. */
+  bracketMaxSizeIn?: number | null;
+  /** Whether the bracket supports portrait mounting. Null → the portrait-bracket check can't fire. */
+  bracketPortraitCapable?: boolean | null;
 }
 
 export interface LcdValidationInput {
   /** 'P' | 'L' | null — matches the persisted LCD orientation. */
   orientation?: string | null;
   items?: LcdValidationItem[];
+  // ─── AA3a: chosen-display characteristics + screen requirement fields (all nullable) ───
+  /** The chosen display's brand (informational; threaded for completeness). */
+  displayBrand?: string | null;
+  /** Whether the chosen display has a built-in Android player. Null → falls back to the description heuristic. */
+  displayBuiltInAndroid?: boolean | null;
+  /** The chosen display's physical depth (mm). Null → the depth check can't fire. */
+  displayDepthMm?: number | null;
+  /** The chosen display's panel size (inches). Null → the bracket sub-range check is skipped. */
+  displaySizeIn?: number | null;
+  /** Site requirement: the screen must sit within this depth (mm). Null → the depth check can't fire. */
+  maxDepthMm?: number | null;
+  /** Site requirement: the display must be Android-capable. */
+  requiresAndroid?: boolean | null;
+  /** Site requirement: a separate PC must be quoted. */
+  needsPc?: boolean | null;
+  /** Site requirement: a separate hard drive must be quoted. */
+  needsHardDrive?: boolean | null;
 }
 
 /** Case-insensitive signals that a display has a built-in playback source (no separate mediaplayer needed). */
@@ -287,6 +311,78 @@ export const validateLcdScreen = (input: LcdValidationInput): ValidationFinding[
       rule: 'LCD_NO_BRACKET',
       severity: 'warning',
       message: 'No bracket / mount selected — confirm mounting method.',
+    });
+  }
+
+  // ── AA3a rule 1: depth exceeded ──
+  // The site imposes a maximum mounting depth and the chosen display is deeper. Both must be known.
+  if (
+    input.maxDepthMm != null &&
+    input.displayDepthMm != null &&
+    input.displayDepthMm > input.maxDepthMm
+  ) {
+    findings.push({
+      rule: 'LCD_DEPTH_EXCEEDED',
+      severity: 'warning',
+      message: `Display depth ${input.displayDepthMm}mm exceeds the site's maximum depth ${input.maxDepthMm}mm.`,
+    });
+  }
+
+  // ── AA3a rule 2: Android required ──
+  // Site requires an Android display but the chosen one is not Android — using the explicit flag first,
+  // then falling back to the same built-in-player description heuristic used for the mediaplayer check.
+  if (input.requiresAndroid === true) {
+    const flaggedAndroid = input.displayBuiltInAndroid === true;
+    const desc = displayWithPanel.description;
+    const descHintsAndroid = desc != null && desc !== '' && hasBuiltInPlayerSignal(desc);
+    if (!flaggedAndroid && !descHintsAndroid) {
+      findings.push({
+        rule: 'LCD_ANDROID_REQUIRED',
+        severity: 'warning',
+        message: 'Site requires an Android display but the selected display is not Android-capable.',
+      });
+    }
+  }
+
+  // ── AA3a rule 3: bracket size sub-range / portrait capability ──
+  // Only fires per bracket that carries the relevant constraint data (never a false error on missing data).
+  const brackets = items.filter((i) => i.itemType === 'bracket');
+  const isPortrait = input.orientation === 'P';
+  for (const b of brackets) {
+    // Panel size outside the bracket's supported range (needs both a display size and a range bound).
+    if (input.displaySizeIn != null) {
+      const belowMin = b.bracketMinSizeIn != null && input.displaySizeIn < b.bracketMinSizeIn;
+      const aboveMax = b.bracketMaxSizeIn != null && input.displaySizeIn > b.bracketMaxSizeIn;
+      if (belowMin || aboveMax) {
+        const lo = b.bracketMinSizeIn != null ? `${b.bracketMinSizeIn}"` : '—';
+        const hi = b.bracketMaxSizeIn != null ? `${b.bracketMaxSizeIn}"` : '—';
+        findings.push({
+          rule: 'LCD_BRACKET_SUBRANGE',
+          severity: 'warning',
+          message: `Display size ${input.displaySizeIn}" is outside the bracket's supported range (${lo}–${hi}).`,
+        });
+        continue; // one finding per bracket is enough — don't also flag portrait for the same row
+      }
+    }
+    // Portrait orientation requested but this bracket doesn't support portrait.
+    if (isPortrait && b.bracketPortraitCapable === false) {
+      findings.push({
+        rule: 'LCD_BRACKET_SUBRANGE',
+        severity: 'warning',
+        message: 'Screen is portrait but the selected bracket does not support portrait mounting.',
+      });
+    }
+  }
+
+  // ── AA3a rule 4: PC / hard-drive dependency (informational) ──
+  if (input.needsPc === true || input.needsHardDrive === true) {
+    const deps: string[] = [];
+    if (input.needsPc === true) deps.push('a PC');
+    if (input.needsHardDrive === true) deps.push('a hard drive');
+    findings.push({
+      rule: 'LCD_PC_DEPENDENCY',
+      severity: 'warning',
+      message: `Site requires ${deps.join(' and ')} — ensure it is quoted as a separate line.`,
     });
   }
 

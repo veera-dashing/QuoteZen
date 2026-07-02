@@ -210,9 +210,13 @@ export const TABLES: TableDef[] = [
     fields: [
       f('category', 'string', true), f('subcategory'), f('sizeInch', 'decimal'), f('model', 'string', true),
       f('description', 'text'), f('usd', 'decimal'), f('listAud', 'decimal'), f('freight', 'decimal'),
-      f('totalCost', 'decimal'), f('margin', 'decimal'), f('sell', 'decimal'), DEPRECATED,
+      f('totalCost', 'decimal'), f('margin', 'decimal'), f('sell', 'decimal'),
+      // AA3a — LCD selection-rule inputs (display characteristics + bracket-row range/portrait).
+      f('brand'), f('builtInAndroid', 'boolean'), f('depthMm', 'int'),
+      f('minSizeIn', 'int'), f('maxSizeIn', 'int'), f('portraitCapable', 'boolean'),
+      DEPRECATED,
     ],
-    listFields: ['category', 'sizeInch', 'model', 'listAud', 'sell', 'deprecated'],
+    listFields: ['category', 'sizeInch', 'model', 'brand', 'listAud', 'sell', 'deprecated'],
   },
   {
     resource: 'import-catalog', model: 'importCatalog', label: 'Import Catalog (Philips)', group: 'Displays & Hardware',

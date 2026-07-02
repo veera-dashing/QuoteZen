@@ -542,6 +542,14 @@ model DisplayCatalog {
   margin      Decimal? @db.Decimal(8, 4)
   sell        Decimal? @db.Decimal(12, 2)
   deprecated  Boolean  @default(false) @map("deprecated")
+  /** AA3a — LCD selection/constraint rule inputs (all nullable; rules stay cannot_evaluate on absence). */
+  brand           String?  @map("brand")
+  builtInAndroid  Boolean? @map("built_in_android")
+  depthMm         Int?     @map("depth_mm")
+  /** Bracket-category rows: supported panel size range (inches) + portrait capability. */
+  minSizeIn       Int?     @map("min_size_in")
+  maxSizeIn       Int?     @map("max_size_in")
+  portraitCapable Boolean? @map("portrait_capable")
 
   lcdScreens QuoteLcdScreen[]
   lcdItems   QuoteLcdItem[]
@@ -1099,6 +1107,11 @@ model QuoteLcdScreen {
   warrantyId             BigInt?  @map("warranty_id")
   /** AA1 — recess/cavity depth in mm (site-prep detail). */
   recessDepthMm          Int?     @map("recess_depth_mm")
+  /** AA3a — site/requirement fields feeding the LCD selection rules (all nullable). */
+  requiresAndroid        Boolean? @map("requires_android")
+  maxDepthMm             Int?     @map("max_depth_mm")
+  needsPc                Boolean? @map("needs_pc")
+  needsHardDrive         Boolean? @map("needs_hard_drive")
   priceScreenMediaplayer Decimal? @map("price_screen_mediaplayer") @db.Decimal(12, 2)
   priceBracketShroud     Decimal? @map("price_bracket_shroud") @db.Decimal(12, 2)
   priceServices          Decimal? @map("price_services") @db.Decimal(12, 2)

@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { api, ApiError, downloadFile, getRole, uploadFile } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
 
-interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string }
+interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null }
 // A stored LED component row (as returned on the screen) — carries the componentType + the one FK id.
 interface LedComponent {
   id: string; componentType: string; qty: number;
@@ -44,6 +44,8 @@ interface LcdScreen {
   orientation?: string | null; displayId?: string | null;
   installMethodId?: string | null; serviceHoursId?: string | null; warrantyId?: string | null;
   recessDepthMm?: number | null; // AA1 — recess/cavity depth (mm)
+  // AA3a — site/requirement fields (selection rules).
+  requiresAndroid?: boolean | null; maxDepthMm?: number | null; needsPc?: boolean | null; needsHardDrive?: boolean | null;
   items?: LcdItem[];
 }
 interface Licence { id: string; screenType: string; tier: string; qty: number; isInteractive: boolean }
@@ -1805,6 +1807,11 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const [orientation, setOrientation] = useState(editScreen?.orientation ?? '');
   // AA1 — recess/cavity depth (mm); descriptive site-prep detail.
   const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
+  // AA3a — site/requirement fields feeding the LCD selection rules.
+  const [requiresAndroid, setRequiresAndroid] = useState(editScreen?.requiresAndroid ?? false);
+  const [maxDepthMm, setMaxDepthMm] = useState(editScreen?.maxDepthMm != null ? String(editScreen.maxDepthMm) : '');
+  const [needsPc, setNeedsPc] = useState(editScreen?.needsPc ?? false);
+  const [needsHardDrive, setNeedsHardDrive] = useState(editScreen?.needsHardDrive ?? false);
   const [screenName, setScreenName] = useState(editScreen?.screenName ?? '');
   // Pre-fill line items from the screen's stored items (V4 edit). Manual = no displayId.
   const [lines, setLines] = useState<LcdLine[]>(
@@ -1911,6 +1918,9 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const servicesSell = grossFixed(
     costWhere((l) => l.itemType === 'install' || l.itemType === 'labour' || l.itemType === 'location_fee' || l.itemType === 'warranty'),
   );
+  // AA3a — brand of the chosen display line, shown read-only in the site-requirements block.
+  const chosenDisplayId = lines.find((l) => l.itemType === 'display' && l.displayId)?.displayId;
+  const chosenDisplayBrand = chosenDisplayId ? (catalog.find((x) => x.id === chosenDisplayId)?.brand ?? null) : null;
 
   const save = async () => {
     setBusy(true);
@@ -1927,6 +1937,11 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         screenName: screenName || undefined,
         orientation: orientation || undefined,
         ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
+        // AA3a — site/requirement fields (rules; checkboxes always sent, depth only when set).
+        requiresAndroid,
+        needsPc,
+        needsHardDrive,
+        ...(maxDepthMm.trim() !== '' ? { maxDepthMm: Number(maxDepthMm) } : {}),
         displayId: firstDisplay ? Number(firstDisplay) : undefined,
         serviceHoursId: serviceHoursId ? Number(serviceHoursId) : undefined,
         warrantyId: warrantyId ? Number(warrantyId) : undefined,
@@ -1944,6 +1959,10 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       setLines([]);
       setScreenName('');
       setRecessDepthMm('');
+      setRequiresAndroid(false);
+      setMaxDepthMm('');
+      setNeedsPc(false);
+      setNeedsHardDrive(false);
       await onChange();
     } finally {
       setBusy(false);
@@ -1987,6 +2006,29 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
           <div>
             <label>Recess depth (mm)</label>
             <input type="number" min={0} value={recessDepthMm} onChange={(e) => setRecessDepthMm(e.target.value)} placeholder="optional" />
+          </div>
+        </div>
+        {/* AA3a — site requirements feeding the LCD selection rules (validation warnings). */}
+        <h4 style={{ marginBottom: 6 }}>Site requirements</h4>
+        <div className="grid3">
+          <div>
+            <label>Max mounting depth (mm)</label>
+            <input type="number" min={0} value={maxDepthMm} onChange={(e) => setMaxDepthMm(e.target.value)} placeholder="optional" />
+          </div>
+          <div>
+            <label>Display brand</label>
+            <input value={chosenDisplayBrand ?? ''} readOnly placeholder="— (from chosen display)" />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'flex-end' }}>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input type="checkbox" checked={requiresAndroid} onChange={(e) => setRequiresAndroid(e.target.checked)} /> Requires Android display
+            </label>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input type="checkbox" checked={needsPc} onChange={(e) => setNeedsPc(e.target.checked)} /> Needs PC
+            </label>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input type="checkbox" checked={needsHardDrive} onChange={(e) => setNeedsHardDrive(e.target.checked)} /> Needs hard drive
+            </label>
           </div>
         </div>
         {outOfHours && (

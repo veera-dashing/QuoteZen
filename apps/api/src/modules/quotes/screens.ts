@@ -1334,6 +1334,11 @@ export const updateLcdScreen = async (
         serviceHoursId: input.serviceHoursId ? BigInt(input.serviceHoursId) : null,
         warrantyId: input.warrantyId ? BigInt(input.warrantyId) : null,
         recessDepthMm: input.recessDepthMm ?? null,
+        // AA3a — site/requirement fields (descriptive; feed the selection rules, not pricing).
+        requiresAndroid: input.requiresAndroid ?? null,
+        maxDepthMm: input.maxDepthMm ?? null,
+        needsPc: input.needsPc ?? null,
+        needsHardDrive: input.needsHardDrive ?? null,
         priceScreenMediaplayer: priceScreenMediaplayer.toString(),
         priceBracketShroud: priceBracketShroud.toString(),
         priceServices: priceServices.toString(),
@@ -1408,6 +1413,11 @@ export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdSc
         serviceHoursId: input.serviceHoursId ? BigInt(input.serviceHoursId) : null,
         warrantyId: input.warrantyId ? BigInt(input.warrantyId) : null,
         recessDepthMm: input.recessDepthMm ?? null,
+        // AA3a — site/requirement fields (descriptive; feed the selection rules, not pricing).
+        requiresAndroid: input.requiresAndroid ?? null,
+        maxDepthMm: input.maxDepthMm ?? null,
+        needsPc: input.needsPc ?? null,
+        needsHardDrive: input.needsHardDrive ?? null,
         priceScreenMediaplayer: priceScreenMediaplayer.toString(),
         priceBracketShroud: priceBracketShroud.toString(),
         priceServices: priceServices.toString(),

@@ -108,17 +108,41 @@ const ledScreenToInput = (
 /** Build the calc validation input for one stored LCD screen from its loaded items. */
 const lcdScreenToInput = (
   screen: QuoteWithChildren['lcdScreens'][number],
-): LcdValidationInput => ({
-  orientation: screen.orientation ?? null,
-  items: screen.items.map((i) => ({
-    itemType: i.itemType,
-    displayId: i.displayId != null ? i.displayId.toString() : null,
-    // `addLcdScreen` snapshots the display's model into `description`; fall back to the joined
-    // display model when present. If neither is available the built-in-player check stays
-    // cannot_evaluate — never a false warning.
-    description: i.description ?? i.display?.model ?? null,
-  })),
-});
+): LcdValidationInput => {
+  // AA3a — the chosen display row (the screen's `display` relation, else the display line item's join).
+  // Its brand/android/depth/size feed the depth + Android checks; null on any of these keeps the rule
+  // at cannot_evaluate / no-finding (never a false warning).
+  const displayItem = screen.items.find((i) => i.itemType === 'display' && i.display != null);
+  const chosenDisplay = screen.display ?? displayItem?.display ?? null;
+  const numOrNull = (v: { toString(): string } | null | undefined): number | null =>
+    v != null ? Number(v.toString()) : null;
+
+  return {
+    orientation: screen.orientation ?? null,
+    // AA3a — chosen-display characteristics.
+    displayBrand: chosenDisplay?.brand ?? null,
+    displayBuiltInAndroid: chosenDisplay?.builtInAndroid ?? null,
+    displayDepthMm: chosenDisplay?.depthMm ?? null,
+    displaySizeIn: numOrNull(chosenDisplay?.sizeInch),
+    // AA3a — site requirement fields.
+    maxDepthMm: screen.maxDepthMm ?? null,
+    requiresAndroid: screen.requiresAndroid ?? null,
+    needsPc: screen.needsPc ?? null,
+    needsHardDrive: screen.needsHardDrive ?? null,
+    items: screen.items.map((i) => ({
+      itemType: i.itemType,
+      displayId: i.displayId != null ? i.displayId.toString() : null,
+      // `addLcdScreen` snapshots the display's model into `description`; fall back to the joined
+      // display model when present. If neither is available the built-in-player check stays
+      // cannot_evaluate — never a false warning.
+      description: i.description ?? i.display?.model ?? null,
+      // AA3a — bracket-row constraints from the bracket item's linked catalog row (null → checks skip).
+      bracketMinSizeIn: i.itemType === 'bracket' ? (i.display?.minSizeIn ?? null) : null,
+      bracketMaxSizeIn: i.itemType === 'bracket' ? (i.display?.maxSizeIn ?? null) : null,
+      bracketPortraitCapable: i.itemType === 'bracket' ? (i.display?.portraitCapable ?? null) : null,
+    })),
+  };
+};
 
 export const validateQuote = async (id: bigint): Promise<QuoteValidation> => {
   const quote = await getQuote(id);

@@ -641,6 +641,32 @@ async function main(): Promise<void> {
   }
   console.warn('  compatibilityGroup: example "HX" group set on a controller, frame + LED product');
 
+  // ── AA3a: demonstrable LCD selection-rule inputs on the display catalogue (idempotent) ──
+  // Set brand/depth/android on one display row (drives LCD_DEPTH_EXCEEDED / LCD_ANDROID_REQUIRED) and a
+  // size range + portrait capability on one bracket-category row (drives LCD_BRACKET_SUBRANGE). Chosen
+  // by first-row-of-category so re-running is stable; most rows stay null (rules cannot_evaluate).
+  const firstDisplay = await prisma.displayCatalog.findFirst({
+    where: { category: { contains: 'creen', mode: 'insensitive' } },
+    orderBy: { id: 'asc' },
+  });
+  if (firstDisplay) {
+    await prisma.displayCatalog.update({
+      where: { id: firstDisplay.id },
+      data: { brand: firstDisplay.brand ?? 'Samsung', builtInAndroid: false, depthMm: 95 },
+    });
+  }
+  const firstBracket = await prisma.displayCatalog.findFirst({
+    where: { category: { contains: 'racket', mode: 'insensitive' } },
+    orderBy: { id: 'asc' },
+  });
+  if (firstBracket) {
+    await prisma.displayCatalog.update({
+      where: { id: firstBracket.id },
+      data: { minSizeIn: 32, maxSizeIn: 65, portraitCapable: false },
+    });
+  }
+  console.warn('  AA3a: example LCD rule inputs set on a display + a bracket display_catalog row');
+
   console.warn('Seed complete.');
 }
 

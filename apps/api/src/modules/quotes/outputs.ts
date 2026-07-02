@@ -284,6 +284,11 @@ export const buildPmHandoff = (quote: QuoteWithChildren) => ({
     orientation: s.orientation ?? null,
     // AA1 — recess/cavity depth (mm); omitted (null) when not captured.
     recessDepthMm: s.recessDepthMm ?? null,
+    // AA3a — site/requirement fields (defensive: null when not captured).
+    requiresAndroid: s.requiresAndroid ?? null,
+    maxDepthMm: s.maxDepthMm ?? null,
+    needsPc: s.needsPc ?? null,
+    needsHardDrive: s.needsHardDrive ?? null,
     // Order list (tab B56): the display + brackets the PM procures for this screen.
     orderList: lcdOrderList(s),
   })),

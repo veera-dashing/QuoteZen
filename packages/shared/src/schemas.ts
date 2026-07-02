@@ -213,6 +213,11 @@ export const lcdScreenSchema = z.object({
   warrantyId: idSchema.optional(),
   /** AA1 — recess/cavity depth in mm (site-prep detail; descriptive, not priced). */
   recessDepthMm: z.coerce.number().int().nonnegative().optional(),
+  // ─── AA3a — site/requirement fields feeding the LCD selection rules (all optional) ───
+  requiresAndroid: z.boolean().optional(),
+  maxDepthMm: z.coerce.number().int().nonnegative().optional(),
+  needsPc: z.boolean().optional(),
+  needsHardDrive: z.boolean().optional(),
   items: z.array(lcdItemSchema).default([]),
 });
 export type LcdScreenInput = z.infer<typeof lcdScreenSchema>;
