@@ -58,8 +58,9 @@ export const listQuotes = (where?: Prisma.QuoteWhereInput) =>
   prisma.quote.findMany({
     where,
     orderBy: { createdAt: 'desc' },
-    include: { client: true, currency: true },
-    // archivedAt is selected by default (scalar), so the list can badge archived rows.
+    // clientTier included so the dashboard can show each quote's tier (A+/A/B) without an extra call.
+    include: { client: { include: { clientTier: true } }, currency: true },
+    // archivedAt + requestedShippingDate (go-live) are scalars, selected by default.
   });
 
 export const findCurrencyByCode = (code: string) => prisma.currency.findUnique({ where: { code } });

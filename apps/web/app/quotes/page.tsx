@@ -10,9 +10,10 @@ interface QuoteRow {
   jobReference: string;
   status: string;
   grandTotal: string;
-  client?: { name: string } | null;
+  client?: { name: string; clientTier?: { name: string } | null } | null;
   currency?: { code: string } | null;
   createdAt: string;
+  requestedShippingDate?: string | null;
   archivedAt?: string | null;
 }
 
@@ -21,41 +22,62 @@ interface ClientOption {
   name?: string;
 }
 
-/** Dashboard tabs (P1-19d.1). Each maps to the set of statuses it shows. */
-type Tab = 'drafts' | 'pending' | 'finished' | 'all' | 'archived';
-const DRAFT_STATUSES = ['draft'];
-// "Pending approval" — anything mid review/approval workflow (T1 two-stage review + legacy in_review).
-const PENDING_STATUSES = ['in_review', 'technical_review', 'commercial_review'];
-const FINISHED_STATUSES = ['approved', 'issued', 'won', 'lost'];
-const TABS: Array<{ key: Tab; label: string }> = [
+/** Status filter pills (P1-19d). "all"/"archived" are special; the rest map to a status group. */
+type Filter = 'all' | 'draft' | 'pending' | 'approved' | 'issued' | 'won' | 'lost' | 'archived';
+const GROUPS: Record<Exclude<Filter, 'all' | 'archived'>, string[]> = {
+  draft: ['draft'],
+  pending: ['in_review', 'technical_review', 'commercial_review'], // mid review/approval workflow
+  approved: ['approved'],
+  issued: ['issued'],
+  won: ['won'],
+  lost: ['lost'],
+};
+const PILLS: Array<{ key: Filter; label: string }> = [
   { key: 'all', label: 'All' },
-  { key: 'drafts', label: 'Drafts' },
+  { key: 'draft', label: 'Draft' },
   { key: 'pending', label: 'Pending approval' },
-  { key: 'finished', label: 'Finished' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'issued', label: 'Issued' },
+  { key: 'won', label: 'Won' },
+  { key: 'lost', label: 'Lost' },
   { key: 'archived', label: 'Archived' },
 ];
+const OPEN_STATUSES = [...GROUPS.draft, ...GROUPS.pending]; // "in progress" for the KPI cards
 
-/** Which status-group a tab shows (null = every status, i.e. All/Archived). */
-const tabStatuses = (t: Tab): string[] | null =>
-  t === 'drafts' ? DRAFT_STATUSES : t === 'pending' ? PENDING_STATUSES : t === 'finished' ? FINISHED_STATUSES : null;
+/** Per-status badge colour (theme vars). */
+const statusStyle = (status: string): { bg: string; fg: string } => {
+  if (status === 'won') return { bg: 'rgba(48,164,108,0.16)', fg: 'var(--ok)' };
+  if (status === 'lost') return { bg: 'rgba(229,72,77,0.16)', fg: 'var(--danger)' };
+  if (status === 'approved' || status === 'issued') return { bg: 'rgba(70,237,213,0.15)', fg: 'var(--accent)' };
+  if (GROUPS.pending.includes(status)) return { bg: 'rgba(245,158,11,0.16)', fg: '#f59e0b' };
+  return { bg: 'var(--surface-2)', fg: 'var(--muted)' }; // draft / other
+};
 
-/** YYYY-MM-DD for `monthsAgo` months before today (local) — used for the default "last two months" window. */
+/** YYYY-MM-DD for `monthsAgo` months before today (local) — the default "last two months" window. */
 const isoMonthsAgo = (monthsAgo: number): string => {
   const d = new Date();
   d.setMonth(d.getMonth() - monthsAgo);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+const relativeTime = (iso: string): string => {
+  const diff = Date.now() - new Date(iso).getTime();
+  const day = 86_400_000;
+  if (diff < 3_600_000) return 'just now';
+  if (diff < day) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 30 * day) return `${Math.floor(diff / day)}d ago`;
+  return new Date(iso).toLocaleDateString();
+};
+
 export default function QuotesList() {
-  // Raw fetched set (for the current date/client/search + archived flag), before tab grouping — the
-  // summary cards + each tab's list are both derived from this.
+  // Raw fetched set (for the current date/client/search + archived flag), before the pill filter —
+  // the KPI cards, the pill counts, and the table are all derived from this.
   const [fetched, setFetched] = useState<QuoteRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('all');
+  const [filter, setFilter] = useState<Filter>('all');
   const [busyId, setBusyId] = useState<string | null>(null);
   const canWrite = getRole() !== 'viewer';
 
-  // Filter controls. Default to the last two months (from = 2 months ago, to = open-ended).
   const defaultFrom = useMemo(() => isoMonthsAgo(2), []);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -63,16 +85,14 @@ export default function QuotesList() {
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState('');
   const [clients, setClients] = useState<ClientOption[]>([]);
-  const isArchived = tab === 'archived';
+  const isArchived = filter === 'archived';
 
-  // Populate the client filter once.
   useEffect(() => {
     api<{ rows: ClientOption[] }>('/admin/clients?take=200')
       .then((r) => setClients(r.rows))
       .catch(() => setClients([]));
   }, []);
 
-  // Debounce the jobRef search → server `q`.
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
     return () => clearTimeout(t);
@@ -83,9 +103,8 @@ export default function QuotesList() {
     [clients],
   );
 
-  // Fetch is keyed on the archived flag + filters (NOT the tab) — the draft/pending/finished/all
-  // grouping is done client-side, so switching between those tabs is instant (no refetch) and the
-  // summary cards stay stable.
+  // Fetch keyed on the archived flag + filters (NOT the pill) — status grouping is client-side, so
+  // switching pills is instant and the KPI cards / counts stay stable.
   const load = useCallback(() => {
     setFetched(null);
     setError(null);
@@ -105,26 +124,40 @@ export default function QuotesList() {
     load();
   }, [load]);
 
-  // Rows for the active tab (client-side status grouping).
   const rows = useMemo(() => {
     if (!fetched) return null;
-    const statuses = tabStatuses(tab);
-    return statuses ? fetched.filter((q) => statuses.includes(q.status)) : fetched;
-  }, [fetched, tab]);
+    if (filter === 'all' || filter === 'archived') return fetched;
+    const statuses = GROUPS[filter];
+    return fetched.filter((q) => statuses.includes(q.status));
+  }, [fetched, filter]);
 
-  // Summary counts over the current (date/client/search-filtered) set, mirroring the tabs.
-  const summary = useMemo(() => {
+  // Counts per pill over the current window (non-archived pills only; Archived has no live count).
+  const counts = useMemo(() => {
     const f = fetched ?? [];
+    const c: Record<string, number> = { all: f.length };
+    (Object.keys(GROUPS) as Array<keyof typeof GROUPS>).forEach((k) => {
+      c[k] = f.filter((q) => GROUPS[k].includes(q.status)).length;
+    });
+    return c;
+  }, [fetched]);
+
+  // KPI metrics over the current window (real data only — no AI confidence/time-saved).
+  const metrics = useMemo(() => {
+    const f = fetched ?? [];
+    const sum = (pred: (q: QuoteRow) => boolean) =>
+      f.filter(pred).reduce((t, q) => t + (Number(q.grandTotal) || 0), 0);
+    const code = f[0]?.currency?.code ?? 'AUD';
     return {
-      total: f.length,
-      drafts: f.filter((q) => DRAFT_STATUSES.includes(q.status)).length,
-      pending: f.filter((q) => PENDING_STATUSES.includes(q.status)).length,
-      finished: f.filter((q) => FINISHED_STATUSES.includes(q.status)).length,
+      open: f.filter((q) => OPEN_STATUSES.includes(q.status)).length,
+      pipeline: sum((q) => OPEN_STATUSES.includes(q.status)),
+      pending: f.filter((q) => GROUPS.pending.includes(q.status)).length,
+      wonValue: sum((q) => q.status === 'won'),
+      code,
     };
   }, [fetched]);
 
-  // Reset to the default view (last two months, no client/search). Full-time can be had by clearing
-  // the "Created from" field manually.
+  const money = (n: number, code: string) => `${code} ${Math.round(n).toLocaleString()}`;
+
   const clearFilters = () => {
     setSearch('');
     setClientId('');
@@ -146,56 +179,61 @@ export default function QuotesList() {
     }
   };
 
+  const KPIS: Array<{ label: string; value: string; sub: string }> = [
+    { label: 'Open quotes', value: fetched ? String(metrics.open) : '—', sub: 'in progress' },
+    { label: 'Pipeline value', value: fetched ? money(metrics.pipeline, metrics.code) : '—', sub: 'open quotes, est.' },
+    { label: 'Awaiting approval', value: fetched ? String(metrics.pending) : '—', sub: 'in review' },
+    { label: 'Won value', value: fetched ? money(metrics.wonValue, metrics.code) : '—', sub: 'in this window' },
+  ];
+
   return (
     <div>
       <div className="topbar">
         <h1>Quotes</h1>
-        {canWrite && tab !== 'archived' && (
+        {canWrite && !isArchived && (
           <Link href="/quotes/new">
             <button className="primary">+ New quote</button>
           </Link>
         )}
       </div>
 
-      {/* Summary cards — counts over the current date/client/search filter, and quick tab nav. */}
+      {/* KPI cards — real metrics over the current filter window. */}
       <div
         className="totals"
-        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginBottom: 16 }}
+        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', marginBottom: 18 }}
       >
-        {([
-          { key: 'all', label: isArchived ? 'Archived' : 'Total', value: summary.total },
-          { key: 'drafts', label: 'Drafts', value: summary.drafts },
-          { key: 'pending', label: 'Pending approval', value: summary.pending },
-          { key: 'finished', label: 'Finished', value: summary.finished },
-        ] as Array<{ key: Tab; label: string; value: number }>).map((c) => (
-          <button
-            key={c.key}
-            type="button"
-            className="stat"
-            onClick={() => setTab(c.key)}
-            style={{
-              textAlign: 'left',
-              cursor: 'pointer',
-              borderColor: tab === c.key ? 'var(--accent)' : undefined,
-            }}
-          >
-            <div className="label">{c.label}</div>
-            <div className="value">{fetched ? c.value : '—'}</div>
-          </button>
+        {KPIS.map((k) => (
+          <div key={k.label} className="stat">
+            <div className="label" style={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              {k.label}
+            </div>
+            <div className="value">{k.value}</div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+              {k.sub}
+            </div>
+          </div>
         ))}
       </div>
 
-      {/* Tabs */}
-      <div className="tabs" style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            className={tab === t.key ? 'primary' : 'ghost'}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
+      {/* Status filter pills with counts. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+        {PILLS.map((p) => {
+          const active = filter === p.key;
+          const count = p.key === 'archived' ? null : counts[p.key] ?? 0;
+          return (
+            <button
+              key={p.key}
+              className={active ? 'primary' : 'ghost'}
+              onClick={() => setFilter(p.key)}
+              style={{ borderRadius: 999, ...(active ? {} : { border: '1px solid var(--border)' }) }}
+            >
+              {p.label}
+              {count !== null && (
+                <span style={{ opacity: 0.7, marginLeft: 6 }}>({fetched ? count : '…'})</span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* Filters */}
@@ -205,7 +243,7 @@ export default function QuotesList() {
       >
         <div style={{ flex: '1 1 200px', minWidth: 180 }}>
           <label className="muted" style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>
-            Job reference
+            Search
           </label>
           <input
             placeholder="Search job ref…"
@@ -249,16 +287,13 @@ export default function QuotesList() {
       {!rows && <div className="muted">Loading…</div>}
       {rows && rows.length === 0 && (
         <p className="muted">
-          {tab === 'archived'
+          {filter === 'archived'
             ? 'No archived quotes.'
-            : summary.total === 0
+            : counts.all === 0
               ? hasFilters
                 ? 'No quotes match these filters.'
                 : 'No quotes yet. Create your first one.'
-              : // other quotes exist in this window, just none in the active group
-                `No quotes ${
-                  tab === 'pending' ? 'pending approval' : tab === 'drafts' ? 'in draft' : tab === 'finished' ? 'finished' : 'match these filters'
-                }${hasFilters ? ' in this window' : ''}.`}
+              : `No ${filter === 'all' ? 'quotes' : `${PILLS.find((p) => p.key === filter)?.label.toLowerCase()} quotes`}${hasFilters ? ' in this window' : ''}.`}
         </p>
       )}
       {rows && rows.length > 0 && (
@@ -266,51 +301,67 @@ export default function QuotesList() {
           <table>
             <thead>
               <tr>
-                <th>Job ref</th>
-                <th>Client</th>
-                <th>Status</th>
-                <th className="cell-num">Grand total</th>
-                <th>Created</th>
+                <th>Brief</th>
+                <th>Stage</th>
+                <th>Tier</th>
+                <th className="cell-num">Value</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((q) => (
-                <tr key={q.id}>
-                  <td>{q.jobReference}</td>
-                  <td>{q.client?.name ?? '—'}</td>
-                  <td>
-                    <span className="pill status-badge">{q.status.replace('_', ' ')}</span>
-                  </td>
-                  <td className="cell-num">
-                    {q.currency?.code ?? ''} {Number(q.grandTotal).toLocaleString()}
-                  </td>
-                  <td>{new Date(q.createdAt).toLocaleDateString()}</td>
-                  <td className="actions">
-                    <Link href={`/quotes/${q.id}`}>
-                      <button className="ghost">Open</button>
-                    </Link>
-                    {canWrite &&
-                      (q.archivedAt ? (
-                        <button
-                          className="ghost"
-                          disabled={busyId === q.id}
-                          onClick={() => archive(q.id, true)}
-                        >
-                          {busyId === q.id ? '…' : 'Restore'}
-                        </button>
+              {rows.map((q) => {
+                const s = statusStyle(q.status);
+                return (
+                  <tr key={q.id}>
+                    <td>
+                      <Link href={`/quotes/${q.id}`} style={{ fontWeight: 600 }}>
+                        {q.jobReference}
+                      </Link>
+                      <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                        {q.client?.name ?? 'No client'} · {relativeTime(q.createdAt)}
+                      </div>
+                    </td>
+                    <td>
+                      <span
+                        className="pill status-badge"
+                        style={{ background: s.bg, color: s.fg, borderColor: 'transparent' }}
+                      >
+                        {q.status.replace(/_/g, ' ')}
+                      </span>
+                    </td>
+                    <td>
+                      {q.client?.clientTier?.name ? (
+                        <span className="pill">{q.client.clientTier.name}</span>
                       ) : (
-                        <button
-                          className="ghost"
-                          disabled={busyId === q.id}
-                          onClick={() => archive(q.id, false)}
-                        >
-                          {busyId === q.id ? '…' : 'Archive'}
-                        </button>
-                      ))}
-                  </td>
-                </tr>
-              ))}
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                    <td className="cell-num">
+                      {q.currency?.code ?? ''} {Number(q.grandTotal).toLocaleString()}
+                      <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                        {q.requestedShippingDate
+                          ? `Go-live ${new Date(q.requestedShippingDate).toLocaleDateString()}`
+                          : 'Go-live TBC'}
+                      </div>
+                    </td>
+                    <td className="actions">
+                      <Link href={`/quotes/${q.id}`}>
+                        <button className="ghost">Open</button>
+                      </Link>
+                      {canWrite &&
+                        (q.archivedAt ? (
+                          <button className="ghost" disabled={busyId === q.id} onClick={() => archive(q.id, true)}>
+                            {busyId === q.id ? '…' : 'Restore'}
+                          </button>
+                        ) : (
+                          <button className="ghost" disabled={busyId === q.id} onClick={() => archive(q.id, false)}>
+                            {busyId === q.id ? '…' : 'Archive'}
+                          </button>
+                        ))}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

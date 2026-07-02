@@ -672,3 +672,15 @@ from/to/clientId/q/archived filters):
   (`tabStatuses`), so switching among non-archived tabs is instant (no refetch) and the summary stays stable. Raw
   `fetched` set drives both `rows` (tab-grouped) and `summary` via `useMemo`. Empty-state message is tab-aware
   (e.g. "No quotes pending approval." when other quotes exist in the window). Verified live in-browser.
+
+**Block 20 follow-up — dashboard redesign (KPI cards + per-status pills + richer rows).** Reworked the quotes list into
+a proper dashboard (inspired by a workshop mockup; real data only — no AI confidence/sentiment/time-saved):
+- **KPI stat cards** (metrics, not filters): Open quotes (count) · Pipeline value (Σ grandTotal of open) · Awaiting
+  approval (count) · Won value (Σ grandTotal won) — all over the current filter window, honest sums (dominant currency).
+- **Per-status filter pills with live counts** — All · Draft · Pending approval · Approved · Issued · Won · Lost ·
+  Archived (each maps to a status group in `GROUPS`; counts from `fetched`, client-side grouping so pill switches are
+  instant; Archived refetches). Replaces the earlier 4-tab set.
+- **Richer table** — Brief (bold job ref link + client · relative time) · Stage (per-status coloured badge) · **Tier**
+  (client tier A+/A/B) · **Value** (grandTotal + **Go-live** = requestedShippingDate, else "Go-live TBC") · actions.
+  Backend: `listQuotes` include gains `client.clientTier` (requestedShippingDate was already a returned scalar) — the
+  only API change. Last-two-months default + Clear-filters + tab-aware empty state retained. Verified live in-browser.
