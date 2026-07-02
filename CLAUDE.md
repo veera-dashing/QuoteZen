@@ -776,3 +776,11 @@ validate aggregate's `anomalies[]`, never block; `AnomalyFinding.severity` widen
 price-sensitivity hint; LED+LCD tier cards show a "Client typically selects…" caption + "Matches price sensitivity"
 emphasis. PM handoff `commercial` block; `clientMustHaves` folded into the assumptions register. DetailsStep "Commercial"
 sub-block. 176 api tests green (+11 `aa6a-commercial.test.ts`); calc 135 (+5); typecheck + web build clean.
+
+### Block — collapsible Quote summary panel (web)
+The right-hand Quote summary is now collapsible (`quotes/[id]/page.tsx`): a "✕ Hide" button in its header collapses
+it; when hidden the aside is dropped from the flex row so the left step-content column (`flex: 1`) expands to the full
+available width, and a slim "◀ Summary" button (top-right of the content) restores it. The choice persists in
+`localStorage['quotezen_summary_open']` (read on mount) so it stays hidden across steps/quotes — handy on smaller
+screens. Web-only; typecheck + build clean; verified live (Hide → left col 921px full-width + Show button; reload with
+persisted=0 loads collapsed).

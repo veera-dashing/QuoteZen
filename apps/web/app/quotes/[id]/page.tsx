@@ -95,6 +95,15 @@ export default function QuoteWizard() {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [step, setStep] = useState(() => (isNew ? 0 : Number(searchParams.get('step')) || 0));
   const [error, setError] = useState<string | null>(null);
+  // Collapsible Quote-summary panel — remembered across steps/quotes (handy on smaller screens).
+  const [summaryOpen, setSummaryOpen] = useState(true);
+  useEffect(() => {
+    if (typeof window !== 'undefined') setSummaryOpen(window.localStorage.getItem('quotezen_summary_open') !== '0');
+  }, []);
+  const toggleSummary = useCallback((open: boolean) => {
+    setSummaryOpen(open);
+    if (typeof window !== 'undefined') window.localStorage.setItem('quotezen_summary_open', open ? '1' : '0');
+  }, []);
 
   const refetch = useCallback(async () => {
     if (isNew) return;
@@ -145,12 +154,19 @@ export default function QuoteWizard() {
       ) : (
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div style={{ flex: '1 1 480px', minWidth: 0 }}>
+            {!summaryOpen && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                <button className="ghost" onClick={() => toggleSummary(true)} title="Show quote summary">
+                  ◀ Summary
+                </button>
+              </div>
+            )}
             {step === 0 && <DetailsStep quote={quote} onChange={refetch} />}
             {step === 1 && <SelectScreensStep quote={quote!} onChange={refetch} />}
             {step === 2 && <LicenceStep quote={quote!} onChange={refetch} />}
             {step === 3 && <ReviewStep quote={quote!} onChange={refetch} />}
           </div>
-          <QuoteSummary quote={quote!} stepIndex={step} />
+          {summaryOpen && <QuoteSummary quote={quote!} stepIndex={step} onHide={() => toggleSummary(false)} />}
         </div>
       )}
 
@@ -199,7 +215,7 @@ function lcdSummaryLabel(s: LcdScreen, i: number): string {
 
 // Persistent, stage-aware right-hand summary of the live quote. Read-only; purely reflects `quote`
 // (+ the current step for emphasis). Shown only in edit mode (a real quote exists).
-function QuoteSummary({ quote, stepIndex }: { quote: Quote; stepIndex: number }) {
+function QuoteSummary({ quote, stepIndex, onHide }: { quote: Quote; stepIndex: number; onHide?: () => void }) {
   // Discount cap/threshold from the admin-maintained policy (same shape DetailsStep fetches). Fetched
   // once here so the summary can flag over-cap without lifting state through the wizard.
   const [capPct, setCapPct] = useState(12);
@@ -273,7 +289,14 @@ function QuoteSummary({ quote, stepIndex }: { quote: Quote; stepIndex: number })
       }}
     >
       <div className="card" style={{ marginBottom: 0 }}>
-        <h3 style={{ margin: '0 0 14px', fontSize: 15 }}>Quote summary</h3>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: 15 }}>Quote summary</h3>
+          {onHide && (
+            <button className="ghost" onClick={onHide} title="Hide summary" aria-label="Hide summary" style={{ padding: '2px 8px' }}>
+              ✕ Hide
+            </button>
+          )}
+        </div>
 
         {/* 1 — identity */}
         <div style={{ marginBottom: 16 }}>
