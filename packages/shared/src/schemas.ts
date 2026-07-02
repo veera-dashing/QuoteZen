@@ -60,6 +60,12 @@ export const createQuoteSchema = z.object({
   customContentCuration: z.boolean().optional(),
   pcRequired: z.boolean().optional(),
   hardDriveRequired: z.boolean().optional(),
+  /** AA6a — commercial intake fields (Group F). Descriptive/advisory; no pricing impact. */
+  priceSensitivity: z.enum(['budget', 'balanced', 'premium']).optional(),
+  budgetAud: z.coerce.number().nonnegative().optional(),
+  tenureMonths: z.coerce.number().int().nonnegative().optional(),
+  clientMustHaves: z.string().max(2000).optional(),
+  needsSolutionsEngineer: z.boolean().optional(),
   /** Viewer users this quote is shared with (they can read only quotes assigned to them). */
   viewerUserIds: z.array(idSchema).optional(),
 });
@@ -95,6 +101,12 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   customContentCuration: z.boolean().nullish(),
   pcRequired: z.boolean().nullish(),
   hardDriveRequired: z.boolean().nullish(),
+  /** AA6a — commercial intake fields (nullish on update so they can be cleared). */
+  priceSensitivity: z.enum(['budget', 'balanced', 'premium']).nullish(),
+  budgetAud: z.coerce.number().nonnegative().nullish(),
+  tenureMonths: z.coerce.number().int().nonnegative().nullish(),
+  clientMustHaves: z.string().max(2000).nullish(),
+  needsSolutionsEngineer: z.boolean().nullish(),
   /** Optimistic-locking token from the last read; a mismatch is a 409 conflict (P1-05.2). */
   expectedVersion: z.coerce.number().int().nonnegative().optional(),
 });

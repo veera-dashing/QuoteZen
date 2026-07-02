@@ -764,3 +764,15 @@ Migration `aa5_dependencies`: `quotes` gains `media_player_supply` (Seen/Client-
 persist them (audit-tracked); `outputs.ts` `buildDependencies()` emits a "Software & hardware dependencies" section on
 the PM handoff + solution summary (shared-device ratio → "1 player per 4 screens"; omits nulls). Web DetailsStep gains a
 "Software & dependencies" sub-block. 165 api tests green (+2 `aa5-dependencies.test.ts`); typecheck + web build clean.
+
+### Block AA6a — commercial intake + recommendation advisories (workshop Group F, part 1)
+Migration `aa6a_commercial`: `quotes` gains `price_sensitivity` (budget/balanced/premium), `budget_aud`, `tenure_months`,
+`client_must_haves`, `needs_solutions_engineer`; `clients` gains `typical_selection_note`; setting
+`solutions_engineer_screen_threshold` (10). No pricing math change. Quote-level advisory findings (folded into the
+validate aggregate's `anomalies[]`, never block; `AnomalyFinding.severity` widened with `'info'`):
+`SOLUTIONS_ENGINEER_REVIEW` (flag or screen-count > threshold) and `FREIGHT_MODE_RECOMMENDATION` (calc `freight.ts`
+`recommendFreightMode`: available days = shipDate−today vs manufacturer lead + `lead_time_buffer_days` + SEA_TRANSIT_DAYS
+35 → "consider air freight" when tight). G/B/B tier responses carry the client's typical-selection note + a
+price-sensitivity hint; LED+LCD tier cards show a "Client typically selects…" caption + "Matches price sensitivity"
+emphasis. PM handoff `commercial` block; `clientMustHaves` folded into the assumptions register. DetailsStep "Commercial"
+sub-block. 176 api tests green (+11 `aa6a-commercial.test.ts`); calc 135 (+5); typecheck + web build clean.

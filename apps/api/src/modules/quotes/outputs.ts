@@ -271,6 +271,21 @@ const buildDependencies = (quote: QuoteWithChildren): Record<string, string> | n
   return Object.keys(dep).length > 0 ? dep : null;
 };
 
+/**
+ * Commercial intake (AA6a): price sensitivity, indicative budget, tenure, and the client "must haves".
+ * Descriptive/advisory only (no pricing impact). Defensive — only set fields surface. Returns `null`
+ * when none are populated so consumers can omit the section entirely.
+ */
+const buildCommercial = (quote: QuoteWithChildren): Record<string, string> | null => {
+  const c: Record<string, string> = {};
+  if (quote.priceSensitivity) c.priceSensitivity = quote.priceSensitivity;
+  if (quote.budgetAud != null) c.budgetAud = dec(quote.budgetAud);
+  if (quote.tenureMonths != null) c.tenureMonths = `${quote.tenureMonths} month${quote.tenureMonths === 1 ? '' : 's'}`;
+  if (quote.clientMustHaves) c.clientMustHaves = quote.clientMustHaves;
+  if (quote.needsSolutionsEngineer != null) c.needsSolutionsEngineer = quote.needsSolutionsEngineer ? 'Yes' : 'No';
+  return Object.keys(c).length > 0 ? c : null;
+};
+
 /** PM handoff (P1-18.5): execution-focused subset of the approved quote. */
 export const buildPmHandoff = (quote: QuoteWithChildren) => ({
   jobReference: quote.jobReference,
@@ -281,6 +296,8 @@ export const buildPmHandoff = (quote: QuoteWithChildren) => ({
   siteContext: buildSiteContext(quote),
   // Software & hardware dependencies (AA5): quote-level dependency intake; omitted when none captured.
   dependencies: buildDependencies(quote),
+  // Commercial intake (AA6a): price sensitivity, budget, tenure, client must-haves; omitted when none.
+  commercial: buildCommercial(quote),
   // Assumptions & risks register (T4): assumptions reuse terms (kind=assumption); risks are manual.
   assumptions: quote.terms.filter((t) => t.kind === 'assumption').map((t) => t.text),
   risks: sortedRisks(quote).map((r) => ({

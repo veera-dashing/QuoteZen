@@ -67,6 +67,10 @@ interface Quote {
   mediaPlayerSupply?: string | null; sharedDevicePlayers?: number | null; sharedDeviceScreens?: number | null;
   storeSizeSqm?: string | null; customContentCuration?: boolean | null;
   pcRequired?: boolean | null; hardDriveRequired?: boolean | null;
+  // AA6a — commercial intake fields (Group F). Descriptive/advisory; no pricing impact.
+  priceSensitivity?: 'budget' | 'balanced' | 'premium' | null;
+  budgetAud?: string | null; tenureMonths?: number | null;
+  clientMustHaves?: string | null; needsSolutionsEngineer?: boolean | null;
   discountPct?: string | null; // stored as a fraction 0..1
   discountNote?: string | null; // manager justification, required above 5%
   discountScope?: 'one_off' | 'recurring' | null; // U5 — upfront vs every renewal
@@ -411,6 +415,16 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   const [customContentCuration, setCustomContentCuration] = useState<boolean>(quote?.customContentCuration ?? false);
   const [pcRequired, setPcRequired] = useState<boolean>(quote?.pcRequired ?? false);
   const [hardDriveRequired, setHardDriveRequired] = useState<boolean>(quote?.hardDriveRequired ?? false);
+  // AA6a — commercial intake fields (Group F).
+  const [priceSensitivity, setPriceSensitivity] = useState(quote?.priceSensitivity ?? '');
+  const [budgetAud, setBudgetAud] = useState(
+    quote?.budgetAud != null && quote.budgetAud !== '' ? String(quote.budgetAud) : '',
+  );
+  const [tenureMonths, setTenureMonths] = useState(
+    quote?.tenureMonths != null ? String(quote.tenureMonths) : '',
+  );
+  const [clientMustHaves, setClientMustHaves] = useState(quote?.clientMustHaves ?? '');
+  const [needsSolutionsEngineer, setNeedsSolutionsEngineer] = useState<boolean>(quote?.needsSolutionsEngineer ?? false);
   const [discountPctInput, setDiscountPctInput] = useState(
     quote?.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
   );
@@ -515,6 +529,12 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       customContentCuration,
       pcRequired,
       hardDriveRequired,
+      // AA6a — commercial intake fields (null clears; needsSolutionsEngineer is a boolean flag).
+      priceSensitivity: priceSensitivity || null,
+      budgetAud: budgetAud.trim() === '' ? null : Number(budgetAud),
+      tenureMonths: tenureMonths.trim() === '' ? null : Number(tenureMonths),
+      clientMustHaves: clientMustHaves.trim() ? clientMustHaves.trim() : null,
+      needsSolutionsEngineer,
       discountPct: discountPctInput.trim() === '' ? null : Number(discountPctInput) / 100,
       discountNote: discountNote.trim() ? discountNote.trim() : null,
       discountScope,
@@ -545,7 +565,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
     } finally {
       setBusy(false);
     }
-  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, endCustomer, airsideLandside, sunExposure, wallSubstrate, powerDataAvailable, controllerLocation, windowFacing, mediaPlayerSupply, sharedDevicePlayers, sharedDeviceScreens, storeSizeSqm, customContentCuration, pcRequired, hardDriveRequired, discountPctInput, discountNote, discountScope, onChange]);
+  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, endCustomer, airsideLandside, sunExposure, wallSubstrate, powerDataAvailable, controllerLocation, windowFacing, mediaPlayerSupply, sharedDevicePlayers, sharedDeviceScreens, storeSizeSqm, customContentCuration, pcRequired, hardDriveRequired, priceSensitivity, budgetAud, tenureMonths, clientMustHaves, needsSolutionsEngineer, discountPctInput, discountNote, discountScope, onChange]);
 
   const save = persist;
 
@@ -837,6 +857,44 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
         </label>
       </div>
 
+      {/* AA6a — commercial intake (Group F). Advisory only; emphasises the matching G/B/B tier + feeds the PM handoff. */}
+      <h4 style={{ margin: '18px 0 4px' }}>Commercial</h4>
+      <p className="muted" style={{ marginTop: 0 }}>Price posture, budget, tenure, and client must-haves (advisory — emphasises the matching Good/Better/Best tier and feeds the PM handoff; no pricing effect).</p>
+      <div className="grid3">
+        <div>
+          <label>Price sensitivity</label>
+          <SearchSelect
+            value={priceSensitivity}
+            onChange={(v) => { setPriceSensitivity(v as 'budget' | 'balanced' | 'premium' | ''); setDirty(true); }}
+            allowEmpty
+            placeholder="—"
+            options={[
+              { value: 'budget', label: 'Budget' },
+              { value: 'balanced', label: 'Balanced' },
+              { value: 'premium', label: 'Premium' },
+            ]}
+          />
+        </div>
+        <div>
+          <label>Budget (AUD)</label>
+          <input type="number" min={0} step="0.01" value={budgetAud} onChange={(e) => { setBudgetAud(e.target.value); setDirty(true); }} placeholder="indicative" />
+        </div>
+        <div>
+          <label>Tenure (months)</label>
+          <input type="number" min={0} value={tenureMonths} onChange={(e) => { setTenureMonths(e.target.value); setDirty(true); }} placeholder="e.g. 36" />
+        </div>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <label>Client must-haves</label>
+        <textarea rows={2} value={clientMustHaves} onChange={(e) => { setClientMustHaves(e.target.value); setDirty(true); }} placeholder="Assumed-but-not-separately-quoted requirements (folded into the register)." />
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={needsSolutionsEngineer} onChange={(e) => { setNeedsSolutionsEngineer(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
+          Needs solutions engineer
+        </label>
+      </div>
+
       {viewers.length > 0 && (
         <div style={{ marginTop: 12 }}>
           <label>Share with viewers (read-only access)</label>
@@ -932,6 +990,14 @@ interface TierOption extends ConfigOption {
   supplyCostAud: string | null;
   supplySellAud: string;
   margin: string | null;
+}
+
+// AA6a — commercial recommendation hints returned alongside G/B/B tiers (LED + LCD). Advisory
+// labelling only: the client's typical-selection caption + which tier matches the price sensitivity.
+interface CommercialHints {
+  typicalSelectionNote: string | null;
+  priceSensitivity: 'budget' | 'balanced' | 'premium' | null;
+  emphasisTier: 'value' | 'recommended' | 'premium' | null;
 }
 
 // The optional LED option/service lookups: each is its own admin CRUD table, served by
@@ -1244,6 +1310,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const [tiers, setTiers] = useState<TierOption[] | null>(null);
   const [tierReasons, setTierReasons] = useState<string[]>([]);
   const [distinctProducts, setDistinctProducts] = useState(0);
+  // AA6a — commercial recommendation hints (client typical-selection note + price-sensitivity emphasis).
+  const [commercialHints, setCommercialHints] = useState<CommercialHints | null>(null);
   // U8: the option currently shown in the read-only cabinet-preview modal (null = closed).
   const [preview, setPreview] = useState<PreviewOption | null>(null);
   // The "Screen selection" accordion is open until a product is selected, then collapses to a
@@ -1405,13 +1473,14 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     setBusy(true);
     setErr(null);
     try {
-      const res = await api<{ options: TierOption[]; reasons: string[]; distinctProducts: number; toleranceBands?: number[] }>(
+      const res = await api<{ options: TierOption[]; reasons: string[]; distinctProducts: number; toleranceBands?: number[]; commercialHints?: CommercialHints }>(
         `/quotes/${quote.id}/screens/options`,
         { method: 'POST', body: JSON.stringify(selectionBody()) },
       );
       setTiers(res.options);
       setTierReasons(res.reasons);
       setDistinctProducts(res.distinctProducts);
+      setCommercialHints(res.commercialHints ?? null);
       // Best-fit and Good/Better/Best are mutually exclusive views — showing one hides the other.
       setOptions(null);
       setReasons([]);
@@ -1707,20 +1776,40 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                 comparison; install, frame and components are added when you place the screen.
               </p>
               <div className="grid3" style={{ alignItems: 'stretch' }}>
-                {shownTiers.map((t) => (
+                {shownTiers.map((t) => {
+                  const emphasised = commercialHints?.emphasisTier === t.tier;
+                  return (
                   <div
                     key={t.tier}
                     className="card"
                     style={{
                       margin: 0,
-                      borderColor: t.tier === 'recommended' ? 'var(--accent, #4f46e5)' : undefined,
-                      borderWidth: t.tier === 'recommended' ? 2 : undefined,
+                      borderColor: t.tier === 'recommended' || emphasised ? 'var(--accent, #4f46e5)' : undefined,
+                      borderWidth: t.tier === 'recommended' || emphasised ? 2 : undefined,
                     }}
                   >
                     <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>
                       {t.label}
+                      {emphasised && (
+                        <span
+                          title={`Matches the client's ${commercialHints?.priceSensitivity} price sensitivity`}
+                          style={{
+                            marginLeft: 6, padding: '0 6px', borderRadius: 10, fontSize: 10, fontWeight: 700,
+                            textTransform: 'none', letterSpacing: 0,
+                            background: 'var(--accent-bg, rgba(79,70,229,0.12))', color: 'var(--accent, #4f46e5)',
+                            cursor: 'help', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Matches price sensitivity
+                        </span>
+                      )}
                     </div>
                     <p className="muted" style={{ marginTop: 0 }}>{t.rationale}</p>
+                    {t.tier === 'recommended' && commercialHints?.typicalSelectionNote && (
+                      <p className="muted" style={{ marginTop: 0, fontStyle: 'italic' }}>
+                        Client typically selects: {commercialHints.typicalSelectionNote}
+                      </p>
+                    )}
                     <div style={{ fontWeight: 600 }}>
                       {t.model}{t.rotated ? ' (rot)' : ''}
                       {t.gobRecommended && (
@@ -1780,7 +1869,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                       </button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </>
           )}
@@ -2158,6 +2248,8 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   // AA3b — LCD Good/Better/Best: 2–3 display picks at different price points.
   const [lcdTiers, setLcdTiers] = useState<LcdTierOption[] | null>(null);
   const [lcdTierReasons, setLcdTierReasons] = useState<string[]>([]);
+  // AA6a — commercial recommendation hints for the LCD tier cards.
+  const [lcdCommercialHints, setLcdCommercialHints] = useState<CommercialHints | null>(null);
   const [targetSizeIn, setTargetSizeIn] = useState('');
 
   useEffect(() => {
@@ -2193,12 +2285,13 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     try {
       const body: Record<string, unknown> = {};
       if (targetSizeIn.trim() !== '') body.targetSizeIn = Number(targetSizeIn);
-      const res = await api<{ options: LcdTierOption[]; reasons: string[]; distinctProducts: number }>(
+      const res = await api<{ options: LcdTierOption[]; reasons: string[]; distinctProducts: number; commercialHints?: CommercialHints }>(
         `/quotes/${quote.id}/lcd-options`,
         { method: 'POST', body: JSON.stringify(body) },
       );
       setLcdTiers(res.options);
       setLcdTierReasons(res.reasons);
+      setLcdCommercialHints(res.commercialHints ?? null);
     } finally {
       setBusy(false);
     }
@@ -2398,20 +2491,40 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
           <>
             {lcdTierReasons.length > 0 && <p className="muted">{lcdTierReasons.join(' ')}</p>}
             <div className="grid3" style={{ alignItems: 'stretch' }}>
-              {lcdTiers.map((t) => (
+              {lcdTiers.map((t) => {
+                const emphasised = lcdCommercialHints?.emphasisTier === t.tier;
+                return (
                 <div
                   key={t.tier}
                   className="card"
                   style={{
                     margin: 0,
-                    borderColor: t.tier === 'recommended' ? 'var(--accent, #4f46e5)' : undefined,
-                    borderWidth: t.tier === 'recommended' ? 2 : undefined,
+                    borderColor: t.tier === 'recommended' || emphasised ? 'var(--accent, #4f46e5)' : undefined,
+                    borderWidth: t.tier === 'recommended' || emphasised ? 2 : undefined,
                   }}
                 >
                   <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>
                     {t.label}
+                    {emphasised && (
+                      <span
+                        title={`Matches the client's ${lcdCommercialHints?.priceSensitivity} price sensitivity`}
+                        style={{
+                          marginLeft: 6, padding: '0 6px', borderRadius: 10, fontSize: 10, fontWeight: 700,
+                          textTransform: 'none', letterSpacing: 0,
+                          background: 'var(--accent-bg, rgba(79,70,229,0.12))', color: 'var(--accent, #4f46e5)',
+                          cursor: 'help', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Matches price sensitivity
+                      </span>
+                    )}
                   </div>
                   <p className="muted" style={{ marginTop: 0 }}>{t.rationale}</p>
+                  {t.tier === 'recommended' && lcdCommercialHints?.typicalSelectionNote && (
+                    <p className="muted" style={{ marginTop: 0, fontStyle: 'italic' }}>
+                      Client typically selects: {lcdCommercialHints.typicalSelectionNote}
+                    </p>
+                  )}
                   <div style={{ fontWeight: 600 }}>{t.model}</div>
                   <table style={{ width: '100%', fontSize: 13, margin: '8px 0' }}>
                     <tbody>
@@ -2430,7 +2543,8 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                     Use this option
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}

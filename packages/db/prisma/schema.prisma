@@ -794,6 +794,11 @@ model Client {
    * restriction.
    */
   allowedRatios          String?  @map("allowed_ratios")
+  /**
+   * AA6a — free-text "this customer typically selects…" note, surfaced on the recommended G/B/B tier
+   * card so estimators see the client's usual choice. Advisory caption only; no pricing effect.
+   */
+  typicalSelectionNote   String?  @map("typical_selection_note")
   /** Z6: rule-bearing tier resolved by name (clients.tier → client_tiers.name). */
   clientTier             ClientTier? @relation("ClientTierByName", fields: [tier], references: [name])
 
@@ -893,6 +898,18 @@ model Quote {
   pcRequired            Boolean?    @map("pc_required")
   /** A hard-drive dependency. */
   hardDriveRequired     Boolean?    @map("hard_drive_required")
+  // AA6a — commercial intake fields (Group F, no-pricing-risk parts). Descriptive/advisory only; they
+  // drive recommendation emphasis + advisory findings + the PM handoff — never pricing math.
+  /** Client's price posture: 'budget' | 'balanced' | 'premium' — emphasises the matching G/B/B tier. */
+  priceSensitivity      String?     @map("price_sensitivity")
+  /** Indicative budget (AUD) — captured for context (advisory; not a pricing input). */
+  budgetAud             Decimal?    @map("budget_aud") @db.Decimal(12, 2)
+  /** Expected engagement tenure (months) — commercial context. */
+  tenureMonths          Int?        @map("tenure_months")
+  /** Free-text "must have" requirements — folded into the assumptions/register as assumed-but-not-quoted. */
+  clientMustHaves       String?     @map("client_must_haves")
+  /** Whether a solutions engineer review is requested (also triggered by a large screen count). */
+  needsSolutionsEngineer Boolean?   @map("needs_solutions_engineer")
   /** Soft-delete / archive timestamp (P1-05.1); null = active. The row is never hard-deleted. */
   archivedAt            DateTime?   @map("archived_at")
   estimatedCost         Decimal?    @map("estimated_cost") @db.Decimal(12, 2)

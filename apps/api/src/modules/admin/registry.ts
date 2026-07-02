@@ -334,6 +334,7 @@ export const TABLES: TableDef[] = [
       f('preferredProductFamily'),
       f('preferredPitchMm', 'decimal'), f('excludedComponents'),
       f('allowedRatios'),
+      f('typicalSelectionNote', 'text'),
       f('preferredFreight'), f('rulesNote', 'text'), f('marginNote', 'text'),
       f('ledScreenNote', 'text'), f('gobNote', 'text'), f('mediaplayerNote', 'text'), f('ratioNote', 'text'),
     ],

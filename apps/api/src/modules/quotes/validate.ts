@@ -11,6 +11,7 @@ import {
 import { getQuote } from './service.js';
 import { loadRatios } from './outputs.js';
 import { evaluateAnomalies, type AnomalyFinding } from './anomaly.js';
+import { evaluateCommercialAdvisories } from './advisories.js';
 import type { QuoteWithChildren } from './repository.js';
 
 /**
@@ -175,7 +176,13 @@ export const validateQuote = async (id: bigint): Promise<QuoteValidation> => {
 
   // Z4 — configurable anomaly rules (DB-driven; disabled rules produce nothing). Their severity is
   // already 'error' | 'warning' (block → error, warn → warning), so they fold into the same tallies.
-  const anomalies = await evaluateAnomalies(quote);
+  // AA6a — commercial-intake advisories (solutions-engineer review + freight-mode). Always warning/
+  // info, NEVER blocking; concatenated into the same `anomalies` list so the Review card renders them.
+  const [z4Anomalies, advisories] = await Promise.all([
+    evaluateAnomalies(quote),
+    evaluateCommercialAdvisories(quote),
+  ]);
+  const anomalies = [...z4Anomalies, ...advisories];
 
   const screenFindings = screens.flatMap((s) => s.findings);
   const counts = {

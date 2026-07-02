@@ -77,9 +77,12 @@ export const replaceRisks = async (
  * kind=assumption) + risks, in one payload so the client need not stitch two calls.
  */
 export const getRegister = async (id: bigint): Promise<{ assumptions: string[]; risks: QuoteRiskOut[] }> => {
-  const [terms, risks] = await Promise.all([getTerms(id), getRisks(id)]);
-  return {
-    assumptions: terms.filter((t) => t.kind === 'assumption').map((t) => t.text),
-    risks,
-  };
+  const [quote, terms, risks] = await Promise.all([getQuote(id), getTerms(id), getRisks(id)]);
+  const assumptions = terms.filter((t) => t.kind === 'assumption').map((t) => t.text);
+  // AA6a — the client's "must haves" are assumed-but-never-quoted requirements: fold them into the
+  // register as an assumption line so they aren't lost between intake and proposal.
+  if (quote.clientMustHaves) {
+    assumptions.push(`Client must-haves (assumed, not separately quoted): ${quote.clientMustHaves}`);
+  }
+  return { assumptions, risks };
 };

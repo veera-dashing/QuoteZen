@@ -79,6 +79,9 @@ const SETTINGS: Array<{ key: string; label: string; value?: number; valueText?: 
   { key: 'lead_time_buffer_days', label: 'Lead-time Buffer (days)', value: 3, unit: 'days' }, // Added to vendor lead-time on every quote.
   { key: 'aud_usd_rate', label: 'AUD:USD Assumption', value: 0.71, unit: 'rate' }, // Auto-fed from RBA daily (manual for now).
   { key: 'human_in_the_loop', label: 'Human-in-the-loop', value: 1, unit: 'bool' }, // AI never emails client directly (1 = on).
+  // AA6a — total screen count (LED + LCD) above which a solutions-engineer review is advised
+  // (SOLUTIONS_ENGINEER_REVIEW). Advisory warning only; never blocks. Admin-editable.
+  { key: 'solutions_engineer_screen_threshold', label: 'Solutions Engineer Screen Threshold', value: 10, unit: 'count' },
 ];
 
 // ─── U0: hardware manufacturers (normalised from led_products.vendor) ─────────

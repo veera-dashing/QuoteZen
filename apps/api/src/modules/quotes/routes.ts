@@ -403,7 +403,7 @@ export const quoteRoutes = async (
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const body = parse(lcdOptionsSchema, request.body ?? {});
-    return lcdOptionsForQuote(body, actor(request).role === 'admin');
+    return lcdOptionsForQuote(id, body, actor(request).role === 'admin');
   });
 
   // ── Child line items (wizard steps) ──

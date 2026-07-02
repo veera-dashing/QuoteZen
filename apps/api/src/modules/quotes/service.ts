@@ -61,6 +61,11 @@ const QUOTE_HEADER_FIELDS = [
   'customContentCuration',
   'pcRequired',
   'hardDriveRequired',
+  'priceSensitivity',
+  'budgetAud',
+  'tenureMonths',
+  'clientMustHaves',
+  'needsSolutionsEngineer',
 ] as const;
 
 const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toString() : '0');
@@ -180,6 +185,11 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput, actor
         customContentCuration: input.customContentCuration ?? null,
         pcRequired: input.pcRequired ?? null,
         hardDriveRequired: input.hardDriveRequired ?? null,
+        priceSensitivity: input.priceSensitivity ?? null,
+        budgetAud: input.budgetAud ?? null,
+        tenureMonths: input.tenureMonths ?? null,
+        clientMustHaves: input.clientMustHaves ?? null,
+        needsSolutionsEngineer: input.needsSolutionsEngineer ?? null,
         createdById: userId,
         viewers: input.viewerUserIds?.length
           ? { create: input.viewerUserIds.map((uid) => ({ userId: BigInt(uid) })) }
@@ -382,6 +392,11 @@ export const updateQuote = async (
   if (input.customContentCuration !== undefined) data.customContentCuration = input.customContentCuration;
   if (input.pcRequired !== undefined) data.pcRequired = input.pcRequired;
   if (input.hardDriveRequired !== undefined) data.hardDriveRequired = input.hardDriveRequired;
+  if (input.priceSensitivity !== undefined) data.priceSensitivity = input.priceSensitivity;
+  if (input.budgetAud !== undefined) data.budgetAud = input.budgetAud;
+  if (input.tenureMonths !== undefined) data.tenureMonths = input.tenureMonths;
+  if (input.clientMustHaves !== undefined) data.clientMustHaves = input.clientMustHaves;
+  if (input.needsSolutionsEngineer !== undefined) data.needsSolutionsEngineer = input.needsSolutionsEngineer;
   if (input.currencyCode !== undefined) {
     const currency = await findCurrencyByCode(input.currencyCode);
     if (!currency) throw notFound('Currency', input.currencyCode);

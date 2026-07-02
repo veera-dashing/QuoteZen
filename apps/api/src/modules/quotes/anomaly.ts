@@ -17,10 +17,14 @@ import { resolveModedDiscount, getDefaultDiscountPct } from './service.js';
  * rule therefore only ever fires on data it could fully evaluate.
  */
 
-/** A single anomaly finding — quote-level, optionally tied to a screen. */
+/**
+ * A single anomaly finding — quote-level, optionally tied to a screen. `severity` covers the Z4
+ * anomaly rules ('error' | 'warning') plus AA6a advisories which may be purely informational ('info',
+ * never blocking, not tallied as a warning). Z4's own findings only ever use 'error' | 'warning'.
+ */
 export interface AnomalyFinding {
   rule: string;
-  severity: 'error' | 'warning';
+  severity: 'error' | 'warning' | 'info';
   message: string;
   /** The LED/LCD screen id this finding relates to (when the rule is per-screen). */
   screenId?: string;

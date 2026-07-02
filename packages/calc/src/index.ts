@@ -9,5 +9,6 @@ export * from './descriptions.js';
 export * from './lines.js';
 export * from './led.js';
 export * from './install.js';
+export * from './freight.js';
 export * from './licence.js';
 export * from './quote.js';

@@ -275,14 +275,45 @@ export interface TierOption {
   margin: string | null;
 }
 
+/**
+ * AA6a — the client's/quote's commercial recommendation hints, returned alongside G/B/B tiers so the
+ * web can (a) show a "Client typically selects…" caption on the recommended tier and (b) emphasise the
+ * tier matching the quote's price sensitivity. Advisory/labelling only — it does NOT reorder or reprice.
+ * `emphasisTier` maps price sensitivity → the tier to highlight (budget→value, premium→premium,
+ * balanced→recommended; null when unset).
+ */
+export interface CommercialHints {
+  typicalSelectionNote: string | null;
+  priceSensitivity: 'budget' | 'balanced' | 'premium' | null;
+  emphasisTier: 'value' | 'recommended' | 'premium' | null;
+}
+
+const SENSITIVITY_TO_TIER: Record<string, CommercialHints['emphasisTier']> = {
+  budget: 'value',
+  balanced: 'recommended',
+  premium: 'premium',
+};
+
+/** Build the commercial recommendation hints from a loaded quote (client note + quote sensitivity). */
+export const commercialHintsOf = (quote: Awaited<ReturnType<typeof getQuote>>): CommercialHints => {
+  const sensitivity = (quote.priceSensitivity as CommercialHints['priceSensitivity']) ?? null;
+  return {
+    typicalSelectionNote: quote.client?.typicalSelectionNote ?? null,
+    priceSensitivity: sensitivity,
+    emphasisTier: sensitivity ? (SENSITIVITY_TO_TIER[sensitivity] ?? null) : null,
+  };
+};
+
 export const optionsForQuote = async (
   quoteId: bigint,
   input: ConfigureInput,
   showCost: boolean,
-): Promise<{ options: TierOption[]; reasons: string[]; distinctProducts: number }> => {
+): Promise<{ options: TierOption[]; reasons: string[]; distinctProducts: number; commercialHints: CommercialHints }> => {
+  const quote = await getQuote(quoteId);
+  const commercialHints = commercialHintsOf(quote);
   const ranked = await configureForQuote(quoteId, input);
   if (ranked.options.length === 0) {
-    return { options: [], reasons: ranked.reasons, distinctProducts: 0 };
+    return { options: [], reasons: ranked.reasons, distinctProducts: 0, commercialHints };
   }
 
   // Lookups for the pure tier selector (keyed by productId — the config engine stringifies ids).
@@ -366,7 +397,7 @@ export const optionsForQuote = async (
     };
   });
 
-  return { options, reasons: ranked.reasons, distinctProducts: selection.distinctProducts };
+  return { options, reasons: ranked.reasons, distinctProducts: selection.distinctProducts, commercialHints };
 };
 
 /**
@@ -399,9 +430,13 @@ export interface LcdTierOption {
 }
 
 export const lcdOptionsForQuote = async (
+  quoteId: bigint,
   input: { targetSizeIn?: number | null; category?: string | null },
   showCost: boolean,
-): Promise<{ options: LcdTierOption[]; reasons: string[]; distinctProducts: number }> => {
+): Promise<{ options: LcdTierOption[]; reasons: string[]; distinctProducts: number; commercialHints: CommercialHints }> => {
+  // AA6a — surface the client's typical-selection note + the quote's price sensitivity for tier labelling.
+  const quote = await getQuote(quoteId);
+  const commercialHints = commercialHintsOf(quote);
   const rows = await prisma.displayCatalog.findMany({
     where: { deprecated: false },
     orderBy: { id: 'asc' },
@@ -432,7 +467,7 @@ export const lcdOptionsForQuote = async (
         ? `No active displays in category matching "${input.category}" with a sell price.`
         : 'No active display/screen products with a sell price in the catalogue.',
     );
-    return { options: [], reasons, distinctProducts: 0 };
+    return { options: [], reasons, distinctProducts: 0, commercialHints };
   }
 
   const selection = selectLcdTiers(candidates, { targetSizeIn: input.targetSizeIn ?? null });
@@ -456,7 +491,7 @@ export const lcdOptionsForQuote = async (
   if (selection.distinctProducts < 3) {
     reasons.push(`Only ${selection.distinctProducts} distinct product(s) available — some tiers reuse the same display.`);
   }
-  return { options, reasons, distinctProducts: selection.distinctProducts };
+  return { options, reasons, distinctProducts: selection.distinctProducts, commercialHints };
 };
 
 interface LedScreenPricing {
