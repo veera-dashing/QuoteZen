@@ -2,6 +2,7 @@ export * from './constants.js';
 export * from './currency.js';
 export * from './geometry.js';
 export * from './config.js';
+export * from './lcd-tiers.js';
 export * from './controller.js';
 export * from './validation.js';
 export * from './descriptions.js';

@@ -1795,6 +1795,20 @@ const LCD_MANUAL_TEMPLATES: Record<string, Array<{ description: string; unitCost
 
 interface LcdLine { sectionKey: string; itemType: LcdItemType; displayId?: string; description: string; qty: number; unitCost?: number; manual: boolean }
 
+// AA3b — LCD Good/Better/Best tier option (display pick at a price point; cost/margin admin-only).
+interface LcdTierOption {
+  tier: 'value' | 'recommended' | 'premium';
+  label: string;
+  rationale: string;
+  displayId: string;
+  model: string;
+  brand: string | null;
+  sizeIn: number | null;
+  sellAud: string;
+  costAud: string | null;
+  margin: string | null;
+}
+
 function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quote; onChange: () => Promise<void>; editScreen?: LcdScreen; onCancelEdit?: () => void }) {
   const isEditing = !!editScreen;
   const [catalog, setCatalog] = useState<Opt[]>([]);
@@ -1842,6 +1856,10 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const [pick, setPick] = useState<Record<string, string>>({});
   const [pickQty, setPickQty] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  // AA3b — LCD Good/Better/Best: 2–3 display picks at different price points.
+  const [lcdTiers, setLcdTiers] = useState<LcdTierOption[] | null>(null);
+  const [lcdTierReasons, setLcdTierReasons] = useState<string[]>([]);
+  const [targetSizeIn, setTargetSizeIn] = useState('');
 
   useEffect(() => {
     api<{ rows: Opt[] }>('/admin/display-catalog?take=500&activeOnly=true').then((r) => setCatalog(r.rows));
@@ -1870,6 +1888,34 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     setPick((p) => ({ ...p, [def.key]: '' }));
     setPickQty((q) => ({ ...q, [def.key]: '1' }));
   };
+  // AA3b — fetch 2–3 display tiers (Value/Recommended/Premium) at different price points.
+  const loadLcdTiers = async () => {
+    setBusy(true);
+    try {
+      const body: Record<string, unknown> = {};
+      if (targetSizeIn.trim() !== '') body.targetSizeIn = Number(targetSizeIn);
+      const res = await api<{ options: LcdTierOption[]; reasons: string[]; distinctProducts: number }>(
+        `/quotes/${quote.id}/lcd-options`,
+        { method: 'POST', body: JSON.stringify(body) },
+      );
+      setLcdTiers(res.options);
+      setLcdTierReasons(res.reasons);
+    } finally {
+      setBusy(false);
+    }
+  };
+  // "Use this option" — set the chosen tier's display as the Display line, then close the compare view.
+  const useLcdOption = (t: LcdTierOption) => {
+    const displayDef = LCD_SECTIONS.find((d) => d.itemType === 'display')!;
+    setLines((ls) => [
+      // Replace any existing catalog display line so the chosen tier is the display for this screen.
+      ...ls.filter((l) => !(l.itemType === 'display' && !l.manual)),
+      { sectionKey: displayDef.key, itemType: 'display', displayId: t.displayId, description: t.model, qty: 1, manual: false },
+    ]);
+    setLcdTiers(null);
+    setLcdTierReasons([]);
+  };
+
   const addManual = (def: LcdSectionDef, tpl?: { description: string; unitCost: number }) => {
     setLines((ls) => [
       ...ls,
@@ -2033,6 +2079,61 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         </div>
         {outOfHours && (
           <p className="muted" style={{ marginBottom: 0 }}>Out-of-hours service hours selected — an out-of-hours labour uplift will be added on save (F31).</p>
+        )}
+      </div>
+
+      {/* AA3b — Good/Better/Best display comparison ("we recommend the Philips, but here's a cheaper option"). */}
+      <div className="card">
+        <div className="list-row" style={{ alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ maxWidth: 180 }}>
+            <label>Target size (in)</label>
+            <input type="number" min={0} value={targetSizeIn} onChange={(e) => setTargetSizeIn(e.target.value)} placeholder="optional" />
+          </div>
+          <button type="button" onClick={loadLcdTiers} disabled={busy}>Compare options (Good/Better/Best)</button>
+          {lcdTiers && <button type="button" className="ghost" onClick={() => { setLcdTiers(null); setLcdTierReasons([]); }}>Hide comparison</button>}
+        </div>
+        {lcdTiers && lcdTiers.length === 0 && (
+          <p className="muted" style={{ marginBottom: 0 }}>No display options{lcdTierReasons.length ? `: ${lcdTierReasons.join(' ')}` : '.'}</p>
+        )}
+        {lcdTiers && lcdTiers.length > 0 && (
+          <>
+            {lcdTierReasons.length > 0 && <p className="muted">{lcdTierReasons.join(' ')}</p>}
+            <div className="grid3" style={{ alignItems: 'stretch' }}>
+              {lcdTiers.map((t) => (
+                <div
+                  key={t.tier}
+                  className="card"
+                  style={{
+                    margin: 0,
+                    borderColor: t.tier === 'recommended' ? 'var(--accent, #4f46e5)' : undefined,
+                    borderWidth: t.tier === 'recommended' ? 2 : undefined,
+                  }}
+                >
+                  <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>
+                    {t.label}
+                  </div>
+                  <p className="muted" style={{ marginTop: 0 }}>{t.rationale}</p>
+                  <div style={{ fontWeight: 600 }}>{t.model}</div>
+                  <table style={{ width: '100%', fontSize: 13, margin: '8px 0' }}>
+                    <tbody>
+                      <tr><td className="muted">Brand</td><td>{t.brand ?? '—'}</td></tr>
+                      <tr><td className="muted">Size (in)</td><td>{t.sizeIn != null ? t.sizeIn : '—'}</td></tr>
+                      <tr><td className="muted">Sell</td><td>${Number(t.sellAud).toLocaleString()}</td></tr>
+                      {isAdmin && (
+                        <>
+                          <tr><td className="muted">Cost</td><td>{t.costAud ? `$${Number(t.costAud).toLocaleString()}` : '—'}</td></tr>
+                          <tr><td className="muted">Margin</td><td>{t.margin ? `${(Number(t.margin) * 100).toFixed(1)}%` : '—'}</td></tr>
+                        </>
+                      )}
+                    </tbody>
+                  </table>
+                  <button className="primary" onClick={() => useLcdOption(t)} disabled={busy} style={{ width: '100%' }}>
+                    Use this option
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
 

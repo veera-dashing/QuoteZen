@@ -63,6 +63,7 @@ import {
   addLicence,
   configureForQuote,
   optionsForQuote,
+  lcdOptionsForQuote,
   deleteLedScreen,
   duplicateLedScreen,
   reorderLedScreens,
@@ -95,6 +96,12 @@ const configureSchema = z.object({
   // W0: optional environment + viewing-distance filters (absent → unchanged behaviour).
   environment: z.enum(['indoor', 'outdoor']).optional(),
   viewingDistanceM: z.coerce.number().positive().optional(),
+});
+
+// AA3b: LCD Good/Better/Best — optional target size + category filter (all optional → catalogue-wide).
+const lcdOptionsSchema = z.object({
+  targetSizeIn: z.coerce.number().positive().optional(),
+  category: z.string().min(1).optional(),
 });
 
 const idParam = z.object({ id: z.coerce.bigint() });
@@ -389,6 +396,14 @@ export const quoteRoutes = async (
     await assertOwnership(id, actor(request));
     const body = parse(configureSchema, request.body);
     return optionsForQuote(id, body, actor(request).role === 'admin');
+  });
+
+  // ── LCD Good / Better / Best tiered options (AA3b): 2–3 display picks at different price points ──
+  app.post('/quotes/:id/lcd-options', auth, async (request) => {
+    const { id } = parse(idParam, request.params);
+    await assertOwnership(id, actor(request));
+    const body = parse(lcdOptionsSchema, request.body ?? {});
+    return lcdOptionsForQuote(body, actor(request).role === 'admin');
   });
 
   // ── Child line items (wizard steps) ──

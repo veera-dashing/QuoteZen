@@ -13,10 +13,12 @@ import {
   markupLine,
   packagingCost,
   receiverCardCost,
+  selectLcdTiers,
   selectTiers,
   sparesCost,
   type ConfigOption,
   type ConfigProduct,
+  type LcdCandidate,
   type PricedLine,
 } from '@quotezen/calc';
 import { applyMargin, applyMarkup, round } from '@quotezen/shared';
@@ -363,6 +365,96 @@ export const optionsForQuote = async (
   });
 
   return { options, reasons: ranked.reasons, distinctProducts: selection.distinctProducts };
+};
+
+/**
+ * LCD Good / Better / Best (Block AA3b — workshop rule #15 / gap 64: "we recommend the Philips, but
+ * here's a cheaper option"). The LCD analogue of {@link optionsForQuote}: LCD is fixed-size hardware
+ * (no config engine), so this loads active display/screen catalogue rows, maps them to candidates,
+ * and runs the pure {@link selectLcdTiers} — no DB writes, deterministic. Cost + margin are masked
+ * (null) for non-admin callers (BR-081), mirroring {@link optionsForQuote}'s `showCost` gating.
+ */
+/** display_catalog categories that are actual displays/screens (mirrors the web LcdStep display picker). */
+const LCD_DISPLAY_CATEGORY_MATCH = [
+  'indoor', 'outdoor', 'screen', 'video wall', 'touch', 'stretch', 'smartv', 'videri',
+  'projector', 'redback', 'high bright', 'all in one', 'commercial', 'malaysia',
+];
+
+export interface LcdTierOption {
+  tier: 'value' | 'recommended' | 'premium';
+  label: string;
+  rationale: string;
+  displayId: string;
+  model: string;
+  brand: string | null;
+  sizeIn: number | null;
+  /** Sell price (AUD) — always visible. */
+  sellAud: string;
+  /** Supply cost (AUD) — masked (null) for non-admin callers (BR-081). */
+  costAud: string | null;
+  /** Margin on the sell figure (0..1) — admin-only (cost-derived). */
+  margin: string | null;
+}
+
+export const lcdOptionsForQuote = async (
+  input: { targetSizeIn?: number | null; category?: string | null },
+  showCost: boolean,
+): Promise<{ options: LcdTierOption[]; reasons: string[]; distinctProducts: number }> => {
+  const rows = await prisma.displayCatalog.findMany({
+    where: { deprecated: false },
+    orderBy: { id: 'asc' },
+  });
+  const wanted = input.category?.toLowerCase().trim();
+  const candidates: LcdCandidate[] = rows
+    .filter((r) => {
+      const c = (r.category ?? '').toLowerCase();
+      if (wanted) return c.includes(wanted);
+      return LCD_DISPLAY_CATEGORY_MATCH.some((m) => c.includes(m));
+    })
+    .map((r) => ({
+      id: r.id.toString(),
+      model: r.model,
+      brand: r.brand,
+      sizeIn: r.sizeInch != null ? Number(r.sizeInch) : null,
+      costAud: Number(r.totalCost ?? r.usd ?? 0),
+      sellAud: Number(r.sell ?? 0),
+      category: r.category ?? null,
+    }))
+    // Need a real sell price to place a tier on price.
+    .filter((c) => c.sellAud > 0);
+
+  const reasons: string[] = [];
+  if (candidates.length === 0) {
+    reasons.push(
+      wanted
+        ? `No active displays in category matching "${input.category}" with a sell price.`
+        : 'No active display/screen products with a sell price in the catalogue.',
+    );
+    return { options: [], reasons, distinctProducts: 0 };
+  }
+
+  const selection = selectLcdTiers(candidates, { targetSizeIn: input.targetSizeIn ?? null });
+  const options: LcdTierOption[] = selection.picks.map((pick) => {
+    const c = pick.candidate;
+    const margin = c.sellAud > 0 ? (c.sellAud - c.costAud) / c.sellAud : 0;
+    return {
+      tier: pick.tier,
+      label: pick.label,
+      rationale: pick.rationale,
+      displayId: c.id,
+      model: c.model,
+      brand: c.brand,
+      sizeIn: c.sizeIn,
+      sellAud: round(c.sellAud).toString(),
+      costAud: showCost ? round(c.costAud).toString() : null,
+      margin: showCost ? round(margin, 4).toString() : null,
+    };
+  });
+
+  if (selection.distinctProducts < 3) {
+    reasons.push(`Only ${selection.distinctProducts} distinct product(s) available — some tiers reuse the same display.`);
+  }
+  return { options, reasons, distinctProducts: selection.distinctProducts };
 };
 
 interface LedScreenPricing {

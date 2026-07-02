@@ -726,3 +726,13 @@ Migration `aa3a_lcd_rules`: `display_catalog` gains `brand`, `built_in_android`,
 display), `LCD_BRACKET_SUBRANGE` (panel size outside the bracket's size range / portrait on a non-portrait bracket),
 `LCD_PC_DEPENDENCY` (needs-PC / needs-hard-drive flagged). LcdStep "Site requirements" block + admin `display-catalog`
 fields + PM handoff updated. 156 api tests green (+6 `aa3a-lcd-rules.test.ts`); typecheck + web build clean.
+
+### Block AA3b — LCD Good/Better/Best tiering (workshop rule #15, Group C part 2)
+LED's Good/Better/Best (T2) had no LCD analogue. `packages/calc/src/lcd-tiers.ts` `selectLcdTiers` picks value
+(cheapest sell) / recommended (closest to target size → preferred-brand Philips → lowest sell) / premium (dearest),
+distinct where possible, pure/deterministic. `POST /quotes/:id/lcd-options` (auth + ownership) runs it over active
+display-category `display_catalog` rows, cost + margin masked for non-admin (BR-081). Web LcdStep gains a "Compare
+options (Good/Better/Best)" button + tier cards + "Use this option" (sets the display line). No schema change
+(`display_catalog` already has sizeInch/sell/brand). 161 api tests green (+5); calc 124 (+8); typecheck + web build clean.
+Note: the display category includes accessory rows, so "value" can land on a low-cost accessory — the `category` param
+/ a size floor is the lever if we want value constrained to full panels.
