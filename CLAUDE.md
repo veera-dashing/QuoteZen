@@ -604,15 +604,16 @@ fresh `GET /auth/me`; `system` resolves against the OS).
   `[data-theme='light']` variable block; hardcoded on-accent text `#0f1115` → `var(--on-accent)` (near-black in dark,
   white in light) and the popover shadow → `var(--shadow)`, so both palettes read correctly. Accent stays the brand teal.
 
-### Block 17 — admin discount-cap override requires explicit confirmation (web)
+### Block 17 — admin discount-cap override: inline warning (not a hard stop) (web)
 The quote-level discount cap (`discount_cap_pct`, default 12%) is unchanged server-side: a non-admin above the cap
 is hard-stopped (403; the input also clamps), an admin may override with a manager note (audited `discount_guardrail`).
-Per UX decision, an admin exceeding the cap now must **explicitly confirm the override** in the quote Details step
-before it saves — it's no longer silent. `apps/web/app/quotes/[id]/page.tsx` `DetailsStep`: a `capAck` state records
-confirmation of the CURRENT over-cap value (re-armed on any discount edit); `handleSave` shows a `window.confirm`
-("…exceeds the N% cap … recorded in the audit log. Proceed?") for `isAdmin && overCap && !capAck` and only saves on
-OK; the debounced auto-save is suspended while the override is unconfirmed (so it can't slip through mid-typing); the
-field hint reflects the pending-confirmation state. Web-only — no schema/API change; the server remains the
+Per UX decision, an admin exceeding the cap is **not** stopped — instead a prominent **amber inline warning banner**
+flags it (so it isn't accidental) and the server audits the override. `apps/web/app/quotes/[id]/page.tsx` `DetailsStep`:
+when `isAdmin && overCap`, a warning renders under the discount fields ("⚠ This discount (N%) exceeds the 12% cap.
+You can proceed as an admin, but the override will be recorded in the audit log (a manager note is required)"); Save is
+NOT blocked and auto-save runs normally. (The earlier `window.confirm`/`capAck` gating was removed — a passive warning
+per user preference.) The `>5%` manager-note requirement still gates save (separate rule, server-enforced 422) and the
+warning mentions it. Non-admins remain hard-blocked. Web-only — no schema/API change; the server remains the
 enforcement boundary.
 
 ### Block 18 — per-model recommendation priority (admin-set, secondary ranking key)

@@ -172,13 +172,9 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   const overCap = discPctNum != null && discPctNum > capPct;
   const capBlocked = overCap && !isAdmin;
   const discountBlocked = needsNote || capBlocked;
-  // Admin cap override requires an explicit confirmation before it saves (still audited server-side).
-  // `capAck` records that the admin confirmed the CURRENT over-cap value; any edit re-arms it.
-  const [capAck, setCapAck] = useState(false);
-  const adminOverCapUnacked = isAdmin && overCap && !capAck;
-  // Non-admins can't type above the cap; admins may exceed it (confirmed + audited on save).
+  // Non-admins can't type above the cap (clamped). Admins MAY exceed it — no hard stop; a visible
+  // warning banner flags it (so it isn't accidental) and the server audits the override.
   const onDiscountChange = (raw: string) => {
-    setCapAck(false); // any change re-arms the override confirmation
     if (!isAdmin && raw.trim() !== '' && Number(raw) > capPct) { setDiscountPctInput(String(capPct)); setDirty(true); return; }
     setDiscountPctInput(raw); setDirty(true);
   };
@@ -282,16 +278,9 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
 
   const save = persist;
 
-  // Explicit Save/Create: an admin exceeding the cap must confirm the override first (audited on save).
+  // Save/Create. An admin over the cap is NOT hard-stopped — the inline warning banner flags it and the
+  // server audits the override; a non-admin over the cap is blocked (disabled button + server 403).
   const handleSave = () => {
-    if (adminOverCapUnacked) {
-      const ok = window.confirm(
-        `This discount (${discPctNum}%) exceeds the ${capPct}% cap. As an admin you can override it — ` +
-          `the override will be recorded in the audit log. Proceed?`,
-      );
-      if (!ok) return;
-      setCapAck(true);
-    }
     setDirty(false);
     void save();
   };
@@ -301,16 +290,15 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   // conflict is showing, auto-save is suspended until the user reloads (which resets dirty).
   useEffect(() => {
     // No auto-save in CREATE mode (nothing to PATCH yet — the user clicks "Create & continue").
-    // Suspend auto-save while the discount guardrail is unmet (missing note / over cap) so the user
-    // isn't hit with a mid-typing 422/403; the explicit Save still surfaces the server error. Also
-    // suspend while an admin over-cap override is unconfirmed — it must go through the Save confirmation.
-    if (isNew || !canWrite || !dirty || conflict || !jobReference || discountBlocked || adminOverCapUnacked) return;
+    // Suspend auto-save while the discount guardrail is unmet (missing note / non-admin over cap) so the
+    // user isn't hit with a mid-typing 422/403; the explicit Save still surfaces the server error.
+    if (isNew || !canWrite || !dirty || conflict || !jobReference || discountBlocked) return;
     const t = setTimeout(() => {
       setDirty(false);
       void persist();
     }, 1500);
     return () => clearTimeout(t);
-  }, [isNew, dirty, conflict, canWrite, jobReference, discountBlocked, adminOverCapUnacked, persist]);
+  }, [isNew, dirty, conflict, canWrite, jobReference, discountBlocked, persist]);
 
   // A viewer can't create a quote; guard the create route (the "+ New quote" button is writer-only).
   if (isNew && !canWrite) {
@@ -411,11 +399,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
           <p className="muted" style={{ margin: '4px 0 0', fontSize: 12, color: capBlocked ? 'var(--danger, #dc2626)' : undefined }}>
             {capBlocked
               ? `Exceeds the ${capPct}% cap — admin approval required.`
-              : isAdmin && overCap
-                ? `Above the ${capPct}% cap — you'll be asked to confirm the override (audited) on save.`
-                : isAdmin
-                  ? `Cap ${capPct}% (you can override with confirmation). Above ${noteThreshold}% requires a manager note.`
-                  : `Capped at ${capPct}%. Above ${noteThreshold}% requires a manager note.`}
+              : `Cap ${capPct}%. Above ${noteThreshold}% requires a manager note.`}
           </p>
         </div>
         <div>
@@ -426,6 +410,23 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
           </select>
         </div>
       </div>
+      {/* Admin over-cap: a visible warning (not a hard stop) so it isn't done accidentally; audited on save. */}
+      {isAdmin && overCap && (
+        <div
+          style={{
+            marginTop: 10,
+            padding: '8px 12px',
+            borderRadius: 6,
+            border: '1px solid #f59e0b',
+            background: 'rgba(245,158,11,0.12)',
+            color: '#f59e0b',
+            fontSize: 13,
+          }}
+        >
+          ⚠ This discount ({discPctNum}%) exceeds the {capPct}% cap. You can proceed as an admin, but the
+          override will be recorded in the audit log{discPctNum != null && discPctNum > noteThreshold ? ' (a manager note is required)' : ''}.
+        </div>
+      )}
       {discPctNum != null && discPctNum > noteThreshold && (
         <div style={{ marginTop: 8 }}>
           <label>Manager note (required for discounts above {noteThreshold}%){needsNote && <span style={{ color: 'var(--danger, #dc2626)' }}> *</span>}</label>
