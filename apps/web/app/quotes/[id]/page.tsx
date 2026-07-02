@@ -154,19 +154,25 @@ export default function QuoteWizard() {
       ) : (
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div style={{ flex: '1 1 480px', minWidth: 0 }}>
-            {!summaryOpen && (
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-                <button className="ghost" onClick={() => toggleSummary(true)} title="Show quote summary">
-                  ◀ Summary
-                </button>
-              </div>
-            )}
             {step === 0 && <DetailsStep quote={quote} onChange={refetch} />}
             {step === 1 && <SelectScreensStep quote={quote!} onChange={refetch} />}
             {step === 2 && <LicenceStep quote={quote!} onChange={refetch} />}
             {step === 3 && <ReviewStep quote={quote!} onChange={refetch} />}
           </div>
           {summaryOpen && <QuoteSummary quote={quote!} stepIndex={step} onHide={() => toggleSummary(false)} />}
+          {/* When hidden, the restore control is a FIXED floating side-tab pinned to the right edge
+              (position: fixed → out of flow), so the left panel reclaims the full width and no
+              layout row is spent on it. */}
+          {!summaryOpen && (
+            <button
+              className="summary-tab"
+              onClick={() => toggleSummary(true)}
+              title="Show quote summary"
+              aria-label="Show quote summary"
+            >
+              ◀ Summary
+            </button>
+          )}
         </div>
       )}
 

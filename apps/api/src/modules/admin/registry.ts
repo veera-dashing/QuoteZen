@@ -94,6 +94,18 @@ export const TABLES: TableDef[] = [
     fields: [f('name', 'string', true), f('rate', 'decimal'), DEPRECATED],
     listFields: ['name', 'rate', 'deprecated'],
   },
+  {
+    // AA6b — region/product-specific freight overrides (workshop rule #18). locationId/manufacturerId
+    // are nullable int FKs (null = matches any). No dedicated `ref` field type — exposed as ints, like
+    // the other FK columns (led-products.manufacturerId). NO ROWS ARE SEEDED (strict no-op by default).
+    resource: 'freight-overrides', model: 'freightOverride', label: 'Freight Overrides', group: 'Locations & Freight',
+    titleField: 'note', searchFields: ['note'],
+    fields: [
+      f('locationId', 'int'), f('manufacturerId', 'int'), f('ratePerScreenAud', 'decimal', true),
+      f('note'), DEPRECATED,
+    ],
+    listFields: ['locationId', 'manufacturerId', 'ratePerScreenAud', 'note', 'deprecated'],
+  },
 
   // ── LED ──
   {

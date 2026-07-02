@@ -21,6 +21,13 @@ export interface LedInstallInput {
   accessEquipmentDayRate?: number;
   /** Freight cost (AUD), already computed by the caller. */
   freightCostAud?: number;
+  /**
+   * AA6b — flat per-screen freight override (AUD). When defined it **replaces** the weight-based
+   * `freightCostAud` as the freight component (the "free-to-location-but-charged ~$90/screen" case),
+   * still marked up by the service markup consistently with the normal freight line. When `undefined`
+   * (the default), behaviour is byte-for-byte identical to today — a strict no-op.
+   */
+  freightOverridePerScreenAud?: number;
   /** Engineering option price (AUD) — pass-through, not marked up. */
   engineeringPrice?: number;
 }
@@ -37,7 +44,13 @@ export const ledInstall = (input: LedInstallInput, config: PricingConfig): Insta
   if (input.labourHours < 0) throw new RangeError('install: labourHours must be >= 0');
   const rate = d(config.freight.assemblyLabour).plus(input.locationHourlyUplift ?? 0);
   const labour = mul(input.labourHours, rate);
-  const markupable = sum([labour, input.accessEquipmentDayRate, input.freightCostAud]);
+  // AA6b — a flat per-screen freight override (when defined) replaces the weight-based freight; both
+  // are marked up by the service markup, so the sell composition is consistent either way.
+  const freight =
+    input.freightOverridePerScreenAud !== undefined
+      ? input.freightOverridePerScreenAud
+      : input.freightCostAud;
+  const markupable = sum([labour, input.accessEquipmentDayRate, freight]);
   const engineering = d(input.engineeringPrice ?? 0);
   const sell = mul(markupable, config.markups.service).plus(engineering);
   const cost = markupable.plus(engineering);
