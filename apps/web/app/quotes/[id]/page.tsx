@@ -3609,7 +3609,7 @@ function VersionViewModal({ view, cur, onClose }: { view: VersionView; cur: stri
 interface DiffEntry { path: string; from: unknown | null; to: unknown | null }
 
 interface ValidationFinding { rule: string; severity: 'error' | 'warning' | 'cannot_evaluate'; message: string }
-interface AnomalyFinding { rule: string; severity: 'error' | 'warning'; message: string; screenId?: string }
+interface AnomalyFinding { rule: string; severity: 'error' | 'warning' | 'info'; message: string; screenId?: string }
 interface QuoteValidation {
   canFinalise: boolean;
   counts: { error: number; warning: number; cannotEvaluate: number };
@@ -4510,14 +4510,25 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
                 style={{
                   marginTop: 4,
                   fontSize: 13,
-                  color: a.severity === 'error' ? 'var(--danger, #dc2626)' : 'var(--warn, #d97706)',
+                  color:
+                    a.severity === 'error'
+                      ? 'var(--danger, #dc2626)'
+                      : a.severity === 'info'
+                        ? 'var(--muted, #6b7280)'
+                        : 'var(--warn, #d97706)',
                 }}
               >
                 <span
-                  title={a.severity === 'error' ? 'Block — prevents finalisation' : 'Warning — advisory, does not block'}
+                  title={
+                    a.severity === 'error'
+                      ? 'Block — prevents finalisation'
+                      : a.severity === 'info'
+                        ? 'Info — advisory, does not block'
+                        : 'Warning — advisory, does not block'
+                  }
                   style={{ cursor: 'help' }}
                 >
-                  {a.severity === 'error' ? '⛔' : '⚠️'}
+                  {a.severity === 'error' ? '⛔' : a.severity === 'info' ? 'ℹ️' : '⚠️'}
                 </span>{' '}
                 <span className="muted">[{a.rule}]</span> {a.message}
               </div>

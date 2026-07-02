@@ -272,6 +272,27 @@ const buildDependencies = (quote: QuoteWithChildren): Record<string, string> | n
 };
 
 /**
+ * Custom-metalwork PM alert (AA7 — rule #23): when the quote involves custom metalwork (a real custom
+ * engineering option on any LED screen, and/or a manufactured/metalwork item), surface the lead-time
+ * note for the PM. Null-safe: no metalwork → `null` (the section is omitted). Mirrors the detection in
+ * engine-alerts.ts so the handoff note and the validation advisory stay in lockstep.
+ */
+const buildCustomMetalworkNote = (quote: QuoteWithChildren): string | null => {
+  const engScreens = quote.ledScreens.filter(
+    (s) => s.engineering != null && !/no engineering/i.test(s.engineering.name),
+  );
+  const hasManufactured = quote.manufacturedItems.length > 0;
+  if (engScreens.length === 0 && !hasManufactured) return null;
+  const sources: string[] = [];
+  if (engScreens.length > 0) {
+    const names = [...new Set(engScreens.map((s) => s.engineering!.name))];
+    sources.push(`custom engineering (${names.join(', ')})`);
+  }
+  if (hasManufactured) sources.push(`${quote.manufacturedItems.length} manufactured item(s)`);
+  return `Custom metalwork carries a 3–4 week lead time — PM to confirm the schedule. Detected: ${sources.join(' + ')}.`;
+};
+
+/**
  * Commercial intake (AA6a): price sensitivity, indicative budget, tenure, and the client "must haves".
  * Descriptive/advisory only (no pricing impact). Defensive — only set fields surface. Returns `null`
  * when none are populated so consumers can omit the section entirely.
@@ -298,6 +319,8 @@ export const buildPmHandoff = (quote: QuoteWithChildren) => ({
   dependencies: buildDependencies(quote),
   // Commercial intake (AA6a): price sensitivity, budget, tenure, client must-haves; omitted when none.
   commercial: buildCommercial(quote),
+  // Custom-metalwork lead-time PM alert (AA7 — rule #23): null when no custom metalwork is involved.
+  customMetalworkNote: buildCustomMetalworkNote(quote),
   // Assumptions & risks register (T4): assumptions reuse terms (kind=assumption); risks are manual.
   assumptions: quote.terms.filter((t) => t.kind === 'assumption').map((t) => t.text),
   risks: sortedRisks(quote).map((r) => ({
