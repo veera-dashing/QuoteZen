@@ -187,7 +187,9 @@ export default function QuotesList() {
   ];
 
   return (
-    <div>
+    // Fill the viewport height so the table reads as a full-height grid even with a few rows; the
+    // table area (below) flex-grows and scrolls internally when there are many.
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 100px)' }}>
       <div className="topbar">
         <h1>Quotes</h1>
         {canWrite && !isArchived && (
@@ -297,7 +299,7 @@ export default function QuotesList() {
         </p>
       )}
       {rows && rows.length > 0 && (
-        <div className="table-wrap">
+        <div className="table-wrap" style={{ flex: '1 1 auto', overflowY: 'auto', minHeight: 240 }}>
           <table>
             <thead>
               <tr>
