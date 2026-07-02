@@ -746,3 +746,13 @@ default** (canonical LED 12380 / 5046.92 & LCD 10120 samples unchanged). Persist
 paths; coating in the quote include; descriptions/PM handoff mention them; admin `coating-options` CRUD; LED form gains
 a Coating picker + High-resolution checkbox. 163 api tests green (+2); calc 130 (+6); typecheck + web build clean.
 Seed coating rates ($120/$260 per sqm) are admin-editable placeholders (workbook gives no rate).
+
+### Block — Quote summary sidebar (stage-aware right panel, web)
+The quote wizard (`apps/web/app/quotes/[id]/page.tsx`, edit mode) gains a sticky right-hand **Quote summary** aside
+(create mode shows the Details form alone — no quote yet). Sections: Quote summary (Client / Site / Job ref); Stats
+(Lines = screen count · Units = Σ qty · Docs = documents count); Screens (LED/LCD badge + label, capped 8 + "+N more");
+Discount (quote %, "Within cap"/"Over cap" pill from `/quotes/discount-policy`, mode caption); Completeness (progress bar
++ "N required left" over a checklist: job ref, client, location, ≥1 screen, each LED has product+W+H, each LCD has a
+display item); Totals (grand total + recurring). **Stage-aware accent-border emphasis**: Details→Completeness+Discount,
+Select Screens→Screens+Stats, Licences→Totals, Review→Totals+Completeness. Flex row, wraps below on narrow viewports.
+Web-only (reuses existing card/pill/theme vars). typecheck + web build clean; verified live in-browser.

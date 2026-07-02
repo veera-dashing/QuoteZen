@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { api, ApiError, downloadFile, getRole, uploadFile } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
@@ -53,6 +53,10 @@ interface Licence { id: string; screenType: string; tier: string; qty: number; i
 interface Quote {
   id: string; jobReference: string; status: string; lockVersion: number;
   clientId: string | null; locationId: string | null;
+  // Resolved lookups (the API includes them) — used by the summary panel for display.
+  client?: { name: string } | null; location?: { name: string } | null;
+  // Uploaded quote documents (present when included) — the summary shows the count only.
+  documents?: QuoteDoc[];
   // Quote-level PI / commercial fields (U1).
   requestedShippingDate?: string | null; siteAddress?: string | null; projectNotes?: string | null;
   // AA1 — site/context intake fields (one-per-quote site details).
@@ -127,10 +131,20 @@ export default function QuoteWizard() {
         })}
       </div>
 
-      {step === 0 && <DetailsStep quote={quote} onChange={refetch} />}
-      {!isNew && step === 1 && <SelectScreensStep quote={quote!} onChange={refetch} />}
-      {!isNew && step === 2 && <LicenceStep quote={quote!} onChange={refetch} />}
-      {!isNew && step === 3 && <ReviewStep quote={quote!} onChange={refetch} />}
+      {/* In create mode there's no persisted quote yet, so the summary aside isn't shown. */}
+      {isNew ? (
+        <>{step === 0 && <DetailsStep quote={quote} onChange={refetch} />}</>
+      ) : (
+        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <div style={{ flex: '1 1 480px', minWidth: 0 }}>
+            {step === 0 && <DetailsStep quote={quote} onChange={refetch} />}
+            {step === 1 && <SelectScreensStep quote={quote!} onChange={refetch} />}
+            {step === 2 && <LicenceStep quote={quote!} onChange={refetch} />}
+            {step === 3 && <ReviewStep quote={quote!} onChange={refetch} />}
+          </div>
+          <QuoteSummary quote={quote!} stepIndex={step} />
+        </div>
+      )}
 
       {!isNew && (
       <div className="step-actions">
@@ -150,6 +164,209 @@ export default function QuoteWizard() {
       </div>
       )}
     </div>
+  );
+}
+
+// A small helper: money formatted with the quote's currency code (falls back to a plain number).
+function fmtMoney(value: string | number | null | undefined, code?: string | null): string {
+  const n = Number(value ?? 0);
+  const s = n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return code ? `${code} ${s}` : s;
+}
+
+// A screen's display label: user-set name wins; else "LED/LCD <manufacturer?> - <model?>"; else "Screen N".
+function ledSummaryLabel(s: LedScreen, i: number): string {
+  if (s.screenName?.trim()) return s.screenName.trim();
+  const mfr = s.ledProduct?.manufacturer?.name;
+  const model = s.ledProduct?.model;
+  if (model) return `LED ${mfr ? `${mfr} - ` : ''}${model}`;
+  return `Screen ${i + 1}`;
+}
+function lcdSummaryLabel(s: LcdScreen, i: number): string {
+  if (s.screenName?.trim()) return s.screenName.trim();
+  const model = s.display?.model;
+  if (model) return `LCD ${model}`;
+  return `Screen ${i + 1}`;
+}
+
+// Persistent, stage-aware right-hand summary of the live quote. Read-only; purely reflects `quote`
+// (+ the current step for emphasis). Shown only in edit mode (a real quote exists).
+function QuoteSummary({ quote, stepIndex }: { quote: Quote; stepIndex: number }) {
+  // Discount cap/threshold from the admin-maintained policy (same shape DetailsStep fetches). Fetched
+  // once here so the summary can flag over-cap without lifting state through the wizard.
+  const [capPct, setCapPct] = useState(12);
+  useEffect(() => {
+    api<{ capPct: number; noteThresholdPct: number }>('/quotes/discount-policy')
+      .then((p) => setCapPct(Math.round(p.capPct * 1000) / 10))
+      .catch(() => {});
+  }, []);
+
+  const code = quote.currency?.code ?? null;
+  const led = quote.ledScreens ?? [];
+  const lcd = quote.lcdScreens ?? [];
+  const lineCount = led.length + lcd.length;
+  // Units = Σ screen qty (LED carries qty; LCD qty lives on item rows → default 1 per screen).
+  const unitCount = led.reduce((a, s) => a + (Number(s.qty) || 1), 0) + lcd.length;
+  const docCount = quote.documents?.length ?? 0;
+
+  // Discount: quote-level %, or "—" when it inherits the client/system default.
+  const discPctNum =
+    quote.discountPct != null && quote.discountPct !== '' ? Number(quote.discountPct) * 100 : null;
+  const discOverCap = discPctNum != null && discPctNum > capPct;
+
+  // Completeness checklist — a sensible set of required fields; count satisfied vs total.
+  const checks: boolean[] = [
+    !!quote.jobReference?.trim(),                 // job reference set
+    !!quote.clientId,                             // client set
+    !!quote.locationId,                           // location set
+    lineCount > 0,                                // at least one screen
+    // each LED screen has product + width + height
+    led.every((s) => s.ledProductId != null && (s.desiredWidthMm ?? 0) > 0 && (s.desiredHeightMm ?? 0) > 0),
+    // each LCD screen has at least one display item
+    lcd.every((s) => (s.items ?? []).some((it) => it.itemType === 'display' && it.displayId != null)),
+  ];
+  const satisfied = checks.filter(Boolean).length;
+  const total = checks.length;
+  const unsatisfied = total - satisfied;
+  const pct = total === 0 ? 0 : Math.round((satisfied / total) * 100);
+
+  // Stage-aware emphasis: which section gets the accent border for the current step.
+  //  0 Details → Completeness + Discount · 1 Select Screens → Screens + Stats
+  //  2 Licences → Totals · 3 Review → Totals + Completeness
+  const emph = (section: 'stats' | 'screens' | 'discount' | 'completeness' | 'totals'): boolean => {
+    switch (stepIndex) {
+      case 0: return section === 'completeness' || section === 'discount';
+      case 1: return section === 'screens' || section === 'stats';
+      case 2: return section === 'totals';
+      case 3: return section === 'totals' || section === 'completeness';
+      default: return false;
+    }
+  };
+  const accent = (on: boolean): CSSProperties =>
+    on ? { borderLeft: '3px solid var(--accent)', paddingLeft: 11 } : {};
+
+  const sectionTitle: CSSProperties = {
+    fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em',
+    color: 'var(--muted)', margin: '0 0 8px', fontWeight: 600,
+  };
+
+  const MAX_SCREENS = 8;
+  const screenRows: Array<{ kind: 'LED' | 'LCD'; label: string }> = [
+    ...led.map((s, i) => ({ kind: 'LED' as const, label: ledSummaryLabel(s, i) })),
+    ...lcd.map((s, i) => ({ kind: 'LCD' as const, label: lcdSummaryLabel(s, i) })),
+  ];
+
+  return (
+    <aside
+      style={{
+        // Prefer ~300px; may shrink (not grow) so it wraps cleanly and never overflows narrow viewports.
+        flex: '1 1 300px', maxWidth: 340, minWidth: 240,
+        position: 'sticky', top: 16, alignSelf: 'flex-start',
+      }}
+    >
+      <div className="card" style={{ marginBottom: 0 }}>
+        <h3 style={{ margin: '0 0 14px', fontSize: 15 }}>Quote summary</h3>
+
+        {/* 1 — identity */}
+        <div style={{ marginBottom: 16 }}>
+          <div className="list-row" style={{ padding: '5px 0' }}>
+            <span className="muted">Client</span><span>{quote.client?.name ?? '—'}</span>
+          </div>
+          <div className="list-row" style={{ padding: '5px 0' }}>
+            <span className="muted">Site</span>
+            <span style={{ textAlign: 'right' }}>{quote.location?.name ?? quote.siteAddress ?? '—'}</span>
+          </div>
+          <div className="list-row" style={{ padding: '5px 0', borderBottom: 'none' }}>
+            <span className="muted">Job ref</span><span>{quote.jobReference || '—'}</span>
+          </div>
+        </div>
+
+        {/* 2 — stats */}
+        <div style={{ ...accent(emph('stats')), marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+            {[
+              { label: 'Lines', value: lineCount },
+              { label: 'Units', value: unitCount },
+              { label: 'Docs', value: docCount },
+            ].map((s) => (
+              <div key={s.label} style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '8px 10px', textAlign: 'center' }}>
+                <div style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{s.value}</div>
+                <div className="muted" style={{ fontSize: 11 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 3 — screens */}
+        <div style={{ ...accent(emph('screens')), marginBottom: 16 }}>
+          <p style={sectionTitle}>Screens</p>
+          {screenRows.length === 0 ? (
+            <p className="muted" style={{ margin: 0, fontSize: 13 }}>No screens yet.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {screenRows.slice(0, MAX_SCREENS).map((r, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                  <span className="pill" style={{ fontSize: 10, padding: '0 6px', flex: '0 0 auto' }}>{r.kind}</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
+                </div>
+              ))}
+              {screenRows.length > MAX_SCREENS && (
+                <span className="muted" style={{ fontSize: 12 }}>+{screenRows.length - MAX_SCREENS} more</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 4 — discount */}
+        <div style={{ ...accent(emph('discount')), marginBottom: 16 }}>
+          <p style={sectionTitle}>Discount</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 15, fontWeight: 600 }}>{discPctNum != null ? `${discPctNum}%` : '—'}</span>
+            <span
+              className="pill"
+              style={{
+                fontSize: 11,
+                color: discOverCap ? 'var(--danger)' : 'var(--ok)',
+                borderColor: discOverCap ? 'var(--danger)' : 'var(--ok)',
+              }}
+            >
+              {discOverCap ? 'Over cap' : 'Within cap'}
+            </span>
+          </div>
+          {quote.discountMode && (
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+              Mode: {quote.discountMode === 'stack' ? 'Stack (item + quote)' : 'Per-item only'}
+            </p>
+          )}
+        </div>
+
+        {/* 5 — completeness */}
+        <div style={{ ...accent(emph('completeness')), marginBottom: 16 }}>
+          <p style={sectionTitle}>Completeness</p>
+          <div style={{ height: 8, borderRadius: 999, background: 'var(--surface-2)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${pct}%`, background: unsatisfied === 0 ? 'var(--ok)' : 'var(--accent)', transition: 'width 0.2s' }} />
+          </div>
+          <p className="muted" style={{ margin: '6px 0 0', fontSize: 13, color: unsatisfied === 0 ? 'var(--ok)' : undefined }}>
+            {unsatisfied === 0 ? 'All required fields complete ✓' : `${unsatisfied} required left`}
+          </p>
+        </div>
+
+        {/* 6 — totals */}
+        <div style={{ ...accent(emph('totals')) }}>
+          <p style={sectionTitle}>Totals</p>
+          <div className="list-row" style={{ padding: '5px 0' }}>
+            <span className="muted">Grand total</span>
+            <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(quote.grandTotal, code)}</span>
+          </div>
+          {Number(quote.totalRecurring) > 0 && (
+            <div className="list-row" style={{ padding: '5px 0', borderBottom: 'none' }}>
+              <span className="muted">Recurring</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(quote.totalRecurring, code)}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
   );
 }
 
