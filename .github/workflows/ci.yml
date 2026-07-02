@@ -1,9 +1,13 @@
 name: CI
 
+# Auto-triggers disabled by request (per-commit runs were noisy/failing).
+# Now manual-only: run it from the Actions tab ("Run workflow") when needed.
+# To re-enable per-commit CI, restore the pull_request / push triggers below.
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
+  # pull_request:
+  # push:
+  #   branches: [main]
 
 jobs:
   ci:
