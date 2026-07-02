@@ -2745,6 +2745,73 @@ function lcdScreenLabel(s: LcdScreen): string {
   return s.screenName?.trim() || s.display?.model?.trim() || 'LCD screen';
 }
 
+/** One entry in a {@link RowMenu} — an action, or a 'divider' separator. */
+type RowMenuItem = 'divider' | { label: string; onClick: () => void; danger?: boolean; disabled?: boolean };
+
+/**
+ * Compact "⋯" actions menu for a screen row — collapses the per-row action buttons (which overflowed
+ * the card) into a click-away popover so the row stays within the frame. `active` highlights the
+ * trigger when the row is the one currently being edited/expanded.
+ */
+function RowMenu({ items, active }: { items: RowMenuItem[]; active?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        className={active ? 'primary' : 'ghost'}
+        title="Actions"
+        aria-label="Actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        ⋯
+      </button>
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 60, minWidth: 190,
+            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+            boxShadow: '0 10px 30px var(--shadow)', overflow: 'hidden', padding: 4,
+          }}
+        >
+          {items.map((it, idx) =>
+            it === 'divider' ? (
+              <div key={idx} style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+            ) : (
+              <button
+                key={idx}
+                role="menuitem"
+                className="ghost"
+                disabled={it.disabled}
+                onClick={() => { setOpen(false); it.onClick(); }}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left', border: 'none', borderRadius: 6,
+                  color: it.danger ? 'var(--danger)' : 'var(--text)', whiteSpace: 'nowrap',
+                }}
+              >
+                {it.label}
+              </button>
+            ),
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Merged "Select Screens" step (U1): a LED/LCD type selector drives which add-flow shows; below, a
 // combined list of every screen on the quote (LED + LCD), each labelled by type, with per-screen
 // controls (LED: qty/duplicate/reorder/delete + expandable Options & services editor; LCD as today).
@@ -2923,9 +2990,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
                   ].filter(Boolean).join(' · ')}
                 </span>
               </div>
-              <div className="row-actions">
-                <button className="ghost" title="Move up" disabled={!canWrite || i === 0} onClick={() => moveLed(i, -1)}>▲</button>
-                <button className="ghost" title="Move down" disabled={!canWrite || i === quote.ledScreens.length - 1} onClick={() => moveLed(i, 1)}>▼</button>
+              <div className="row-actions" style={{ alignItems: 'center' }}>
                 <label className="muted" style={{ display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
                   Qty
                   <input
@@ -2939,22 +3004,24 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
                   />
                 </label>
                 <span>{cur} {(Number(s.priceTotal ?? 0) * s.qty).toLocaleString()}</span>
-                <button className="ghost" onClick={() => setExpanded(expanded === s.id ? null : s.id)}>
-                  {expanded === s.id ? '▴ Options & services' : '▾ Options & services'}
-                </button>
-                <button className="ghost" onClick={() => toggleBk(`led-${s.id}`)}>
-                  {bkOpen.has(`led-${s.id}`) ? '▴ Cost breakdown' : '▾ Cost breakdown'}
-                </button>
-                {canWrite && (
-                  <button
-                    className={editing?.type === 'LED' && editing.id === s.id ? 'primary' : 'ghost'}
-                    onClick={() => startEdit('LED', s.id)}
-                  >
-                    ✎ Edit
-                  </button>
-                )}
-                {canWrite && <button className="ghost" onClick={() => duplicateLed(s.id)}>Duplicate</button>}
-                {canWrite && <button className="danger" onClick={() => removeLed(s.id)}>Delete</button>}
+                <RowMenu
+                  active={expanded === s.id || bkOpen.has(`led-${s.id}`) || (editing?.type === 'LED' && editing.id === s.id)}
+                  items={[
+                    { label: expanded === s.id ? 'Hide options & services' : 'Options & services', onClick: () => setExpanded(expanded === s.id ? null : s.id) },
+                    { label: bkOpen.has(`led-${s.id}`) ? 'Hide cost breakdown' : 'Cost breakdown', onClick: () => toggleBk(`led-${s.id}`) },
+                    ...(canWrite
+                      ? ([
+                          'divider',
+                          { label: '✎ Edit', onClick: () => startEdit('LED', s.id) },
+                          { label: 'Duplicate', onClick: () => duplicateLed(s.id) },
+                          { label: '▲ Move up', disabled: i === 0, onClick: () => moveLed(i, -1) },
+                          { label: '▼ Move down', disabled: i === quote.ledScreens.length - 1, onClick: () => moveLed(i, 1) },
+                          'divider',
+                          { label: 'Delete', danger: true, onClick: () => removeLed(s.id) },
+                        ] as RowMenuItem[])
+                      : []),
+                  ]}
+                />
               </div>
             </div>
             {expanded === s.id && <LedOptionsEditor quote={quote} screen={s} onChange={onChange} />}
@@ -2975,17 +3042,13 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
               </div>
               <div className="row-actions" style={{ alignItems: 'center' }}>
                 <span>{cur} {Number(s.priceTotal ?? 0).toLocaleString()}</span>
-                <button className="ghost" onClick={() => toggleBk(`lcd-${s.id}`)}>
-                  {bkOpen.has(`lcd-${s.id}`) ? '▴ Cost breakdown' : '▾ Cost breakdown'}
-                </button>
-                {canWrite && (
-                  <button
-                    className={editing?.type === 'LCD' && editing.id === s.id ? 'primary' : 'ghost'}
-                    onClick={() => startEdit('LCD', s.id)}
-                  >
-                    ✎ Edit
-                  </button>
-                )}
+                <RowMenu
+                  active={bkOpen.has(`lcd-${s.id}`) || (editing?.type === 'LCD' && editing.id === s.id)}
+                  items={[
+                    { label: bkOpen.has(`lcd-${s.id}`) ? 'Hide cost breakdown' : 'Cost breakdown', onClick: () => toggleBk(`lcd-${s.id}`) },
+                    ...(canWrite ? ([{ label: '✎ Edit', onClick: () => startEdit('LCD', s.id) }] as RowMenuItem[]) : []),
+                  ]}
+                />
               </div>
             </div>
             {bkOpen.has(`lcd-${s.id}`) && (
