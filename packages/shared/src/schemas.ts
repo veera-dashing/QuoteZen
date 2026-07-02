@@ -44,6 +44,14 @@ export const createQuoteSchema = z.object({
   /** Quote-wide PI capture (U0). */
   siteAddress: z.string().max(500).optional(),
   projectNotes: z.string().max(2000).optional(),
+  /** AA1 — site/context intake fields (one-per-quote site details from the intake questionnaire). */
+  endCustomer: z.string().max(200).optional(),
+  airsideLandside: z.string().max(20).optional(),
+  sunExposure: z.string().max(20).optional(),
+  wallSubstrate: z.string().max(200).optional(),
+  powerDataAvailable: z.string().max(20).optional(),
+  controllerLocation: z.string().max(200).optional(),
+  windowFacing: z.boolean().optional(),
   /** Viewer users this quote is shared with (they can read only quotes assigned to them). */
   viewerUserIds: z.array(idSchema).optional(),
 });
@@ -63,6 +71,14 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   discountNote: z.string().max(500).nullish(),
   siteAddress: z.string().max(500).nullish(),
   projectNotes: z.string().max(2000).nullish(),
+  /** AA1 — site/context intake fields (nullish on update so they can be cleared). */
+  endCustomer: z.string().max(200).nullish(),
+  airsideLandside: z.string().max(20).nullish(),
+  sunExposure: z.string().max(20).nullish(),
+  wallSubstrate: z.string().max(200).nullish(),
+  powerDataAvailable: z.string().max(20).nullish(),
+  controllerLocation: z.string().max(200).nullish(),
+  windowFacing: z.boolean().nullish(),
   /** Optimistic-locking token from the last read; a mismatch is a 409 conflict (P1-05.2). */
   expectedVersion: z.coerce.number().int().nonnegative().optional(),
 });
@@ -128,6 +144,8 @@ export const ledScreenSchema = z.object({
   desiredWidthMm: z.coerce.number().int().positive().optional(),
   desiredHeightMm: z.coerce.number().int().positive().optional(),
   rotateCabinets: z.boolean().default(false),
+  /** AA1 — recess/cavity depth in mm (site-prep detail; descriptive, not priced). */
+  recessDepthMm: z.coerce.number().int().nonnegative().optional(),
   orientation: z.enum(ORIENTATIONS).optional(),
   aspectRatioId: idSchema.optional(),
   backCover: z.boolean().default(false),
@@ -189,6 +207,8 @@ export const lcdScreenSchema = z.object({
   installMethodId: idSchema.optional(),
   serviceHoursId: idSchema.optional(),
   warrantyId: idSchema.optional(),
+  /** AA1 — recess/cavity depth in mm (site-prep detail; descriptive, not priced). */
+  recessDepthMm: z.coerce.number().int().nonnegative().optional(),
   items: z.array(lcdItemSchema).default([]),
 });
 export type LcdScreenInput = z.infer<typeof lcdScreenSchema>;

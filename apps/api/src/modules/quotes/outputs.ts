@@ -227,12 +227,32 @@ export const sortedRisks = (quote: QuoteWithChildren) =>
     (a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9) || a.seq - b.seq,
   );
 
+/**
+ * Site context (AA1): the one-per-quote intake/PI fields from the workshop intake questionnaire.
+ * Defensive — only the fields that are set are surfaced (nulls omitted). Returns `null` when none
+ * of them are populated, so the PM handoff can omit the section entirely.
+ */
+const buildSiteContext = (quote: QuoteWithChildren): Record<string, string> | null => {
+  const ctx: Record<string, string> = {};
+  if (quote.endCustomer) ctx.endCustomer = quote.endCustomer;
+  if (quote.siteAddress) ctx.siteAddress = quote.siteAddress;
+  if (quote.airsideLandside) ctx.airsideLandside = quote.airsideLandside;
+  if (quote.sunExposure) ctx.sunExposure = quote.sunExposure;
+  if (quote.wallSubstrate) ctx.wallSubstrate = quote.wallSubstrate;
+  if (quote.powerDataAvailable) ctx.powerDataAvailable = quote.powerDataAvailable;
+  if (quote.controllerLocation) ctx.controllerLocation = quote.controllerLocation;
+  if (quote.windowFacing != null) ctx.windowFacing = quote.windowFacing ? 'Yes' : 'No';
+  return Object.keys(ctx).length > 0 ? ctx : null;
+};
+
 /** PM handoff (P1-18.5): execution-focused subset of the approved quote. */
 export const buildPmHandoff = (quote: QuoteWithChildren) => ({
   jobReference: quote.jobReference,
   client: quote.client?.name ?? null,
   location: quote.location?.name ?? null,
   status: quote.status,
+  // Site context (AA1): intake/PI site details; omitted when none are captured.
+  siteContext: buildSiteContext(quote),
   // Assumptions & risks register (T4): assumptions reuse terms (kind=assumption); risks are manual.
   assumptions: quote.terms.filter((t) => t.kind === 'assumption').map((t) => t.text),
   risks: sortedRisks(quote).map((r) => ({
@@ -250,12 +270,16 @@ export const buildPmHandoff = (quote: QuoteWithChildren) => ({
     labourHours: dec(s.labourHours),
     installMethod: s.installMethod?.name ?? null,
     serviceAccess: s.serviceAccess ?? null,
+    // AA1 — recess/cavity depth (mm); omitted (null) when not captured.
+    recessDepthMm: s.recessDepthMm ?? null,
     componentsToProcure: s.components.map((c) => ({ name: componentName(c), qty: c.qty })),
   })),
   lcdScreens: quote.lcdScreens.map((s) => ({
     name: s.screenName,
     display: s.display?.model ?? null,
     orientation: s.orientation ?? null,
+    // AA1 — recess/cavity depth (mm); omitted (null) when not captured.
+    recessDepthMm: s.recessDepthMm ?? null,
     // Order list (tab B56): the display + brackets the PM procures for this screen.
     orderList: lcdOrderList(s),
   })),

@@ -828,6 +828,21 @@ model Quote {
   /** Quote-wide PI capture (U0): the install site address and free-text project notes. */
   siteAddress           String?     @map("site_address")
   projectNotes          String?     @map("project_notes")
+  // AA1 — site/context intake fields (one-per-quote site details from the workshop intake questionnaire).
+  /** The end customer / where it's installed (distinct from the buying `client`). */
+  endCustomer           String?     @map("end_customer")
+  /** Airside / Landside / N/A — relevant for airport & secure-zone sites. */
+  airsideLandside       String?     @map("airside_landside")
+  /** Sun exposure at the install location: None / Indirect / Direct (affects brightness suitability). */
+  sunExposure           String?     @map("sun_exposure")
+  /** Wall substrate free-text (e.g. plasterboard, brick, concrete) — drives fixing method. */
+  wallSubstrate         String?     @map("wall_substrate")
+  /** Whether power & data are available at the location: Yes / No / Unknown. */
+  powerDataAvailable    String?     @map("power_data_available")
+  /** Where the controller / media-player will live (free text). */
+  controllerLocation    String?     @map("controller_location")
+  /** Window-facing / glare risk flag. */
+  windowFacing          Boolean?    @map("window_facing")
   /** Soft-delete / archive timestamp (P1-05.1); null = active. The row is never hard-deleted. */
   archivedAt            DateTime?   @map("archived_at")
   estimatedCost         Decimal?    @map("estimated_cost") @db.Decimal(12, 2)
@@ -961,6 +976,8 @@ model QuoteLedScreen {
   heatMaxBtu          Int?     @map("heat_max_btu")
   cabinetDepthMm      Int?     @map("cabinet_depth_mm")
   recessSize          String?  @map("recess_size")
+  /** AA1 — recess/cavity depth in mm (complements the front/rear `serviceAccess`). */
+  recessDepthMm       Int?     @map("recess_depth_mm")
   freightKg           Decimal? @map("freight_kg") @db.Decimal(10, 2)
   labourHours         Decimal? @map("labour_hours") @db.Decimal(8, 2)
   // per-screen PI fields
@@ -1058,6 +1075,8 @@ model QuoteLcdScreen {
   installMethodId        BigInt?  @map("install_method_id")
   serviceHoursId         BigInt?  @map("service_hours_id")
   warrantyId             BigInt?  @map("warranty_id")
+  /** AA1 — recess/cavity depth in mm (site-prep detail). */
+  recessDepthMm          Int?     @map("recess_depth_mm")
   priceScreenMediaplayer Decimal? @map("price_screen_mediaplayer") @db.Decimal(12, 2)
   priceBracketShroud     Decimal? @map("price_bracket_shroud") @db.Decimal(12, 2)
   priceServices          Decimal? @map("price_services") @db.Decimal(12, 2)

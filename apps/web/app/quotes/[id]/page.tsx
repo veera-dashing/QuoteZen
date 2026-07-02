@@ -20,6 +20,7 @@ interface LedScreen {
   // Full-edit pre-fill (V4): the panel + geometry inputs finalised at add time.
   ledProductId?: string | null; desiredWidthMm?: number | null; desiredHeightMm?: number | null;
   rotateCabinets?: boolean; aspectRatioId?: string | null;
+  recessDepthMm?: number | null; // AA1 — recess/cavity depth (mm)
   // The attached LED product (model) + its manufacturer, for the "Manufacturer - Model" row label.
   ledProduct?: { model: string; manufacturer?: { name: string } | null } | null;
   components?: LedComponent[];
@@ -41,6 +42,7 @@ interface LcdScreen {
   // Full-edit pre-fill (V4).
   orientation?: string | null; displayId?: string | null;
   installMethodId?: string | null; serviceHoursId?: string | null; warrantyId?: string | null;
+  recessDepthMm?: number | null; // AA1 — recess/cavity depth (mm)
   items?: LcdItem[];
 }
 interface Licence { id: string; screenType: string; tier: string; qty: number; isInteractive: boolean }
@@ -49,6 +51,10 @@ interface Quote {
   clientId: string | null; locationId: string | null;
   // Quote-level PI / commercial fields (U1).
   requestedShippingDate?: string | null; siteAddress?: string | null; projectNotes?: string | null;
+  // AA1 — site/context intake fields (one-per-quote site details).
+  endCustomer?: string | null; airsideLandside?: string | null; sunExposure?: string | null;
+  wallSubstrate?: string | null; powerDataAvailable?: string | null; controllerLocation?: string | null;
+  windowFacing?: boolean | null;
   discountPct?: string | null; // stored as a fraction 0..1
   discountNote?: string | null; // manager justification, required above 5%
   discountScope?: 'one_off' | 'recurring' | null; // U5 — upfront vs every renewal
@@ -158,6 +164,14 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   );
   const [siteAddress, setSiteAddress] = useState(quote?.siteAddress ?? '');
   const [projectNotes, setProjectNotes] = useState(quote?.projectNotes ?? '');
+  // AA1 — site/context intake fields (one-per-quote site details from the intake questionnaire).
+  const [endCustomer, setEndCustomer] = useState(quote?.endCustomer ?? '');
+  const [airsideLandside, setAirsideLandside] = useState(quote?.airsideLandside ?? '');
+  const [sunExposure, setSunExposure] = useState(quote?.sunExposure ?? '');
+  const [wallSubstrate, setWallSubstrate] = useState(quote?.wallSubstrate ?? '');
+  const [powerDataAvailable, setPowerDataAvailable] = useState(quote?.powerDataAvailable ?? '');
+  const [controllerLocation, setControllerLocation] = useState(quote?.controllerLocation ?? '');
+  const [windowFacing, setWindowFacing] = useState<boolean>(quote?.windowFacing ?? false);
   const [discountPctInput, setDiscountPctInput] = useState(
     quote?.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
   );
@@ -246,6 +260,14 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       requestedShippingDate: requestedShippingDate || null,
       siteAddress: siteAddress.trim() ? siteAddress.trim() : null,
       projectNotes: projectNotes.trim() ? projectNotes.trim() : null,
+      // AA1 — site/context intake fields (null clears; windowFacing is a boolean flag).
+      endCustomer: endCustomer.trim() ? endCustomer.trim() : null,
+      airsideLandside: airsideLandside || null,
+      sunExposure: sunExposure || null,
+      wallSubstrate: wallSubstrate.trim() ? wallSubstrate.trim() : null,
+      powerDataAvailable: powerDataAvailable || null,
+      controllerLocation: controllerLocation.trim() ? controllerLocation.trim() : null,
+      windowFacing,
       discountPct: discountPctInput.trim() === '' ? null : Number(discountPctInput) / 100,
       discountNote: discountNote.trim() ? discountNote.trim() : null,
       discountScope,
@@ -276,7 +298,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
     } finally {
       setBusy(false);
     }
-  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, discountPctInput, discountNote, discountScope, onChange]);
+  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, endCustomer, airsideLandside, sunExposure, wallSubstrate, powerDataAvailable, controllerLocation, windowFacing, discountPctInput, discountNote, discountScope, onChange]);
 
   const save = persist;
 
@@ -326,6 +348,16 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
         <div style={{ marginTop: 8 }}>
           <label>Project notes</label>
           <textarea value={quote.projectNotes ?? ''} readOnly rows={3} style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box' }} />
+        </div>
+        <h4 style={{ margin: '16px 0 4px' }}>Site context</h4>
+        <div className="grid3">
+          <div><label>End customer</label><input value={quote.endCustomer ?? ''} readOnly /></div>
+          <div><label>Airside / Landside</label><input value={quote.airsideLandside ?? ''} readOnly /></div>
+          <div><label>Sun exposure</label><input value={quote.sunExposure ?? ''} readOnly /></div>
+          <div><label>Wall substrate</label><input value={quote.wallSubstrate ?? ''} readOnly /></div>
+          <div><label>Power &amp; data available</label><input value={quote.powerDataAvailable ?? ''} readOnly /></div>
+          <div><label>Controller / media-player location</label><input value={quote.controllerLocation ?? ''} readOnly /></div>
+          <div><label>Window-facing / glare risk</label><input value={quote.windowFacing == null ? '' : quote.windowFacing ? 'Yes' : 'No'} readOnly /></div>
         </div>
         <div style={{ marginTop: 12 }}>
           <label>Shared with viewers</label>
@@ -444,6 +476,72 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       <div style={{ marginTop: 8 }}>
         <label>Project notes</label>
         <textarea value={projectNotes} onChange={(e) => { setProjectNotes(e.target.value); setDirty(true); }} rows={3} style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box' }} placeholder="Internal project notes…" />
+      </div>
+
+      {/* AA1 — site/context intake fields (one-per-quote site details from the intake questionnaire). */}
+      <h4 style={{ margin: '18px 0 4px' }}>Site context</h4>
+      <p className="muted" style={{ marginTop: 0 }}>Intake / site-prep details captured for the install location.</p>
+      <div className="grid3">
+        <div>
+          <label>End customer</label>
+          <input value={endCustomer} onChange={(e) => { setEndCustomer(e.target.value); setDirty(true); }} placeholder="Where it's installed (e.g. Airport retailer)" />
+        </div>
+        <div>
+          <label>Airside / Landside</label>
+          <SearchSelect
+            value={airsideLandside}
+            onChange={(v) => { setAirsideLandside(v); setDirty(true); }}
+            allowEmpty
+            placeholder="—"
+            options={[
+              { value: 'Airside', label: 'Airside' },
+              { value: 'Landside', label: 'Landside' },
+              { value: 'N/A', label: 'N/A' },
+            ]}
+          />
+        </div>
+        <div>
+          <label>Sun exposure</label>
+          <SearchSelect
+            value={sunExposure}
+            onChange={(v) => { setSunExposure(v); setDirty(true); }}
+            allowEmpty
+            placeholder="—"
+            options={[
+              { value: 'None', label: 'None' },
+              { value: 'Indirect', label: 'Indirect' },
+              { value: 'Direct', label: 'Direct' },
+            ]}
+          />
+        </div>
+        <div>
+          <label>Wall substrate</label>
+          <input value={wallSubstrate} onChange={(e) => { setWallSubstrate(e.target.value); setDirty(true); }} placeholder="e.g. plasterboard, brick, concrete" />
+        </div>
+        <div>
+          <label>Power &amp; data available</label>
+          <SearchSelect
+            value={powerDataAvailable}
+            onChange={(v) => { setPowerDataAvailable(v); setDirty(true); }}
+            allowEmpty
+            placeholder="—"
+            options={[
+              { value: 'Yes', label: 'Yes' },
+              { value: 'No', label: 'No' },
+              { value: 'Unknown', label: 'Unknown' },
+            ]}
+          />
+        </div>
+        <div>
+          <label>Controller / media-player location</label>
+          <input value={controllerLocation} onChange={(e) => { setControllerLocation(e.target.value); setDirty(true); }} placeholder="e.g. comms room, behind screen" />
+        </div>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={windowFacing} onChange={(e) => { setWindowFacing(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
+          Window-facing / glare risk
+        </label>
       </div>
 
       {viewers.length > 0 && (
@@ -892,6 +990,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     })) as unknown as Record<LedOptionKey, string>,
   );
   const [backCover, setBackCover] = useState(!!editScreen?.backCover);
+  // AA1 — recess/cavity depth (mm); descriptive site-prep detail.
+  const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
   const [frameNote, setFrameNote] = useState(editScreen?.frameNote ?? '');
   const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(editScreen?.serviceDescriptionSuffix ?? '');
 
@@ -1064,6 +1164,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         // Options & services FKs (only the selected ones).
         ...optionFks,
         backCover,
+        ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
         ...(frameNote.trim() ? { frameNote: frameNote.trim() } : {}),
         ...(serviceDescriptionSuffix.trim() ? { serviceDescriptionSuffix: serviceDescriptionSuffix.trim() } : {}),
       };
@@ -1090,6 +1191,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       setAspectRatioId('');
       setSelectedOpts(Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, ''])) as unknown as Record<LedOptionKey, string>);
       setBackCover(false);
+      setRecessDepthMm('');
       setFrameNote('');
       setServiceDescriptionSuffix('');
       setAccordionOpen(true);
@@ -1586,6 +1688,10 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
             <input type="checkbox" checked={backCover} onChange={(e) => setBackCover(e.target.checked)} style={{ width: 'auto' }} />
           </div>
           <div>
+            <label>Recess depth (mm)</label>
+            <input type="number" min={0} value={recessDepthMm} onChange={(e) => setRecessDepthMm(e.target.value)} placeholder="optional" />
+          </div>
+          <div>
             <label>Frame / housing description</label>
             <input value={frameNote} onChange={(e) => setFrameNote(e.target.value)} placeholder="optional" />
           </div>
@@ -1673,6 +1779,8 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const [warranties, setWarranties] = useState<Opt[]>([]);
   const [installMethods, setInstallMethods] = useState<Opt[]>([]);
   const [orientation, setOrientation] = useState(editScreen?.orientation ?? '');
+  // AA1 — recess/cavity depth (mm); descriptive site-prep detail.
+  const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
   const [screenName, setScreenName] = useState(editScreen?.screenName ?? '');
   // Pre-fill line items from the screen's stored items (V4 edit). Manual = no displayId.
   const [lines, setLines] = useState<LcdLine[]>(
@@ -1794,6 +1902,7 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       const body = {
         screenName: screenName || undefined,
         orientation: orientation || undefined,
+        ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
         displayId: firstDisplay ? Number(firstDisplay) : undefined,
         serviceHoursId: serviceHoursId ? Number(serviceHoursId) : undefined,
         warrantyId: warrantyId ? Number(warrantyId) : undefined,
@@ -1810,6 +1919,7 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       await api(`/quotes/${quote.id}/lcd-screens`, { method: 'POST', body: JSON.stringify(body) });
       setLines([]);
       setScreenName('');
+      setRecessDepthMm('');
       await onChange();
     } finally {
       setBusy(false);
@@ -1849,6 +1959,10 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
             <label>Install method</label>
             <SearchSelect value={installMethodId} onChange={setInstallMethodId} allowEmpty placeholder="—"
               options={installMethods.map((o) => ({ value: o.id, label: o.name ?? o.id }))} />
+          </div>
+          <div>
+            <label>Recess depth (mm)</label>
+            <input type="number" min={0} value={recessDepthMm} onChange={(e) => setRecessDepthMm(e.target.value)} placeholder="optional" />
           </div>
         </div>
         {outOfHours && (

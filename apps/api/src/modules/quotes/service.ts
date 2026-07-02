@@ -47,6 +47,13 @@ const QUOTE_HEADER_FIELDS = [
   'discountNote',
   'siteAddress',
   'projectNotes',
+  'endCustomer',
+  'airsideLandside',
+  'sunExposure',
+  'wallSubstrate',
+  'powerDataAvailable',
+  'controllerLocation',
+  'windowFacing',
 ] as const;
 
 const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toString() : '0');
@@ -152,6 +159,13 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput, actor
         discountNote: input.discountNote ?? null,
         siteAddress: input.siteAddress ?? null,
         projectNotes: input.projectNotes ?? null,
+        endCustomer: input.endCustomer ?? null,
+        airsideLandside: input.airsideLandside ?? null,
+        sunExposure: input.sunExposure ?? null,
+        wallSubstrate: input.wallSubstrate ?? null,
+        powerDataAvailable: input.powerDataAvailable ?? null,
+        controllerLocation: input.controllerLocation ?? null,
+        windowFacing: input.windowFacing ?? null,
         createdById: userId,
         viewers: input.viewerUserIds?.length
           ? { create: input.viewerUserIds.map((uid) => ({ userId: BigInt(uid) })) }
@@ -340,6 +354,13 @@ export const updateQuote = async (
   if (input.discountNote !== undefined) data.discountNote = input.discountNote;
   if (input.siteAddress !== undefined) data.siteAddress = input.siteAddress;
   if (input.projectNotes !== undefined) data.projectNotes = input.projectNotes;
+  if (input.endCustomer !== undefined) data.endCustomer = input.endCustomer;
+  if (input.airsideLandside !== undefined) data.airsideLandside = input.airsideLandside;
+  if (input.sunExposure !== undefined) data.sunExposure = input.sunExposure;
+  if (input.wallSubstrate !== undefined) data.wallSubstrate = input.wallSubstrate;
+  if (input.powerDataAvailable !== undefined) data.powerDataAvailable = input.powerDataAvailable;
+  if (input.controllerLocation !== undefined) data.controllerLocation = input.controllerLocation;
+  if (input.windowFacing !== undefined) data.windowFacing = input.windowFacing;
   if (input.currencyCode !== undefined) {
     const currency = await findCurrencyByCode(input.currencyCode);
     if (!currency) throw notFound('Currency', input.currencyCode);

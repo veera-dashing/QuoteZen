@@ -693,3 +693,13 @@ and a red hint states what's missing ("Client and location are required." / "Cli
 required."). Applies in both create and edit mode. Enforced client-side only (the server create/update schemas stay
 lenient so existing client-less draft quotes and the API test suite are unaffected — a strict server requirement would
 422 the many minimal-payload create tests). Verified live (button disabled + hint until both picked, enabled after).
+
+### Block AA1 — site/context intake fields (workshop intake gap, Group A)
+From the merged intake/rules workbook (`SEEN_LED_LCD_Merged`). Captured the missing site-context questions.
+Migration `aa1_site_context`: `quotes` gains `end_customer`, `airside_landside`, `sun_exposure`, `wall_substrate`,
+`power_data_available`, `controller_location`, `window_facing`; `quote_led_screens` + `quote_lcd_screens` gain
+`recess_depth_mm`. Shared `createQuoteSchema`/`updateQuoteSchema` + `ledScreenSchema`/`lcdScreenSchema` extended
+(optional/nullish); `createQuote`/`updateQuote` + all screen add/edit/duplicate paths persist them; PM handoff
+(`outputs.ts`) emits a defensive "Site context" section + per-screen recess depth. Web `DetailsStep` gains a Site-context
+sub-block (text + SearchSelect enums + window-facing checkbox); LED & LCD forms gain a Recess depth (mm) input.
+Descriptive only — no pricing change. 146 api tests green (+3 `aa1-site-context.test.ts`); typecheck + web build clean.
