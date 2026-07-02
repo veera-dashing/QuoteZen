@@ -82,6 +82,10 @@ const SETTINGS: Array<{ key: string; label: string; value?: number; valueText?: 
   // AA6a — total screen count (LED + LCD) above which a solutions-engineer review is advised
   // (SOLUTIONS_ENGINEER_REVIEW). Advisory warning only; never blocks. Admin-editable.
   { key: 'solutions_engineer_screen_threshold', label: 'Solutions Engineer Screen Threshold', value: 10, unit: 'count' },
+  // AA7 — unusual-price flag deviation threshold (fraction): a stored LED screen's sell $/m² that
+  // deviates from the historical norm (median by product / by client) beyond this fraction raises a
+  // UNUSUAL_PRICE warning. Advisory only; never blocks. Admin-editable; create-on-read defaults to 0.30.
+  { key: 'unusual_price_deviation_pct', label: 'Unusual Price Deviation %', value: 0.3, unit: 'fraction' },
 ];
 
 // ─── U0: hardware manufacturers (normalised from led_products.vendor) ─────────

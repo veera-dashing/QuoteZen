@@ -30,6 +30,8 @@ export const MARGIN_KEYS = [
   'packaging_pct',
   'receiver_card_cost',
   'margin_floor',
+  // AA7 — unusual-price flag deviation threshold (advisory; create-on-read defaults to 0.30).
+  'unusual_price_deviation_pct',
 ] as const;
 
 const patchSchema = z

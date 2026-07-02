@@ -789,6 +789,29 @@ manufacturerId)` loads active overrides, picks the most-specific match (both-set
 but charged ~$90/screen" case. Admin `freight-overrides` CRUD. **Canonical samples unchanged** (LED 12380 / 5046.92,
 LCD 10120). 177 api tests green (+1 `aa6b-freight-overrides.test.ts`); calc 138 (+3); typecheck + web build clean.
 
+### Block AA7 — engine sanity / alerts (workshop Group G, rules #22/#23) — final deterministic block
+Two **advisory-only** findings folded into the quote-level validation aggregate (`GET /quotes/:id/validate` →
+`anomalies[]`, same as Z4 anomalies + AA6a advisories); **never block finalisation** (warning/info, not error) and
+**no pricing effect** (read stored figures). New `apps/api/src/modules/quotes/engine-alerts.ts`
+`evaluateEngineAlerts(quote)`, concat'd in `validate.ts`.
+- **`UNUSUAL_PRICE`** (warning, rule #22) — per LED screen, sell $/m² (stored `priceTotal` ÷ opening area, no
+  repricing) vs a **median** historical baseline on two independent scopes: same `ledProductId` and same client (join
+  through non-archived quotes, excluding this quote). A scope with `< 2` comparable priors ⇒ **insufficient history,
+  skipped** (never a false warning). Deviation beyond `unusual_price_deviation_pct` (setting, default **0.30**, read
+  live, admin-editable via Settings/margins) ⇒ one warning naming the worst scope + current/baseline/%. (Uses sell $/m²
+  — the robustly-stored figure — not the noisy install-line history.)
+- **`CUSTOM_METALWORK_LEAD`** (info, rule #23) — quote involves custom metalwork (a real custom engineering option on
+  any LED screen — same detection as the Z4 `custom_engineering` anomaly — and/or any `manufacturedItems`) ⇒ a "3–4
+  week lead time — PM to confirm" note; also surfaced on the PM handoff (`customMetalworkNote` in `outputs.ts`).
+  Null-safe: no metalwork → nothing.
+- **No migration** — `unusual_price_deviation_pct` lives in the generic key/value `settings` table (seeded/upserted,
+  create-on-read fallback). Web Validation card widened to render `info` (ℹ️). 182 api tests green (+5
+  `aa7-engine-alerts.test.ts`); calc 138 (canonical 12380/5046.92 unchanged); typecheck + web build clean.
+
+**A→G workbook build complete** — all deterministic gaps from `SEEN_LED_LCD_Merged.xlsx` (Groups A–G) are shipped.
+Still deferred by decision (infra/AI): live LCD stock scraping + live FX via Google Finance, Google OAuth, Zoho, and all
+Phase-2 AI.
+
 ### Block — collapsible Quote summary panel (web)
 The right-hand Quote summary is now collapsible (`quotes/[id]/page.tsx`): a "✕ Hide" button in its header collapses
 it; when hidden the aside is dropped from the flex row so the left step-content column (`flex: 1`) expands to the full

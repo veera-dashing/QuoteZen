@@ -12,6 +12,7 @@ import { getQuote } from './service.js';
 import { loadRatios } from './outputs.js';
 import { evaluateAnomalies, type AnomalyFinding } from './anomaly.js';
 import { evaluateCommercialAdvisories } from './advisories.js';
+import { evaluateEngineAlerts } from './engine-alerts.js';
 import type { QuoteWithChildren } from './repository.js';
 
 /**
@@ -178,11 +179,14 @@ export const validateQuote = async (id: bigint): Promise<QuoteValidation> => {
   // already 'error' | 'warning' (block → error, warn → warning), so they fold into the same tallies.
   // AA6a — commercial-intake advisories (solutions-engineer review + freight-mode). Always warning/
   // info, NEVER blocking; concatenated into the same `anomalies` list so the Review card renders them.
-  const [z4Anomalies, advisories] = await Promise.all([
+  // AA7 — engine-alert advisories (unusual price vs history + custom-metalwork lead time). Also always
+  // warning/info, never blocking, no pricing effect.
+  const [z4Anomalies, advisories, engineAlerts] = await Promise.all([
     evaluateAnomalies(quote),
     evaluateCommercialAdvisories(quote),
+    evaluateEngineAlerts(quote),
   ]);
-  const anomalies = [...z4Anomalies, ...advisories];
+  const anomalies = [...z4Anomalies, ...advisories, ...engineAlerts];
 
   const screenFindings = screens.flatMap((s) => s.findings);
   const counts = {
