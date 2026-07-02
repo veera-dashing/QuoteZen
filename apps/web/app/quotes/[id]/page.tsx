@@ -172,6 +172,8 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   const overCap = discPctNum != null && discPctNum > capPct;
   const capBlocked = overCap && !isAdmin;
   const discountBlocked = needsNote || capBlocked;
+  // Client + Location are mandatory on the Details step — gate save/auto-save until both are set.
+  const detailsIncomplete = !clientId || !locationId;
   // Non-admins can't type above the cap (clamped). Admins MAY exceed it — no hard stop; a visible
   // warning banner flags it (so it isn't accidental) and the server audits the override.
   const onDiscountChange = (raw: string) => {
@@ -292,7 +294,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
     // No auto-save in CREATE mode (nothing to PATCH yet — the user clicks "Create & continue").
     // Suspend auto-save while the discount guardrail is unmet (missing note / non-admin over cap) so the
     // user isn't hit with a mid-typing 422/403; the explicit Save still surfaces the server error.
-    if (isNew || !canWrite || !dirty || conflict || !jobReference || discountBlocked) return;
+    if (isNew || !canWrite || !dirty || conflict || !jobReference || discountBlocked || detailsIncomplete) return;
     const t = setTimeout(() => {
       setDirty(false);
       void persist();
@@ -352,7 +354,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       <div className="grid3">
         <div><label>Job reference</label><input value={jobReference} onChange={(e) => { setJobReference(e.target.value); setDirty(true); }} /></div>
         <div>
-          <label>Client</label>
+          <label>Client <span style={{ color: 'var(--danger, #dc2626)' }}>*</span></label>
           <SearchSelect
             value={clientId}
             onChange={(v) => { setClientId(v); setDirty(true); }}
@@ -362,7 +364,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
           />
         </div>
         <div>
-          <label>Location</label>
+          <label>Location <span style={{ color: 'var(--danger, #dc2626)' }}>*</span></label>
           <SearchSelect
             value={locationId}
             onChange={(v) => { setLocationId(v); setDirty(true); }}
@@ -468,7 +470,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
 
       <div className="step-actions">
-        <button className="primary" onClick={handleSave} disabled={busy || !jobReference || discountBlocked}>
+        <button className="primary" onClick={handleSave} disabled={busy || !jobReference || discountBlocked || detailsIncomplete}>
           {busy ? (isNew ? 'Creating…' : 'Saving…') : isNew ? 'Create & continue' : 'Save details'}
         </button>
         {isNew && (
@@ -476,10 +478,20 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
             Cancel
           </button>
         )}
-        {discountBlocked && (
+        {detailsIncomplete ? (
           <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>
-            {needsNote ? `Add a manager note to save (discount above ${noteThreshold}%).` : `Discount exceeds the ${capPct}% cap.`}
+            {!clientId && !locationId
+              ? 'Client and location are required.'
+              : !clientId
+                ? 'Client is required.'
+                : 'Location is required.'}
           </span>
+        ) : (
+          discountBlocked && (
+            <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>
+              {needsNote ? `Add a manager note to save (discount above ${noteThreshold}%).` : `Discount exceeds the ${capPct}% cap.`}
+            </span>
+          )
         )}
       </div>
     </div>

@@ -685,3 +685,11 @@ a proper dashboard (inspired by a workshop mockup; real data only — no AI conf
   (client tier A+/A/B) · **Value** (grandTotal + **Go-live** = requestedShippingDate, else "Go-live TBC") · actions.
   Backend: `listQuotes` include gains `client.clientTier` (requestedShippingDate was already a returned scalar) — the
   only API change. Last-two-months default + Clear-filters + tab-aware empty state retained. Verified live in-browser.
+
+### Block 21 — Client + Location mandatory on the Details step (web)
+`apps/web/app/quotes/[id]/page.tsx` `DetailsStep`: Client and Location are now **required** — the labels show a `*`,
+`detailsIncomplete = !clientId || !locationId` gates the Create/Save button (disabled) and the debounced auto-save,
+and a red hint states what's missing ("Client and location are required." / "Client is required." / "Location is
+required."). Applies in both create and edit mode. Enforced client-side only (the server create/update schemas stay
+lenient so existing client-less draft quotes and the API test suite are unaffected — a strict server requirement would
+422 the many minimal-payload create tests). Verified live (button disabled + hint until both picked, enabled after).
