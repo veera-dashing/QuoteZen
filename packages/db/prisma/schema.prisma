@@ -387,6 +387,19 @@ model GobOption {
   @@map("gob_options")
 }
 
+// AA4 — protective / gold coating add-on (workshop rule #21). Priced by area (cost/sqm × screen area,
+// sold at the LED markup). Placeholder rates are commercial defaults (the workbook gives no rate).
+model CoatingOption {
+  id         BigInt  @id @default(autoincrement())
+  name       String
+  costPerSqm Decimal @map("cost_per_sqm") @db.Decimal(12, 2)
+  deprecated Boolean @default(false) @map("deprecated")
+
+  ledScreens QuoteLedScreen[]
+
+  @@map("coating_options")
+}
+
 model TrimOption {
   id               BigInt  @id @default(autoincrement())
   name             String
@@ -985,6 +998,9 @@ model QuoteLedScreen {
   /** AA2 — flatness is critical for this screen (descriptive; feeds a product-selection note). */
   flatnessRequired    Boolean? @map("flatness_required")
   gobId               BigInt?  @map("gob_id")
+  // AA4 — protective/gold coating (priced by area) + high-resolution supply upgrade (fractional uplift).
+  coatingId           BigInt?  @map("coating_id")
+  highResolution      Boolean? @map("high_resolution")
   frameId             BigInt?  @map("frame_id")
   trimId              BigInt?  @map("trim_id")
   hangingBarId        BigInt?  @map("hanging_bar_id")
@@ -1039,6 +1055,7 @@ model QuoteLedScreen {
   ledProduct      LedProduct?         @relation(fields: [ledProductId], references: [id], onDelete: Restrict)
   aspectRatio     ScreenRatio?        @relation(fields: [aspectRatioId], references: [id], onDelete: Restrict)
   gob             GobOption?          @relation(fields: [gobId], references: [id], onDelete: Restrict)
+  coating         CoatingOption?      @relation(fields: [coatingId], references: [id], onDelete: Restrict)
   frame           Frame?              @relation(fields: [frameId], references: [id], onDelete: Restrict)
   trim            TrimOption?         @relation(fields: [trimId], references: [id], onDelete: Restrict)
   hangingBar      HangingBarOption?   @relation(fields: [hangingBarId], references: [id], onDelete: Restrict)

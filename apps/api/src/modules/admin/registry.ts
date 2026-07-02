@@ -149,6 +149,13 @@ export const TABLES: TableDef[] = [
     listFields: ['name', 'price', 'deprecated'],
   },
   {
+    // AA4 — protective / gold coating add-on (priced by area). costPerSqm is a commercial-default rate.
+    resource: 'coating-options', model: 'coatingOption', label: 'Coating Options', group: 'LED',
+    titleField: 'name', searchFields: ['name'],
+    fields: [f('name', 'string', true), f('costPerSqm', 'decimal', true), DEPRECATED],
+    listFields: ['name', 'costPerSqm', 'deprecated'],
+  },
+  {
     resource: 'trim-options', model: 'trimOption', label: 'Trim Options', group: 'LED',
     titleField: 'name', searchFields: ['name'],
     fields: [f('name', 'string', true), f('widthMultiplier', 'decimal', true), f('heightMultiplier', 'decimal', true), DEPRECATED],

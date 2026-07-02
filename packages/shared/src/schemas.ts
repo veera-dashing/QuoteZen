@@ -156,6 +156,9 @@ export const ledScreenSchema = z.object({
   contentSupplier: z.string().max(120).optional(),
   flatnessRequired: z.boolean().optional(),
   gobId: idSchema.optional(),
+  // AA4 — protective/gold coating (priced by area) + high-resolution supply upgrade (uplift %).
+  coatingId: idSchema.optional(),
+  highResolution: z.boolean().optional(),
   frameId: idSchema.optional(),
   trimId: idSchema.optional(),
   hangingBarId: idSchema.optional(),
@@ -178,6 +181,8 @@ export type LedScreenInput = z.infer<typeof ledScreenSchema>;
  */
 export const updateLedScreenSchema = z.object({
   gobId: idSchema.nullish(),
+  coatingId: idSchema.nullish(),
+  highResolution: z.boolean().nullish(),
   frameId: idSchema.nullish(),
   trimId: idSchema.nullish(),
   hangingBarId: idSchema.nullish(),

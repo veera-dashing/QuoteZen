@@ -100,6 +100,38 @@ export const receiverCardCost = (cabinetCount: number, config: PricingConfig): C
 };
 
 /**
+ * Protective / gold coating add-on (Block AA4, workshop rule #21). Priced by screen area:
+ * `cost = costPerSqmAud × areaSqm`, sold via the LED markup (same gross-up as the other LED
+ * equipment lines). A `costPerSqm` of 0 (or a 0 area) → a zero line — the api layer omits it, so
+ * with nothing selected the add-on is a strict no-op and existing priced screens are unchanged.
+ */
+export const coatingCost = (
+  areaSqm: Decimal | number | string,
+  costPerSqmAud: number,
+  config: PricingConfig,
+): CostSell => {
+  if (costPerSqmAud < 0) throw new RangeError('led: coating costPerSqm must be >= 0');
+  const costAud = mul(costPerSqmAud, areaSqm);
+  return { costAud: round(costAud), sellAud: round(mul(costAud, config.markups.led)) };
+};
+
+/**
+ * High-resolution supply upgrade (Block AA4, workshop rule #21). A fractional uplift on the LED
+ * SUPPLY cost: `cost = supplyCostAud × upliftPct`, sold via the LED markup. `upliftPct` defaults to
+ * 0 (the `high_res_uplift_pct` setting seeds at 0), so it is a no-op until an admin sets a rate —
+ * canonical sample screens stay unchanged.
+ */
+export const highResUplift = (
+  supplyCostAud: Decimal | number | string,
+  upliftPct: number,
+  config: PricingConfig,
+): CostSell => {
+  if (upliftPct < 0) throw new RangeError('led: highResUpliftPct must be >= 0');
+  const costAud = mul(supplyCostAud, upliftPct);
+  return { costAud: round(costAud), sellAud: round(mul(costAud, config.markups.led)) };
+};
+
+/**
  * Shipping weight used for freight (P1-16.4): the greater of volumetric and actual weight.
  * Volumetric here = actual × the product's volumetric modifier (a packaging-density factor ≥ 1).
  */

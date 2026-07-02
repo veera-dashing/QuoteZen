@@ -23,6 +23,7 @@ export const quoteInclude = {
       installMethod: true,
       frame: true,
       gob: true,
+      coating: true, // AA4 — surfaced in descriptions / PM handoff when set
       // Z4 — anomaly rules read the selected freight option (air-freight check) and engineering option
       // (custom-engineering check); both are minimal single-relation includes.
       freightOption: true,

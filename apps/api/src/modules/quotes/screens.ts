@@ -1,5 +1,6 @@
 import { prisma } from '@quotezen/db';
 import {
+  coatingCost,
   composeScreenTotals,
   configConfidence,
   configureScreen,
@@ -7,6 +8,7 @@ import {
   estimateInstallHours,
   fixedLine,
   freightWeightKg,
+  highResUplift,
   ledInstall,
   ledSpec,
   ledSupply,
@@ -550,6 +552,29 @@ const computeLedScreenPricing = async (
       if (receivers.costAud.greaterThan(0)) {
         lines.push({ label: 'Receiver cards', bucket: 'screen_mediaplayer', qty: 1, costAud: receivers.costAud, sellAud: receivers.sellAud });
       }
+      // AA4 — high-resolution supply upgrade: a fractional uplift on the supply cost, from the
+      // `high_res_uplift_pct` setting (0 by default → no line, so this is a strict no-op until an
+      // admin sets a rate). Only added when the screen opted in AND the rate is > 0.
+      if (input.highResolution) {
+        const upliftPct = await settingNum('high_res_uplift_pct', 0);
+        if (upliftPct > 0) {
+          const hires = highResUplift(supply.costAud, upliftPct, config);
+          if (hires.costAud.greaterThan(0)) {
+            lines.push({ label: 'High-resolution upgrade', bucket: 'screen_mediaplayer', qty: 1, costAud: hires.costAud, sellAud: hires.sellAud });
+          }
+        }
+      }
+    }
+    // AA4 — protective / gold coating: priced by screen area (cost/sqm × area), sold at the LED
+    // markup. Uses the same area the supply calc uses (spec.areaSqm). 0-cost coating → no line.
+    if (input.coatingId) {
+      const coating = await prisma.coatingOption.findUnique({ where: { id: BigInt(input.coatingId) } });
+      if (coating && Number(coating.costPerSqm) > 0) {
+        const c = coatingCost(spec.areaSqm, Number(coating.costPerSqm), config);
+        if (c.costAud.greaterThan(0)) {
+          lines.push({ label: `Coating — ${coating.name}`, bucket: 'screen_mediaplayer', qty: 1, costAud: c.costAud, sellAud: c.sellAud });
+        }
+      }
     }
   }
 
@@ -701,6 +726,8 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
         contentSupplier: input.contentSupplier ?? null,
         flatnessRequired: input.flatnessRequired ?? null,
         gobId: input.gobId ? BigInt(input.gobId) : null,
+        coatingId: input.coatingId ? BigInt(input.coatingId) : null,
+        highResolution: input.highResolution ?? null,
         frameId: input.frameId ? BigInt(input.frameId) : null,
         trimId: input.trimId ? BigInt(input.trimId) : null,
         hangingBarId: input.hangingBarId ? BigInt(input.hangingBarId) : null,
@@ -809,6 +836,8 @@ export const duplicateLedScreen = async (userId: bigint, quoteId: bigint, screen
         contentSupplier: source.contentSupplier,
         flatnessRequired: source.flatnessRequired,
         gobId: source.gobId,
+        coatingId: source.coatingId,
+        highResolution: source.highResolution,
         frameId: source.frameId,
         trimId: source.trimId,
         hangingBarId: source.hangingBarId,
@@ -972,6 +1001,11 @@ export const updateLedScreen = async (
     frameNote: opt(input.frameNote, screen.frameNote),
     serviceDescriptionSuffix: opt(input.serviceDescriptionSuffix, screen.serviceDescriptionSuffix),
     gobId: opt(input.gobId, num(screen.gobId) ?? null),
+    coatingId: opt(input.coatingId, num(screen.coatingId) ?? null),
+    highResolution:
+      input.highResolution === undefined
+        ? (screen.highResolution ?? undefined)
+        : (input.highResolution ?? undefined),
     frameId: opt(input.frameId, num(screen.frameId) ?? null),
     trimId: opt(input.trimId, num(screen.trimId) ?? null),
     hangingBarId: opt(input.hangingBarId, num(screen.hangingBarId) ?? null),
@@ -1006,6 +1040,8 @@ export const updateLedScreen = async (
         frameNote: pricingInput.frameNote ?? null,
         serviceDescriptionSuffix: pricingInput.serviceDescriptionSuffix ?? null,
         gobId: pricingInput.gobId ? BigInt(pricingInput.gobId) : null,
+        coatingId: pricingInput.coatingId ? BigInt(pricingInput.coatingId) : null,
+        highResolution: pricingInput.highResolution ?? null,
         frameId: pricingInput.frameId ? BigInt(pricingInput.frameId) : null,
         trimId: pricingInput.trimId ? BigInt(pricingInput.trimId) : null,
         hangingBarId: pricingInput.hangingBarId ? BigInt(pricingInput.hangingBarId) : null,
@@ -1103,6 +1139,8 @@ export const updateLedScreenFull = async (
         contentSupplier: input.contentSupplier ?? null,
         flatnessRequired: input.flatnessRequired ?? null,
         gobId: input.gobId ? BigInt(input.gobId) : null,
+        coatingId: input.coatingId ? BigInt(input.coatingId) : null,
+        highResolution: input.highResolution ?? null,
         frameId: input.frameId ? BigInt(input.frameId) : null,
         trimId: input.trimId ? BigInt(input.trimId) : null,
         hangingBarId: input.hangingBarId ? BigInt(input.hangingBarId) : null,

@@ -28,6 +28,7 @@ interface LedScreen {
   gobId?: string | null; frameId?: string | null; trimId?: string | null; hangingBarId?: string | null;
   engineeringId?: string | null; installMethodId?: string | null; freightOptionId?: string | null;
   warrantyId?: string | null; serviceHoursId?: string | null; accessEquipmentId?: string | null;
+  coatingId?: string | null; highResolution?: boolean | null; // AA4 — coating + high-resolution add-ons
   backCover?: boolean; frameNote?: string | null; serviceDescriptionSuffix?: string | null;
   contentRatio?: string | null; contentSupplier?: string | null; flatnessRequired?: boolean | null;
 }
@@ -657,6 +658,7 @@ const LED_OPTION_TABLES = [
   { key: 'serviceHoursId', slug: 'service-hours', label: 'Service hours' },
   { key: 'accessEquipmentId', slug: 'access-equipment', label: 'Access equipment' },
   { key: 'gobId', slug: 'gob-options', label: 'GOB' },
+  { key: 'coatingId', slug: 'coating-options', label: 'Coating' }, // AA4 — protective / gold coating
 ] as const;
 type LedOptionKey = (typeof LED_OPTION_TABLES)[number]['key'];
 
@@ -993,6 +995,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     })) as unknown as Record<LedOptionKey, string>,
   );
   const [backCover, setBackCover] = useState(!!editScreen?.backCover);
+  // AA4 — high-resolution supply upgrade (fractional uplift; priced only when the admin rate > 0).
+  const [highResolution, setHighResolution] = useState(!!editScreen?.highResolution);
   // AA1 — recess/cavity depth (mm); descriptive site-prep detail.
   const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
   const [frameNote, setFrameNote] = useState(editScreen?.frameNote ?? '');
@@ -1171,6 +1175,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         // Options & services FKs (only the selected ones).
         ...optionFks,
         backCover,
+        highResolution,
         ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
         ...(frameNote.trim() ? { frameNote: frameNote.trim() } : {}),
         ...(serviceDescriptionSuffix.trim() ? { serviceDescriptionSuffix: serviceDescriptionSuffix.trim() } : {}),
@@ -1202,6 +1207,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       setAspectRatioId('');
       setSelectedOpts(Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, ''])) as unknown as Record<LedOptionKey, string>);
       setBackCover(false);
+      setHighResolution(false);
       setRecessDepthMm('');
       setFrameNote('');
       setServiceDescriptionSuffix('');
@@ -1697,6 +1703,10 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
           <div>
             <label>Back cover</label>
             <input type="checkbox" checked={backCover} onChange={(e) => setBackCover(e.target.checked)} style={{ width: 'auto' }} />
+          </div>
+          <div>
+            <label title="Higher-resolution supply upgrade — priced only when the admin uplift rate is set">High-resolution</label>
+            <input type="checkbox" checked={highResolution} onChange={(e) => setHighResolution(e.target.checked)} style={{ width: 'auto' }} />
           </div>
           <div>
             <label>Recess depth (mm)</label>
@@ -2265,6 +2275,7 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
     ) as unknown as Record<LedOptionKey, string>;
   const [selected, setSelected] = useState<Record<LedOptionKey, string>>(initial);
   const [backCover, setBackCover] = useState(!!screen.backCover);
+  const [highResolution, setHighResolution] = useState(!!screen.highResolution); // AA4
   const [frameNote, setFrameNote] = useState(screen.frameNote ?? '');
   const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(screen.serviceDescriptionSuffix ?? '');
   const [busy, setBusy] = useState(false);
@@ -2288,6 +2299,7 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
     try {
       const body: Record<string, unknown> = {
         backCover,
+        highResolution,
         frameNote: frameNote.trim() ? frameNote.trim() : null,
         serviceDescriptionSuffix: serviceDescriptionSuffix.trim() ? serviceDescriptionSuffix.trim() : null,
       };
@@ -2327,6 +2339,10 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
         <div>
           <label>Back cover</label>
           <input type="checkbox" checked={backCover} disabled={!canWrite} onChange={(e) => { setBackCover(e.target.checked); setSaved(false); }} style={{ width: 'auto' }} />
+        </div>
+        <div>
+          <label title="Higher-resolution supply upgrade — priced only when the admin uplift rate is set">High-resolution</label>
+          <input type="checkbox" checked={highResolution} disabled={!canWrite} onChange={(e) => { setHighResolution(e.target.checked); setSaved(false); }} style={{ width: 'auto' }} />
         </div>
         <div>
           <label>Frame / housing description</label>

@@ -16,6 +16,10 @@ export interface LedScreenDescriptionParts {
   warrantyName?: string | null;
   locationName?: string | null;
   qty?: number;
+  /** AA4 — protective / gold coating option name (when set). */
+  coatingName?: string | null;
+  /** AA4 — high-resolution supply upgrade opted in. */
+  highResolution?: boolean | null;
 }
 
 const joinClauses = (clauses: Array<string | null | undefined>): string =>
@@ -36,6 +40,8 @@ export const describeLedScreen = (p: LedScreenDescriptionParts): string => {
     pitch,
     resolution,
     p.serviceAccess ? `${p.serviceAccess} service` : null,
+    p.coatingName,
+    p.highResolution ? 'high-resolution' : null,
     p.warrantyName,
     p.locationName,
   ]);

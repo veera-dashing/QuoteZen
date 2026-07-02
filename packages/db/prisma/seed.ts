@@ -41,6 +41,10 @@ const SETTINGS: Array<{ key: string; label: string; value?: number; valueText?: 
   { key: 'spares_pct', label: 'Spares %', value: 0.1, unit: 'fraction' },
   { key: 'packaging_pct', label: 'Packaging %', value: 0, unit: 'fraction' },
   { key: 'receiver_card_cost', label: 'Receiver Card Cost (per cabinet)', value: 0, unit: '$' },
+  // AA4 — high-resolution supply uplift (fraction of the LED supply cost). Seeded at 0 so it is a
+  // strict no-op until an admin sets a rate (the workbook has no rate); coating rates live on the
+  // coating_options catalog rows below.
+  { key: 'high_res_uplift_pct', label: 'High-resolution Uplift %', value: 0, unit: 'fraction' },
   { key: 'margin_floor', label: 'Margin Floor', value: 0.2, unit: 'fraction' },
   // LCD-1 out-of-hours uplift is a LABOUR-COST calc (workbook F31 = SUM(K28:K29) × the uplift rate):
   // install hours = install-line cost ÷ install hourly cost ($95/hr); site-attendance is excluded —
@@ -213,6 +217,14 @@ const GOB_OPTIONS: Array<[string, number]> = [
   ['LEDful LOB', 49],
   ['ZonePro GOB', 80],
   ['GOB Included in Base Price', 0],
+];
+
+// AA4 — coating add-on options (cost per sqm, AUD). PLACEHOLDER commercial-default rates: the source
+// workbook gives no coating rate, so these mirror the X2 warranty/install placeholders and are meant
+// to be edited by an admin. Priced by area at add/edit time and sold at the LED markup.
+const COATING_OPTIONS: Array<[string, number]> = [
+  ['Protective coating', 120],
+  ['Gold coating', 260],
 ];
 
 // LED peripherals (controller input/output cards, multifunction card, sensors, converters).
@@ -470,6 +482,9 @@ async function main(): Promise<void> {
   );
   await seedIfEmpty('gobOption', () =>
     prisma.gobOption.createMany({ data: GOB_OPTIONS.map(([name, price]) => ({ name, price })) }),
+  );
+  await seedIfEmpty('coatingOption', () =>
+    prisma.coatingOption.createMany({ data: COATING_OPTIONS.map(([name, costPerSqm]) => ({ name, costPerSqm })) }),
   );
   await seedIfEmpty('ledPeripheral', () =>
     prisma.ledPeripheral.createMany({ data: LED_PERIPHERALS.map(([name, price]) => ({ name, price })) }),

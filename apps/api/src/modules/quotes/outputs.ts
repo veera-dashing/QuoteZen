@@ -82,6 +82,9 @@ export const buildDescriptions = (
         warrantyName: s.warranty?.name ?? null,
         locationName: quote.location?.name ?? null,
         qty: s.qty,
+        // AA4 — coating + high-resolution surfaced in the narrative when set.
+        coatingName: s.coating?.name ?? null,
+        highResolution: s.highResolution ?? null,
       }),
     });
   }

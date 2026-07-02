@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { WORKBOOK_DEFAULTS } from './constants.js';
 import {
+  coatingCost,
   freightWeightKg,
+  highResUplift,
   ledSpec,
   ledSupply,
   packagingCost,
@@ -70,6 +72,40 @@ describe('packaging & receiver-card add-ons (config-driven)', () => {
     const cfg = { ...WORKBOOK_DEFAULTS, addOns: { ...WORKBOOK_DEFAULTS.addOns, receiverCardCostAud: 30 } };
     expect(receiverCardCost(42, cfg).costAud.toString()).toBe('1260'); // 42 × 30
     expect(receiverCardCost(0, WORKBOOK_DEFAULTS).costAud.toString()).toBe('0');
+  });
+});
+
+describe('coating add-on (AA4 — protective / gold coating)', () => {
+  it('prices coating by area × cost/sqm, sold at the LED markup', () => {
+    // 2.1504 sqm × $100/sqm = 215.04 cost; × 1.5 = 322.56 sell
+    const r = coatingCost(2.1504, 100, WORKBOOK_DEFAULTS);
+    expect(r.costAud.toString()).toBe('215.04');
+    expect(r.sellAud.toString()).toBe('322.56');
+  });
+  it('is a no-op at 0 cost/sqm (nothing selected)', () => {
+    const r = coatingCost(2.1504, 0, WORKBOOK_DEFAULTS);
+    expect(r.costAud.toString()).toBe('0');
+    expect(r.sellAud.toString()).toBe('0');
+  });
+  it('rejects a negative rate', () => {
+    expect(() => coatingCost(2, -1, WORKBOOK_DEFAULTS)).toThrow(RangeError);
+  });
+});
+
+describe('high-resolution uplift (AA4)', () => {
+  it('applies a fraction of supply cost, sold at the LED markup', () => {
+    // 3364.61 supply × 0.10 = 336.461 → 336.46 cost; × 1.5 = 504.69 sell
+    const r = highResUplift(3364.61, 0.1, WORKBOOK_DEFAULTS);
+    expect(r.costAud.toString()).toBe('336.46');
+    expect(r.sellAud.toString()).toBe('504.69');
+  });
+  it('is a no-op at 0 uplift (the seeded default)', () => {
+    const r = highResUplift(3364.61, 0, WORKBOOK_DEFAULTS);
+    expect(r.costAud.toString()).toBe('0');
+    expect(r.sellAud.toString()).toBe('0');
+  });
+  it('rejects a negative uplift', () => {
+    expect(() => highResUplift(1000, -0.1, WORKBOOK_DEFAULTS)).toThrow(RangeError);
   });
 });
 

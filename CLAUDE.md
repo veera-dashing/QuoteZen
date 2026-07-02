@@ -736,3 +736,13 @@ options (Good/Better/Best)" button + tier cards + "Use this option" (sets the di
 (`display_catalog` already has sizeInch/sell/brand). 161 api tests green (+5); calc 124 (+8); typecheck + web build clean.
 Note: the display category includes accessory rows, so "value" can land on a low-cost accessory — the `category` param
 / a size floor is the lever if we want value constrained to full panels.
+
+### Block AA4 — LED add-ons: protective/gold coating + high-resolution (workshop rule #21, Group D)
+Migration `aa4_addons`: new `coating_options` lookup (name, cost_per_sqm, deprecated) + `quote_led_screens.coating_id`
+(FK, Restrict) + `high_resolution`; setting `high_res_uplift_pct` (default 0). calc `led.ts` `coatingCost(area,$/sqm)` +
+`highResUplift(supply,pct)` (LED-margin gross-up, negative-guarded, 0 at 0-rate). `computeLedScreenPricing` adds a
+coating line (area × $/sqm) when selected + a high-res uplift line only when the setting > 0 — **strict no-op by
+default** (canonical LED 12380 / 5046.92 & LCD 10120 samples unchanged). Persisted in all LED add/edit/duplicate/options
+paths; coating in the quote include; descriptions/PM handoff mention them; admin `coating-options` CRUD; LED form gains
+a Coating picker + High-resolution checkbox. 163 api tests green (+2); calc 130 (+6); typecheck + web build clean.
+Seed coating rates ($120/$260 per sqm) are admin-editable placeholders (workbook gives no rate).
