@@ -32,7 +32,14 @@ beforeAll(async () => {
   salesToken = await login('sales@quotezen.local');
 
   const fine = await prisma.ledProduct.findFirst({
-    where: { pixelPitchH: { lt: 2.5, gt: 0 }, minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchV: { not: null } },
+    where: {
+      pixelPitchH: { lt: 2.5, gt: 0 },
+      minCabinetWMm: { not: null },
+      minCabinetHMm: { not: null },
+      pixelPitchV: { not: null },
+      costPerSqmUsd: { not: null },
+      deprecated: false,
+    },
   });
   const coarse = await prisma.ledProduct.findFirst({
     where: {
@@ -57,6 +64,14 @@ afterAll(async () => {
 
 /** Create a sales-owned quote (so sales can act on it) and add one LED screen for the given product. */
 const seedQuoteWithScreen = async (productId: string) => {
+  const prod = await prisma.ledProduct.findUnique({
+    where: { id: BigInt(productId) },
+    select: { minCabinetWMm: true, minCabinetHMm: true },
+  });
+  // Use 2×3 cabinet fit for the product's actual cabinet size to guarantee a valid non-zero area.
+  const w = (prod?.minCabinetWMm ?? 320) * 2;
+  const h = (prod?.minCabinetHMm ?? 320) * 3;
+
   const created = await app.inject({
     method: 'POST',
     url: '/quotes',
@@ -69,8 +84,7 @@ const seedQuoteWithScreen = async (productId: string) => {
     method: 'POST',
     url: `/quotes/${id}/led-screens`,
     headers: bearer(salesToken),
-    // 960×1920 = exact 3×6 cabinet fit for a 320×320mm cabinet — avoids the nonstandard_cabinet block.
-    payload: { ledProductId: Number(productId), desiredWidthMm: 960, desiredHeightMm: 1920, rotateCabinets: false },
+    payload: { ledProductId: Number(productId), desiredWidthMm: w, desiredHeightMm: h, rotateCabinets: false },
   });
   expect(screen.statusCode).toBe(201);
   return id;
