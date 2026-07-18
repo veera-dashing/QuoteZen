@@ -17,9 +17,12 @@ let app: FastifyInstance;
 let token: string;
 const auth = () => ({ authorization: `Bearer ${token}` });
 
-// Settings we mutate to assert exact capture — restored in afterAll.
+// Settings we mutate to assert exact capture — restored in afterAll to canonical values.
 const MUTATED_KEYS = ['min_gross_margin', 'walk_away_margin'] as const;
-const original: Record<string, string | null> = {};
+const CANONICAL: Record<(typeof MUTATED_KEYS)[number], string> = {
+  min_gross_margin: '0.28',
+  walk_away_margin: '0.22',
+};
 
 beforeAll(async () => {
   app = await buildApp(loadConfig());
@@ -29,22 +32,12 @@ beforeAll(async () => {
     payload: { email: 'admin@quotezen.local', password: 'demo' },
   });
   token = res.json().token as string;
-
-  for (const key of MUTATED_KEYS) {
-    const row = await prisma.setting.findUnique({ where: { key } });
-    original[key] = row ? String(row.value) : null;
-  }
 });
 
 afterAll(async () => {
-  // Restore mutated settings to their original values (or remove if they didn't exist).
+  // Restore mutated settings to canonical values so a crash mid-test can't corrupt later runs.
   for (const key of MUTATED_KEYS) {
-    const prev = original[key];
-    if (prev == null) {
-      await prisma.setting.deleteMany({ where: { key } });
-    } else {
-      await prisma.setting.update({ where: { key }, data: { value: prev } });
-    }
+    await prisma.setting.update({ where: { key }, data: { value: CANONICAL[key] } }).catch(() => undefined);
   }
   await prisma.quote.deleteMany({ where: { jobReference: { startsWith: JOB_PREFIX } } });
   await app.close();

@@ -26,9 +26,9 @@ let directorToken: string;
 let coarseProductId: string;
 /** The base (undiscounted) margin of a clean coarse-pitch screen — measured in beforeAll. */
 let baseMargin: number;
-/** Seeded values to restore. */
-let seedMinGross = 0.28;
-let seedWalkAway = 0.22;
+/** Canonical seeded values — always restore to these so a mid-run crash can't corrupt later runs. */
+const SEED_MIN_GROSS = 0.28;
+const SEED_WALK_AWAY = 0.22;
 
 const bearer = (t: string) => ({ authorization: `Bearer ${t}` });
 const login = async (email: string) =>
@@ -76,12 +76,6 @@ beforeAll(async () => {
   managerToken = await login('manager@quotezen.local');
   directorToken = await login('director@quotezen.local');
 
-  // Remember the seeded thresholds to restore afterwards.
-  const min = await prisma.setting.findUnique({ where: { key: 'min_gross_margin' } });
-  const walk = await prisma.setting.findUnique({ where: { key: 'walk_away_margin' } });
-  if (min) seedMinGross = Number(min.value);
-  if (walk) seedWalkAway = Number(walk.value);
-
   // A coarse-pitch product (≥2.5mm) avoids the GOB_REQUIRED validation error so the margin band is the
   // sole gate; it must carry a USD supply cost so the screen actually has a margin.
   const coarse = await prisma.ledProduct.findFirst({
@@ -106,7 +100,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.quote.deleteMany({ where: { jobReference: { startsWith: JOB_PREFIX } } });
-  await setThresholds(seedMinGross, seedWalkAway).catch(() => undefined);
+  await setThresholds(SEED_MIN_GROSS, SEED_WALK_AWAY).catch(() => undefined);
   await app.close();
   await prisma.$disconnect();
 });

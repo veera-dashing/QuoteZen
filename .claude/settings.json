@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/veera/veera-files/seen_pocs/QuoteZen stash pop)",
+      "Bash(pnpm --filter @quotezen/api test -- src/modules/quotes/validate.test.ts --reporter=verbose)",
+      "Bash(pnpm --filter @quotezen/api test -- --reporter=verbose --testPathPattern=\"validate.test\")",
+      "Bash(node -e ' *)",
+      "Bash(pnpm --filter @quotezen/api exec vitest run src/modules/quotes/u5.test.ts --reporter=verbose)",
+      "Bash(git add *)"
+    ]
+  }
+}
