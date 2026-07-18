@@ -66,6 +66,11 @@ export const createQuoteSchema = z.object({
   tenureMonths: z.coerce.number().int().nonnegative().optional(),
   clientMustHaves: z.string().max(2000).optional(),
   needsSolutionsEngineer: z.boolean().optional(),
+  // Intake form v2 — quote-level fields from the intake questionnaire V0.2.
+  /** Account exec / owner for the quote (free text). */
+  accountExec: z.string().max(200).optional(),
+  /** Space around the screen (mm) — determines if an articulated bracket is needed. */
+  spaceAroundScreenMm: z.coerce.number().int().nonnegative().optional(),
   /** Viewer users this quote is shared with (they can read only quotes assigned to them). */
   viewerUserIds: z.array(idSchema).optional(),
 });
@@ -107,6 +112,9 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   tenureMonths: z.coerce.number().int().nonnegative().nullish(),
   clientMustHaves: z.string().max(2000).nullish(),
   needsSolutionsEngineer: z.boolean().nullish(),
+  // Intake form v2 — quote-level fields (nullish on update so they can be cleared).
+  accountExec: z.string().max(200).nullish(),
+  spaceAroundScreenMm: z.coerce.number().int().nonnegative().nullish(),
   /** Optimistic-locking token from the last read; a mismatch is a 409 conflict (P1-05.2). */
   expectedVersion: z.coerce.number().int().nonnegative().optional(),
 });
@@ -251,6 +259,13 @@ export const lcdScreenSchema = z.object({
   maxDepthMm: z.coerce.number().int().nonnegative().optional(),
   needsPc: z.boolean().optional(),
   needsHardDrive: z.boolean().optional(),
+  // Intake form v2 — LCD screen-level fields from the intake questionnaire V0.2.
+  /** Minimum display brightness requirement (nits) — captured for product selection. */
+  brightnessNits: z.coerce.number().int().nonnegative().optional(),
+  /** Operating hours / duty cycle (e.g. "Business hours (16/7)", "24/7"). */
+  dutyCycle: z.string().max(100).optional(),
+  /** Brand preference for the display (e.g. Samsung, Philips, Hisense, LG). */
+  preferredBrand: z.string().max(100).optional(),
   items: z.array(lcdItemSchema).default([]),
 });
 export type LcdScreenInput = z.infer<typeof lcdScreenSchema>;

@@ -47,6 +47,8 @@ interface LcdScreen {
   recessDepthMm?: number | null; // AA1 — recess/cavity depth (mm)
   // AA3a — site/requirement fields (selection rules).
   requiresAndroid?: boolean | null; maxDepthMm?: number | null; needsPc?: boolean | null; needsHardDrive?: boolean | null;
+  // Intake form v2 — LCD screen-level requirement/preference fields.
+  brightnessNits?: number | null; dutyCycle?: string | null; preferredBrand?: string | null;
   items?: LcdItem[];
 }
 interface Licence { id: string; screenType: string; tier: string; qty: number; isInteractive: boolean }
@@ -71,6 +73,8 @@ interface Quote {
   priceSensitivity?: 'budget' | 'balanced' | 'premium' | null;
   budgetAud?: string | null; tenureMonths?: number | null;
   clientMustHaves?: string | null; needsSolutionsEngineer?: boolean | null;
+  // Intake form v2 — quote-level fields.
+  accountExec?: string | null; spaceAroundScreenMm?: number | null;
   discountPct?: string | null; // stored as a fraction 0..1
   discountNote?: string | null; // manager justification, required above 5%
   discountScope?: 'one_off' | 'recurring' | null; // U5 — upfront vs every renewal
@@ -454,6 +458,11 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   );
   const [clientMustHaves, setClientMustHaves] = useState(quote?.clientMustHaves ?? '');
   const [needsSolutionsEngineer, setNeedsSolutionsEngineer] = useState<boolean>(quote?.needsSolutionsEngineer ?? false);
+  // Intake form v2 — account exec and space around screen.
+  const [accountExec, setAccountExec] = useState(quote?.accountExec ?? '');
+  const [spaceAroundScreenMm, setSpaceAroundScreenMm] = useState(
+    quote?.spaceAroundScreenMm != null ? String(quote.spaceAroundScreenMm) : '',
+  );
   const [discountPctInput, setDiscountPctInput] = useState(
     quote?.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
   );
@@ -564,6 +573,9 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       tenureMonths: tenureMonths.trim() === '' ? null : Number(tenureMonths),
       clientMustHaves: clientMustHaves.trim() ? clientMustHaves.trim() : null,
       needsSolutionsEngineer,
+      // Intake form v2 — account exec and space around screen.
+      accountExec: accountExec.trim() || null,
+      spaceAroundScreenMm: spaceAroundScreenMm.trim() === '' ? null : Number(spaceAroundScreenMm),
       discountPct: discountPctInput.trim() === '' ? null : Number(discountPctInput) / 100,
       discountNote: discountNote.trim() ? discountNote.trim() : null,
       discountScope,
@@ -594,7 +606,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
     } finally {
       setBusy(false);
     }
-  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, endCustomer, airsideLandside, sunExposure, wallSubstrate, powerDataAvailable, controllerLocation, windowFacing, mediaPlayerSupply, sharedDevicePlayers, sharedDeviceScreens, storeSizeSqm, customContentCuration, pcRequired, hardDriveRequired, priceSensitivity, budgetAud, tenureMonths, clientMustHaves, needsSolutionsEngineer, discountPctInput, discountNote, discountScope, onChange]);
+  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, endCustomer, airsideLandside, sunExposure, wallSubstrate, powerDataAvailable, controllerLocation, windowFacing, mediaPlayerSupply, sharedDevicePlayers, sharedDeviceScreens, storeSizeSqm, customContentCuration, pcRequired, hardDriveRequired, priceSensitivity, budgetAud, tenureMonths, clientMustHaves, needsSolutionsEngineer, accountExec, spaceAroundScreenMm, discountPctInput, discountNote, discountScope, onChange]);
 
   const save = persist;
 
@@ -647,6 +659,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
         </div>
         <h4 style={{ margin: '16px 0 4px' }}>Site context</h4>
         <div className="grid3">
+          <div><label>Account exec</label><input value={quote.accountExec ?? ''} readOnly /></div>
           <div><label>End customer</label><input value={quote.endCustomer ?? ''} readOnly /></div>
           <div><label>Airside / Landside</label><input value={quote.airsideLandside ?? ''} readOnly /></div>
           <div><label>Sun exposure</label><input value={quote.sunExposure ?? ''} readOnly /></div>
@@ -654,6 +667,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
           <div><label>Power &amp; data available</label><input value={quote.powerDataAvailable ?? ''} readOnly /></div>
           <div><label>Controller / media-player location</label><input value={quote.controllerLocation ?? ''} readOnly /></div>
           <div><label>Window-facing / glare risk</label><input value={quote.windowFacing == null ? '' : quote.windowFacing ? 'Yes' : 'No'} readOnly /></div>
+          <div><label>Space around screen (mm)</label><input value={quote.spaceAroundScreenMm != null ? String(quote.spaceAroundScreenMm) : ''} readOnly /></div>
         </div>
         <div style={{ marginTop: 12 }}>
           <label>Shared with viewers</label>
@@ -774,10 +788,14 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
         <textarea value={projectNotes} onChange={(e) => { setProjectNotes(e.target.value); setDirty(true); }} rows={3} style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box' }} placeholder="Internal project notes…" />
       </div>
 
-      {/* AA1 — site/context intake fields (one-per-quote site details from the intake questionnaire). */}
+      {/* AA1 + intake-v2 — site/context intake fields (one-per-quote site details from the intake questionnaire). */}
       <h4 style={{ margin: '18px 0 4px' }}>Site context</h4>
       <p className="muted" style={{ marginTop: 0 }}>Intake / site-prep details captured for the install location.</p>
       <div className="grid3">
+        <div>
+          <label>Account exec</label>
+          <input value={accountExec} onChange={(e) => { setAccountExec(e.target.value); setDirty(true); }} placeholder="Account exec / owner name" />
+        </div>
         <div>
           <label>End customer</label>
           <input value={endCustomer} onChange={(e) => { setEndCustomer(e.target.value); setDirty(true); }} placeholder="Where it's installed (e.g. Airport retailer)" />
@@ -833,11 +851,23 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
           <input value={controllerLocation} onChange={(e) => { setControllerLocation(e.target.value); setDirty(true); }} placeholder="e.g. comms room, behind screen" />
         </div>
       </div>
-      <div style={{ marginTop: 8 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={windowFacing} onChange={(e) => { setWindowFacing(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
-          Window-facing / glare risk
-        </label>
+      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={windowFacing} onChange={(e) => { setWindowFacing(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
+            Window-facing / glare risk
+          </label>
+        </div>
+        <div>
+          <label>Space around screen (mm)</label>
+          <input
+            type="number"
+            min={0}
+            value={spaceAroundScreenMm}
+            onChange={(e) => { setSpaceAroundScreenMm(e.target.value); setDirty(true); }}
+            placeholder="e.g. 50"
+          />
+        </div>
       </div>
 
       {/* AA5 — software/hardware dependency intake fields (Group E). Descriptive; no pricing impact. */}
@@ -2244,6 +2274,10 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const [maxDepthMm, setMaxDepthMm] = useState(editScreen?.maxDepthMm != null ? String(editScreen.maxDepthMm) : '');
   const [needsPc, setNeedsPc] = useState(editScreen?.needsPc ?? false);
   const [needsHardDrive, setNeedsHardDrive] = useState(editScreen?.needsHardDrive ?? false);
+  // Intake form v2 — LCD screen-level requirement/preference fields.
+  const [brightnessNits, setBrightnessNits] = useState(editScreen?.brightnessNits != null ? String(editScreen.brightnessNits) : '');
+  const [dutyCycle, setDutyCycle] = useState(editScreen?.dutyCycle ?? '');
+  const [preferredBrand, setPreferredBrand] = useState(editScreen?.preferredBrand ?? '');
   const [screenName, setScreenName] = useState(editScreen?.screenName ?? '');
   // Pre-fill line items from the screen's stored items (V4 edit). Manual = no displayId.
   const [lines, setLines] = useState<LcdLine[]>(
@@ -2291,7 +2325,13 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const catFor = (def: LcdSectionDef): Opt[] =>
     catalog.filter((r) => {
       const c = (r.category ?? '').toLowerCase();
-      return def.catMatch.some((m) => c.includes(m));
+      if (!def.catMatch.some((m) => c.includes(m))) return false;
+      // Intake form v2 — filter display rows by preferredBrand when set (only applies to the display section).
+      if (preferredBrand && def.itemType === 'display') {
+        const brand = (r.brand ?? '').toLowerCase();
+        if (brand && brand !== preferredBrand.toLowerCase()) return false;
+      }
+      return true;
     });
 
   const ohName = serviceHours.find((x) => x.id === serviceHoursId)?.name;
@@ -2409,6 +2449,10 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         needsPc,
         needsHardDrive,
         ...(maxDepthMm.trim() !== '' ? { maxDepthMm: Number(maxDepthMm) } : {}),
+        // Intake form v2 — LCD screen requirement/preference fields.
+        ...(brightnessNits.trim() !== '' ? { brightnessNits: Number(brightnessNits) } : {}),
+        ...(dutyCycle ? { dutyCycle } : {}),
+        ...(preferredBrand ? { preferredBrand } : {}),
         displayId: firstDisplay ? Number(firstDisplay) : undefined,
         serviceHoursId: serviceHoursId ? Number(serviceHoursId) : undefined,
         warrantyId: warrantyId ? Number(warrantyId) : undefined,
@@ -2430,6 +2474,9 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       setMaxDepthMm('');
       setNeedsPc(false);
       setNeedsHardDrive(false);
+      setBrightnessNits('');
+      setDutyCycle('');
+      setPreferredBrand('');
       await onChange();
     } finally {
       setBusy(false);
@@ -2475,15 +2522,49 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
             <input type="number" min={0} value={recessDepthMm} onChange={(e) => setRecessDepthMm(e.target.value)} placeholder="optional" />
           </div>
         </div>
-        {/* AA3a — site requirements feeding the LCD selection rules (validation warnings). */}
-        <h4 style={{ marginBottom: 6 }}>Site requirements</h4>
+        {/* AA3a + intake-v2 — site requirements, brand preference, and display specs. */}
+        <h4 style={{ marginBottom: 6 }}>Site requirements &amp; display preferences</h4>
         <div className="grid3">
           <div>
             <label>Max mounting depth (mm)</label>
             <input type="number" min={0} value={maxDepthMm} onChange={(e) => setMaxDepthMm(e.target.value)} placeholder="optional" />
           </div>
           <div>
-            <label>Display brand</label>
+            <label>Min brightness (nits)</label>
+            <input type="number" min={0} value={brightnessNits} onChange={(e) => setBrightnessNits(e.target.value)} placeholder="e.g. 500" />
+          </div>
+          <div>
+            <label>Duty cycle / operating hours</label>
+            <SearchSelect
+              value={dutyCycle}
+              onChange={(v) => setDutyCycle(v)}
+              allowEmpty
+              placeholder="—"
+              options={[
+                { value: 'Business hours (16/7)', label: 'Business hours (16/7)' },
+                { value: '24/7', label: '24/7' },
+                { value: 'Always on (24/7)', label: 'Always on (24/7)' },
+              ]}
+            />
+          </div>
+          <div>
+            <label>Brand preference</label>
+            <SearchSelect
+              value={preferredBrand}
+              onChange={(v) => setPreferredBrand(v)}
+              allowEmpty
+              placeholder="— Any brand"
+              options={[
+                { value: 'Samsung', label: 'Samsung' },
+                { value: 'Philips', label: 'Philips' },
+                { value: 'Hisense', label: 'Hisense' },
+                { value: 'LG', label: 'LG' },
+                { value: 'Other', label: 'Other' },
+              ]}
+            />
+          </div>
+          <div>
+            <label>Display brand (from chosen display)</label>
             <input value={chosenDisplayBrand ?? ''} readOnly placeholder="— (from chosen display)" />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'flex-end' }}>
@@ -2498,6 +2579,11 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
             </label>
           </div>
         </div>
+        {preferredBrand && (
+          <p className="muted" style={{ marginTop: 4, marginBottom: 0 }}>
+            Display picker filtered to <b>{preferredBrand}</b> — clear brand preference to see all options.
+          </p>
+        )}
         {outOfHours && (
           <p className="muted" style={{ marginBottom: 0 }}>Out-of-hours service hours selected — an out-of-hours labour uplift will be added on save (F31).</p>
         )}

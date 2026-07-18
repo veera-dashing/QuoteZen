@@ -247,6 +247,9 @@ const buildSiteContext = (quote: QuoteWithChildren): Record<string, string> | nu
   if (quote.powerDataAvailable) ctx.powerDataAvailable = quote.powerDataAvailable;
   if (quote.controllerLocation) ctx.controllerLocation = quote.controllerLocation;
   if (quote.windowFacing != null) ctx.windowFacing = quote.windowFacing ? 'Yes' : 'No';
+  // Intake form v2 — account exec and space-around-screen.
+  if (quote.accountExec) ctx.accountExec = quote.accountExec;
+  if (quote.spaceAroundScreenMm != null) ctx.spaceAroundScreenMm = `${quote.spaceAroundScreenMm} mm`;
   return Object.keys(ctx).length > 0 ? ctx : null;
 };
 

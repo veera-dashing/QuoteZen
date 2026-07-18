@@ -54,7 +54,8 @@ const newQuoteWithScreen = async (headers: Record<string, string>): Promise<stri
     method: 'POST',
     url: `/quotes/${id}/led-screens`,
     headers,
-    payload: { ledProductId: Number(coarseProductId), desiredWidthMm: 1120, desiredHeightMm: 1920, rotateCabinets: true },
+    // 960×1920 = exact 3×6 cabinet fit for a 320×320mm cabinet — avoids the nonstandard_cabinet block.
+    payload: { ledProductId: Number(coarseProductId), desiredWidthMm: 960, desiredHeightMm: 1920, rotateCabinets: false },
   });
   expect(screen.statusCode).toBe(201);
   return id;
