@@ -35,7 +35,14 @@ beforeAll(async () => {
     where: { pixelPitchH: { lt: 2.5, gt: 0 }, minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchV: { not: null } },
   });
   const coarse = await prisma.ledProduct.findFirst({
-    where: { pixelPitchH: { gte: 2.5 }, minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchV: { not: null } },
+    where: {
+      pixelPitchH: { gte: 2.5 },
+      minCabinetWMm: { not: null },
+      minCabinetHMm: { not: null },
+      pixelPitchV: { not: null },
+      costPerSqmUsd: { not: null },
+      deprecated: false,
+    },
   });
   if (!fine || !coarse) throw new Error('Expected both a fine-pitch and coarse-pitch LED product in the catalogue');
   finePitchProductId = fine.id.toString();
@@ -62,7 +69,8 @@ const seedQuoteWithScreen = async (productId: string) => {
     method: 'POST',
     url: `/quotes/${id}/led-screens`,
     headers: bearer(salesToken),
-    payload: { ledProductId: Number(productId), desiredWidthMm: 1120, desiredHeightMm: 1920, rotateCabinets: true },
+    // 960×1920 = exact 3×6 cabinet fit for a 320×320mm cabinet — avoids the nonstandard_cabinet block.
+    payload: { ledProductId: Number(productId), desiredWidthMm: 960, desiredHeightMm: 1920, rotateCabinets: false },
   });
   expect(screen.statusCode).toBe(201);
   return id;

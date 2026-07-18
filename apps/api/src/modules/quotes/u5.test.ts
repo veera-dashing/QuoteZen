@@ -68,7 +68,8 @@ const newQuote = async (
     method: 'POST',
     url: `/quotes/${id}/led-screens`,
     headers,
-    payload: { ledProductId: Number(product.id), desiredWidthMm: 1120, desiredHeightMm: 1920, rotateCabinets: true },
+    // 960×1920 = exact 3×6 cabinet fit for a 320×320mm cabinet — avoids the nonstandard_cabinet block.
+    payload: { ledProductId: Number(product.id), desiredWidthMm: 960, desiredHeightMm: 1920, rotateCabinets: false },
   });
   // Attach a recurring music line so the recurring total is non-zero (to test recurring-scope).
   const music = await prisma.musicService.findFirst({ where: { sell: { gt: 0 } } });

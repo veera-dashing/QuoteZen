@@ -38,7 +38,10 @@ const SETTINGS: Array<{ key: string; label: string; value?: number; valueText?: 
   { key: 'time_estimate_multiplier', label: 'Time Estimate Multiplier', value: 1.3, unit: 'x' },
   { key: 'material_estimate_multiplier', label: 'Material Estimate Multiplier', value: 1.0, unit: 'x' },
   // Add-on + governance settings (Phase 1 deterministic platform).
-  { key: 'spares_pct', label: 'Spares %', value: 0.1, unit: 'fraction' },
+  { key: 'spares_pct', label: 'Spares % (with GOB)', value: 0.1, unit: 'fraction' },
+  // Fix A — GOB-dependent spares (workbook row 252): no-GOB screens carry 15% spares; GOB screens 10%.
+  // Seeded at the workbook default (0.15); admin-editable via Settings.
+  { key: 'no_gob_spares_pct', label: 'Spares % (no GOB)', value: 0.15, unit: 'fraction' },
   { key: 'packaging_pct', label: 'Packaging %', value: 0, unit: 'fraction' },
   { key: 'receiver_card_cost', label: 'Receiver Card Cost (per cabinet)', value: 0, unit: '$' },
   // AA4 — high-resolution supply uplift (fraction of the LED supply cost). Seeded at 0 so it is a

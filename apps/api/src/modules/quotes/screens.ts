@@ -558,6 +558,15 @@ const computeLedScreenPricing = async (
 ): Promise<LedScreenPricing> => {
   const { config, dbRateCodes } = await loadPricingContext();
 
+  // Fix B — per-client LED margin (RefData!F13): twelve named clients use 30% instead of 33%.
+  // `clients.defaultMargin` carries the override; null → use the global config rate.
+  const clientDefaultMargin = quote.client?.defaultMargin ? Number(quote.client.defaultMargin) : null;
+  const ledMargin = clientDefaultMargin ?? config.markups.ledMargin;
+
+  // Fix A — no-GOB spares pct: workbook row 252: IF(GOB="NO GOB", 15%, 10%).
+  // Read admin-settable `no_gob_spares_pct` (default 0.15); GOB-present uses `config.addOns.sparesPct` (10%).
+  const noGobSparesPct = await settingNum('no_gob_spares_pct', 0.15);
+
   const product = input.ledProductId
     ? await prisma.ledProduct.findUnique({ where: { id: BigInt(input.ledProductId) } })
     : null;
@@ -601,8 +610,22 @@ const computeLedScreenPricing = async (
         costAud: supply.costAud,
         sellAud: supply.sellAud,
       });
-      // Spares allowance (10% of supply by default).
-      const spares = sparesCost(supply.costAud, config);
+
+      // Fix A — GOB cost computed BEFORE spares so it can be included in the spares base.
+      // Workbook row 258: GOB rate × (1 + sparesPct) — equivalent to spares on supply+GOB.
+      // GOB line (metalwork markup) is pushed after spares to keep the order: supply → spares → GOB.
+      let gobCostAud = round(0);
+      if (input.gobId) {
+        const gobRow = await prisma.gobOption.findUnique({ where: { id: BigInt(input.gobId) } });
+        if (gobRow && Number(gobRow.price) > 0) {
+          gobCostAud = round(Number(gobRow.price) * spec.areaSqm.toNumber());
+        }
+      }
+
+      // Fix A — spares rate: 15% when no GOB, 10% (config.addOns.sparesPct) when GOB present.
+      // Base includes gobCostAud so the workbook's row-258 grossing is preserved without changing the GOB line.
+      const sparesRate = input.gobId ? config.addOns.sparesPct : noGobSparesPct;
+      const spares = sparesCost(supply.costAud.plus(gobCostAud), config, sparesRate);
       lines.push({
         label: 'Spares',
         bucket: 'screen_mediaplayer',
@@ -674,7 +697,8 @@ const computeLedScreenPricing = async (
     } else if (c.mediaplayerId) {
       const row = await prisma.mediaplayer.findUnique({ where: { id: BigInt(c.mediaplayerId) } });
       cost = Number(row?.cost ?? 0);
-      sell = applyMargin(cost, config.markups.ledMargin).toNumber();
+      // Fix B — per-client LED margin: use the resolved `ledMargin` (client override or global).
+      sell = applyMargin(cost, ledMargin).toNumber();
       label = `Mediaplayer — ${row?.name ?? ''}`;
     } else if (c.peripheralId) {
       const row = await prisma.peripheral.findUnique({ where: { id: BigInt(c.peripheralId) } });
@@ -695,7 +719,8 @@ const computeLedScreenPricing = async (
     });
   }
 
-  // Frame + GOB (metalwork markup).
+  // Frame (metalwork markup). GOB is now computed before spares (Fix A) but its line is pushed here,
+  // alongside the frame, to keep the frame_trim bucket together in the output.
   if (input.frameId) {
     const frame = await prisma.frame.findUnique({ where: { id: BigInt(input.frameId) } });
     if (frame) {
@@ -703,11 +728,15 @@ const computeLedScreenPricing = async (
       lines.push(markupLine(`Frame — ${frame.name}`, 'frame_trim', cost, config.markups.metalwork));
     }
   }
+  // GOB line (metalwork markup): cost was computed above in the supply block (Fix A). Push it here so
+  // the frame_trim bucket stays contiguous. gobCostAud is 0 when no GOB was selected.
   if (input.gobId && spec) {
     const gob = await prisma.gobOption.findUnique({ where: { id: BigInt(input.gobId) } });
-    if (gob && Number(gob.price) > 0) {
-      const cost = Number(gob.price) * spec.areaSqm.toNumber();
-      lines.push(markupLine(`GOB — ${gob.name}`, 'frame_trim', cost, config.markups.metalwork));
+    if (gob) {
+      const gobLineCost = Number(gob.price) * spec.areaSqm.toNumber();
+      if (gobLineCost > 0) {
+        lines.push(markupLine(`GOB — ${gob.name}`, 'frame_trim', gobLineCost, config.markups.metalwork));
+      }
     }
   }
 
@@ -1546,6 +1575,10 @@ export const updateLcdScreen = async (
         maxDepthMm: input.maxDepthMm ?? null,
         needsPc: input.needsPc ?? null,
         needsHardDrive: input.needsHardDrive ?? null,
+        // Intake form v2 — LCD screen-level requirement/preference fields.
+        brightnessNits: input.brightnessNits ?? null,
+        dutyCycle: input.dutyCycle ?? null,
+        preferredBrand: input.preferredBrand ?? null,
         priceScreenMediaplayer: priceScreenMediaplayer.toString(),
         priceBracketShroud: priceBracketShroud.toString(),
         priceServices: priceServices.toString(),
@@ -1625,6 +1658,10 @@ export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdSc
         maxDepthMm: input.maxDepthMm ?? null,
         needsPc: input.needsPc ?? null,
         needsHardDrive: input.needsHardDrive ?? null,
+        // Intake form v2 — LCD screen-level requirement/preference fields.
+        brightnessNits: input.brightnessNits ?? null,
+        dutyCycle: input.dutyCycle ?? null,
+        preferredBrand: input.preferredBrand ?? null,
         priceScreenMediaplayer: priceScreenMediaplayer.toString(),
         priceBracketShroud: priceBracketShroud.toString(),
         priceServices: priceServices.toString(),

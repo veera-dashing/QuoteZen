@@ -66,6 +66,8 @@ const QUOTE_HEADER_FIELDS = [
   'tenureMonths',
   'clientMustHaves',
   'needsSolutionsEngineer',
+  'accountExec',
+  'spaceAroundScreenMm',
 ] as const;
 
 const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toString() : '0');
@@ -190,6 +192,8 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput, actor
         tenureMonths: input.tenureMonths ?? null,
         clientMustHaves: input.clientMustHaves ?? null,
         needsSolutionsEngineer: input.needsSolutionsEngineer ?? null,
+        accountExec: input.accountExec ?? null,
+        spaceAroundScreenMm: input.spaceAroundScreenMm ?? null,
         createdById: userId,
         viewers: input.viewerUserIds?.length
           ? { create: input.viewerUserIds.map((uid) => ({ userId: BigInt(uid) })) }
@@ -397,6 +401,8 @@ export const updateQuote = async (
   if (input.tenureMonths !== undefined) data.tenureMonths = input.tenureMonths;
   if (input.clientMustHaves !== undefined) data.clientMustHaves = input.clientMustHaves;
   if (input.needsSolutionsEngineer !== undefined) data.needsSolutionsEngineer = input.needsSolutionsEngineer;
+  if (input.accountExec !== undefined) data.accountExec = input.accountExec;
+  if (input.spaceAroundScreenMm !== undefined) data.spaceAroundScreenMm = input.spaceAroundScreenMm;
   if (input.currencyCode !== undefined) {
     const currency = await findCurrencyByCode(input.currencyCode);
     if (!currency) throw notFound('Currency', input.currencyCode);

@@ -938,6 +938,11 @@ model Quote {
   clientMustHaves       String?     @map("client_must_haves")
   /** Whether a solutions engineer review is requested (also triggered by a large screen count). */
   needsSolutionsEngineer Boolean?   @map("needs_solutions_engineer")
+  // Intake form v2 — quote-level fields from the intake questionnaire V0.2.
+  /** Account exec / owner for the quote (free text). */
+  accountExec           String?     @map("account_exec")
+  /** Space around the screen (mm) — determines if an articulated bracket is needed. */
+  spaceAroundScreenMm   Int?        @map("space_around_screen_mm")
   /** Soft-delete / archive timestamp (P1-05.1); null = active. The row is never hard-deleted. */
   archivedAt            DateTime?   @map("archived_at")
   estimatedCost         Decimal?    @map("estimated_cost") @db.Decimal(12, 2)
@@ -1189,6 +1194,13 @@ model QuoteLcdScreen {
   maxDepthMm             Int?     @map("max_depth_mm")
   needsPc                Boolean? @map("needs_pc")
   needsHardDrive         Boolean? @map("needs_hard_drive")
+  // Intake form v2 — LCD screen-level fields from the intake questionnaire V0.2.
+  /** Minimum display brightness requirement (nits) — captured for product selection. */
+  brightnessNits         Int?     @map("brightness_nits")
+  /** Operating hours / duty cycle (e.g. "Business hours (16/7)", "24/7"). */
+  dutyCycle              String?  @map("duty_cycle")
+  /** Brand preference for the display (e.g. Samsung, Philips, Hisense, LG). */
+  preferredBrand         String?  @map("preferred_brand")
   priceScreenMediaplayer Decimal? @map("price_screen_mediaplayer") @db.Decimal(12, 2)
   priceBracketShroud     Decimal? @map("price_bracket_shroud") @db.Decimal(12, 2)
   priceServices          Decimal? @map("price_services") @db.Decimal(12, 2)
