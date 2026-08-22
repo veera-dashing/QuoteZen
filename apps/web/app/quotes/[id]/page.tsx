@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { api, ApiError, downloadFile, getRole, uploadFile } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
+import type { LedIntakeInput } from '@quotezen/shared';
 
 interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null }
 // A stored LED component row (as returned on the screen) — carries the componentType + the one FK id.
@@ -24,6 +25,7 @@ interface LedScreen {
   // The attached LED product (model) + its manufacturer, for the "Manufacturer - Model" row label.
   ledProduct?: { model: string; manufacturer?: { name: string } | null } | null;
   components?: LedComponent[];
+  intakeAnswers?: LedIntakeInput | null;
   // Secondary options/services (Form 2) — raw FK scalars + housing/notes, used to pre-fill the editor.
   gobId?: string | null; frameId?: string | null; trimId?: string | null; hangingBarId?: string | null;
   engineeringId?: string | null; installMethodId?: string | null; freightOptionId?: string | null;
@@ -1006,6 +1008,23 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   );
 }
 
+interface TreeConstraints {
+  recommendedModelFamilies?: string[];
+  maxPitchMm?: number;
+  minPitchMm?: number;
+  pitchGuidance?: string;
+  minBrightnessNits?: number;
+  gobRequired?: boolean;
+  highAvailabilityRequired?: boolean;
+  weatherRatingRequired?: boolean;
+  curvedRequired?: boolean;
+  transparentRequired?: boolean;
+  doubleSidedRequired?: boolean;
+  allowStandardCabinets?: boolean;
+  requiresFrontService?: boolean;
+  requiresRearService?: boolean;
+}
+
 interface ConfigOption {
   productId: string;
   model: string;
@@ -1038,6 +1057,11 @@ interface ConfigOption {
   // W0: pixel pitch (mm) + a fine-pitch GOB recommendation flag (from env/viewing-distance selection).
   pixelPitchMm: number;
   gobRecommended: boolean;
+  // LED Selection Tree recommendation properties
+  recommendedFamily?: boolean;
+  recommendedReason?: string;
+  isTransparent?: boolean;
+  supportsCurved?: boolean;
 }
 
 // Good / Better / Best tiered option (T2): a ranked config + tier label/rationale + supply price.
@@ -1344,6 +1368,21 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const [w, setW] = useState(editScreen?.desiredWidthMm != null ? String(editScreen.desiredWidthMm) : '1120');
   const [h, setH] = useState(editScreen?.desiredHeightMm != null ? String(editScreen.desiredHeightMm) : '1920');
   const [rotate, setRotate] = useState(editScreen ? !!editScreen.rotateCabinets : true);
+  // LED Selection Tree Guided Intake State
+  const [intake, setIntake] = useState<LedIntakeInput>(() => ({
+    environment: 'Indoor',
+    priority: 'Value',
+    curved: 'No',
+    transparent: 'No',
+    indoorLocation: 'On a wall',
+    viewingIndoor: '1 to 2 metres',
+    ...(editScreen?.intakeAnswers ?? {}),
+  }));
+  const [treeConstraints, setTreeConstraints] = useState<TreeConstraints | null>(null);
+  const [caveats, setCaveats] = useState<string[]>([]);
+  const [primaryRecommendationText, setPrimaryRecommendationText] = useState<string | null>(null);
+  const [guidedIntakeOpen, setGuidedIntakeOpen] = useState(true);
+
   // W0: query-only selection drivers (not persisted on the screen) — environment + viewing distance.
   // These narrow/rank the suggestions server-side (brightness fallback + max-pitch filter). Kept
   // across configure() and loadTiers().
@@ -1490,12 +1529,13 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const onRatioChange = (v: string) => { setAspectRatioId(v); recalcDim('w', w, orientation, v); };
 
   // W0: the selection query body shared by configure() and loadTiers(). Environment + viewing
-  // distance are optional and only sent when set.
+  // distance are optional and only sent when set; intake is passed for tree-based selection.
   const selectionBody = () => ({
     desiredWidthMm: Number(w),
     desiredHeightMm: Number(h),
     allowRotation: rotate,
-    ...(environment ? { environment } : {}),
+    intake,
+    environment: intake.environment ? intake.environment.toLowerCase() : environment ? environment : undefined,
     ...(Number(viewingDistanceM) > 0 ? { viewingDistanceM: Number(viewingDistanceM) } : {}),
   });
 
@@ -1503,12 +1543,22 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     setBusy(true);
     setErr(null);
     try {
-      const res = await api<{ options: ConfigOption[]; reasons: string[]; toleranceBands?: number[] }>(
+      const res = await api<{
+        options: ConfigOption[];
+        reasons: string[];
+        toleranceBands?: number[];
+        treeConstraints?: TreeConstraints;
+        caveats?: string[];
+        primaryRecommendationText?: string;
+      }>(
         `/quotes/${quote.id}/screens/configure`,
         { method: 'POST', body: JSON.stringify(selectionBody()) },
       );
       setOptions(res.options);
       setReasons(res.reasons);
+      setTreeConstraints(res.treeConstraints ?? null);
+      setCaveats(res.caveats ?? []);
+      setPrimaryRecommendationText(res.primaryRecommendationText ?? null);
       // Best-fit and Good/Better/Best are mutually exclusive views — showing one hides the other.
       setTiers(null);
       setTierReasons([]);
@@ -1532,7 +1582,16 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     setBusy(true);
     setErr(null);
     try {
-      const res = await api<{ options: TierOption[]; reasons: string[]; distinctProducts: number; toleranceBands?: number[]; commercialHints?: CommercialHints }>(
+      const res = await api<{
+        options: TierOption[];
+        reasons: string[];
+        distinctProducts: number;
+        toleranceBands?: number[];
+        commercialHints?: CommercialHints;
+        treeConstraints?: TreeConstraints;
+        caveats?: string[];
+        primaryRecommendationText?: string;
+      }>(
         `/quotes/${quote.id}/screens/options`,
         { method: 'POST', body: JSON.stringify(selectionBody()) },
       );
@@ -1540,6 +1599,9 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       setTierReasons(res.reasons);
       setDistinctProducts(res.distinctProducts);
       setCommercialHints(res.commercialHints ?? null);
+      setTreeConstraints(res.treeConstraints ?? null);
+      setCaveats(res.caveats ?? []);
+      setPrimaryRecommendationText(res.primaryRecommendationText ?? null);
       // Best-fit and Good/Better/Best are mutually exclusive views — showing one hides the other.
       setOptions(null);
       setReasons([]);
@@ -1585,6 +1647,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         desiredWidthMm: Number(w),
         desiredHeightMm: Number(h),
         rotateCabinets: rotate,
+        intakeAnswers: intake,
         // S1 inputs (only sent when set).
         ...(orientation ? { orientation } : {}),
         ...(aspectRatioId ? { aspectRatioId: Number(aspectRatioId) } : {}),
@@ -1628,6 +1691,17 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       setRecessDepthMm('');
       setFrameNote('');
       setServiceDescriptionSuffix('');
+      setIntake({
+        environment: 'Indoor',
+        priority: 'Value',
+        curved: 'No',
+        transparent: 'No',
+        indoorLocation: 'On a wall',
+        viewingIndoor: '1 to 2 metres',
+      });
+      setTreeConstraints(null);
+      setCaveats([]);
+      setPrimaryRecommendationText(null);
       setAccordionOpen(true);
       await onChange();
     } catch (e) {
@@ -1658,6 +1732,23 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   if (!(Number(w) > 0)) missing.push('width');
   if (!(Number(h) > 0)) missing.push('height');
   const canAddSpecific = missing.length === 0;
+
+  // Derived metrics for Guided Selection (auto-calculated from opening geometry)
+  const widthMmNum = Number(w) || 0;
+  const heightMmNum = Number(h) || 0;
+  const areaSqm = widthMmNum > 0 && heightMmNum > 0 ? (widthMmNum / 1000) * (heightMmNum / 1000) : 0;
+  const isSmall = widthMmNum > 0 && heightMmNum > 0 && Math.min(widthMmNum, heightMmNum) < 1000;
+  const isUnder1Point5 = areaSqm > 0 && areaSqm < 1.5;
+  const sizeBand =
+    areaSqm <= 1.5 ? '<1.5 sqm' :
+    areaSqm <= 4 ? '1-4 sqm' :
+    areaSqm <= 8 ? '4-8 sqm' :
+    areaSqm <= 15 ? '8-15 sqm' :
+    areaSqm <= 25 ? '15-25 sqm' : '>25 sqm';
+  const exact169 =
+    widthMmNum > 0 && heightMmNum > 0
+      ? Math.abs(widthMmNum / heightMmNum - 16 / 9) < 0.05 || Math.abs(heightMmNum / widthMmNum - 16 / 9) < 0.05
+      : false;
 
   return (
     <div>
@@ -1732,48 +1823,431 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         <p className="muted" style={{ marginTop: 4 }}>
           Pick orientation + an aspect ratio and one dimension auto-fills the other (still editable).
         </p>
-        {/* W0: environment + viewing distance + GOB drive the suggestions. */}
-        <h4 style={{ margin: '14px 0 4px' }}>Environment &amp; suitability</h4>
-        <div className="grid3">
-          <div>
-            <label>Viewing distance (m)</label>
-            <input
-              type="number"
-              min="0"
-              step="0.5"
-              value={viewingDistanceM}
-              onChange={(e) => setViewingDistanceM(e.target.value)}
-              placeholder="optional"
-            />
-            <p className="muted" style={{ margin: '2px 0 0', fontSize: 12 }}>
-              Filters to panels sharp at this distance (max pitch ≈ distance in metres).
-            </p>
+        {/* LED Selection Tree: Guided Product Intake Questionnaire */}
+        <div style={{ marginTop: 16, border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, padding: 14, background: 'var(--bg-subtle, rgba(0,0,0,0.02))' }}>
+          <div className="list-row" style={{ alignItems: 'center', marginBottom: 8 }}>
+            <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>🧠 Guided Product Selection</span>
+              <span className="pill" style={{ fontSize: 11, background: 'var(--accent-bg, rgba(79,70,229,0.1))', color: 'var(--accent, #4f46e5)' }}>
+                Decision Tree
+              </span>
+            </h4>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setGuidedIntakeOpen((o) => !o)}
+              style={{ fontSize: 12, padding: '2px 8px' }}
+            >
+              {guidedIntakeOpen ? '▲ Collapse questionnaire' : '▼ Expand questionnaire'}
+            </button>
           </div>
-          <div>
-            <label>Environment</label>
-            <SearchSelect
-              value={environment}
-              onChange={setEnvironment}
-              allowEmpty
-              placeholder="Any"
-              options={[{ value: 'indoor', label: 'Indoor' }, { value: 'outdoor', label: 'Outdoor' }]}
-            />
+
+          {/* Auto-derived dimension tags */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: guidedIntakeOpen ? 12 : 0, fontSize: 12 }}>
+            <span className="pill" style={{ background: '#f1f5f9', color: '#475569' }}>
+              📐 Area: <b>{areaSqm > 0 ? `${areaSqm.toFixed(2)} m²` : '—'}</b>
+            </span>
+            <span className="pill" style={{ background: '#f1f5f9', color: '#475569' }}>
+              📊 Band: <b>{areaSqm > 0 ? sizeBand : '—'}</b>
+            </span>
+            {isSmall && (
+              <span className="pill" style={{ background: '#fef3c7', color: '#92400e' }}>
+                ⚡ Small dimension (&lt;1m)
+              </span>
+            )}
+            {isUnder1Point5 && (
+              <span className="pill" style={{ background: '#fef3c7', color: '#92400e' }}>
+                📏 &lt;1.5 m² (Specialty)
+              </span>
+            )}
+            {exact169 && (
+              <span className="pill" style={{ background: '#dcfce7', color: '#166534' }}>
+                ✨ ~16:9 Aspect Ratio
+              </span>
+            )}
           </div>
-          <div>
-            <label>GOB (fine pitch)</label>
-            <SearchSelect
-              value={selectedOpts.gobId}
-              onChange={(v) => setSelectedOpts((p) => ({ ...p, gobId: v }))}
-              allowEmpty
-              placeholder="Select GOB…"
-              options={(optionRows.gobId ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
-            />
-            <p className="muted" style={{ margin: '2px 0 0', fontSize: 12 }}>
-              GOB (glass-on-board) protects fine-pitch (&lt;2.5mm) screens.
-            </p>
-          </div>
+
+          {guidedIntakeOpen && (
+            <div>
+              {/* Environment toggle */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Environment</label>
+                <div role="group" style={{ display: 'inline-flex', gap: 4 }}>
+                  <button
+                    type="button"
+                    className={intake.environment === 'Indoor' ? 'primary' : 'ghost'}
+                    onClick={() => setIntake((p) => ({ ...p, environment: 'Indoor' }))}
+                  >
+                    🏠 Indoor
+                  </button>
+                  <button
+                    type="button"
+                    className={intake.environment === 'Outdoor' ? 'primary' : 'ghost'}
+                    onClick={() => setIntake((p) => ({ ...p, environment: 'Outdoor' }))}
+                  >
+                    ⛅ Outdoor
+                  </button>
+                </div>
+              </div>
+
+              {/* Indoor Questions */}
+              {intake.environment === 'Indoor' && (
+                <div className="grid3" style={{ gap: '10px 14px' }}>
+                  <div>
+                    <label style={{ fontSize: 12 }}>Priority / Budget Tier</label>
+                    <SearchSelect
+                      value={intake.priority || 'Value'}
+                      onChange={(v) => setIntake((p) => ({ ...p, priority: v as any }))}
+                      options={[
+                        { value: 'Value', label: 'Value (Budget-conscious)' },
+                        { value: 'Quality', label: 'Quality (High reliability)' },
+                        { value: 'High End', label: 'High End (Flagship)' },
+                        { value: 'Performance', label: 'Performance' },
+                        { value: 'Best Value', label: 'Best Value' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Intended Use</label>
+                    <SearchSelect
+                      value={intake.use || ''}
+                      onChange={(v) => setIntake((p) => ({ ...p, use: v as any }))}
+                      allowEmpty
+                      placeholder="General"
+                      options={[
+                        { value: 'Digital poster or retail display', label: 'Digital poster or retail display' },
+                        { value: 'Directory board', label: 'Directory board' },
+                        { value: 'Information display (computer monitor)', label: 'Information display (computer monitor)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Viewing Distance (Indoor)</label>
+                    <SearchSelect
+                      value={intake.viewingIndoor || '1 to 2 metres'}
+                      onChange={(v) => setIntake((p) => ({ ...p, viewingIndoor: v as any }))}
+                      options={[
+                        { value: 'Less than 1 metre', label: 'Less than 1 metre (Close)' },
+                        { value: '1 to 2 metres', label: '1 to 2 metres' },
+                        { value: '2 to 3 metres', label: '2 to 3 metres' },
+                        { value: 'More than 3 metres', label: 'More than 3 metres' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Mounting Location</label>
+                    <SearchSelect
+                      value={intake.indoorLocation || 'On a wall'}
+                      onChange={(v) => setIntake((p) => ({ ...p, indoorLocation: v as any }))}
+                      options={[
+                        { value: 'On a wall', label: 'On a wall (Surface mount)' },
+                        { value: 'Behind Window', label: 'Behind Window (In-window)' },
+                        { value: 'On a fixture', label: 'On a fixture / Totem' },
+                        { value: 'Hanging', label: 'Hanging (Ceiling suspend)' },
+                        { value: 'On a ceiling', label: 'On a ceiling' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Curved / Flexible Screen?</label>
+                    <SearchSelect
+                      value={intake.curved || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, curved: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No (Flat)' },
+                        { value: 'Yes', label: 'Yes (Curved / Flex module)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Transparent Screen?</label>
+                    <SearchSelect
+                      value={intake.transparent || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, transparent: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No (Solid)' },
+                        { value: 'Yes', label: 'Yes (Transparent mesh / Film)' },
+                      ]}
+                    />
+                  </div>
+
+                  {/* Conditionally rendered indoor questions */}
+                  {(intake.indoorLocation === 'Behind Window' ||
+                    intake.indoorLocation === 'Hanging' ||
+                    intake.indoorLocation === 'On a fixture') && (
+                    <div>
+                      <label style={{ fontSize: 12 }}>Double Sided Display?</label>
+                      <SearchSelect
+                        value={intake.doubleSided || 'No'}
+                        onChange={(v) => setIntake((p) => ({ ...p, doubleSided: v as any }))}
+                        options={[
+                          { value: 'No', label: 'No (Single-sided)' },
+                          { value: 'Yes', label: 'Yes (Double-sided)' },
+                        ]}
+                      />
+                    </div>
+                  )}
+
+                  {intake.indoorLocation === 'Behind Window' && (
+                    <>
+                      <div>
+                        <label style={{ fontSize: 12 }}>Set Back from Glass (&gt;500mm)?</label>
+                        <SearchSelect
+                          value={intake.canSetBack || 'No'}
+                          onChange={(v) => setIntake((p) => ({ ...p, canSetBack: v as any }))}
+                          options={[
+                            { value: 'No', label: 'No (&lt;500mm, tight window cavity)' },
+                            { value: 'Yes', label: 'Yes (&gt;500mm, accessible)' },
+                          ]}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: 12 }}>90° Convex Corner?</label>
+                        <SearchSelect
+                          value={intake.convexCorner || 'No'}
+                          onChange={(v) => setIntake((p) => ({ ...p, convexCorner: v as any }))}
+                          options={[
+                            { value: 'No', label: 'No (Flat / Standard)' },
+                            { value: 'Yes', label: 'Yes (90° corner module)' },
+                          ]}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: 12 }}>Direct Sunlight onto Screen?</label>
+                        <SearchSelect
+                          value={intake.directSunlight || 'No'}
+                          onChange={(v) => setIntake((p) => ({ ...p, directSunlight: v as any }))}
+                          options={[
+                            { value: 'No', label: 'No' },
+                            { value: 'Yes', label: 'Yes (High brightness needed)' },
+                          ]}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>High Ambient Light?</label>
+                    <SearchSelect
+                      value={intake.highAmbientLight || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, highAmbientLight: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No (Standard ambient)' },
+                        { value: 'Yes', label: 'Yes (Bright store/atrium)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Public Damage Risk (Need GOB/Armor)?</label>
+                    <SearchSelect
+                      value={intake.damageRisk || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, damageRisk: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No (Low touch risk)' },
+                        { value: 'Yes', label: 'Yes (Within reach / Retail traffic)' },
+                      ]}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Outdoor Questions */}
+              {intake.environment === 'Outdoor' && (
+                <div className="grid3" style={{ gap: '10px 14px' }}>
+                  <div>
+                    <label style={{ fontSize: 12 }}>Priority / Budget Tier</label>
+                    <SearchSelect
+                      value={intake.priority || 'Value'}
+                      onChange={(v) => setIntake((p) => ({ ...p, priority: v as any }))}
+                      options={[
+                        { value: 'Value', label: 'Value (Budget-conscious)' },
+                        { value: 'Quality', label: 'Quality (High reliability)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Outdoor Location &amp; Service</label>
+                    <SearchSelect
+                      value={intake.outdoorLocation || 'On wall (Front Service)'}
+                      onChange={(v) => setIntake((p) => ({ ...p, outdoorLocation: v as any }))}
+                      options={[
+                        { value: 'On wall (Front Service)', label: 'On wall (Front service)' },
+                        { value: 'On wall (Rear Service)', label: 'On wall (Rear service)' },
+                        { value: 'Freestanding (Rear Service)', label: 'Freestanding (Rear service)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Viewing Distance (Outdoor)</label>
+                    <SearchSelect
+                      value={intake.viewingOutdoor || '3 to 8 metres'}
+                      onChange={(v) => setIntake((p) => ({ ...p, viewingOutdoor: v as any }))}
+                      options={[
+                        { value: 'Up to 2 metres', label: 'Up to 2 metres' },
+                        { value: '2 to 3 metres', label: '2 to 3 metres' },
+                        { value: '3 to 8 metres', label: '3 to 8 metres' },
+                        { value: '8 to 20 metres', label: '8 to 20 metres' },
+                        { value: 'More than 20 metres', label: 'More than 20 metres' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Hard to Service / High Access?</label>
+                    <SearchSelect
+                      value={intake.hardToService || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, hardToService: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No (Standard access)' },
+                        { value: 'Yes', label: 'Yes (Requires cherry picker/rigging)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>High Availability (24/7 Mission-Critical)?</label>
+                    <SearchSelect
+                      value={intake.highAvailability || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, highAvailability: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No' },
+                        { value: 'Yes', label: 'Yes (Redundant power/data)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Elevated Sun / Extreme Exposure?</label>
+                    <SearchSelect
+                      value={intake.elevatedSun || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, elevatedSun: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No' },
+                        { value: 'Yes', label: 'Yes (Direct harsh sun)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Snow / Ice Environment?</label>
+                    <SearchSelect
+                      value={intake.snowIce || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, snowIce: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No' },
+                        { value: 'Yes', label: 'Yes (Sub-zero climate)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Coastal / Salt Air Zone?</label>
+                    <SearchSelect
+                      value={intake.saltAir || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, saltAir: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No' },
+                        { value: 'Yes', label: 'Yes (Marine/anti-corrosion)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Photogenic / Broadcast Filming?</label>
+                    <SearchSelect
+                      value={intake.photogenic || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, photogenic: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No' },
+                        { value: 'Yes', label: 'Yes (High refresh rate needed)' },
+                      ]}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-        {err && <div className="error">{err}</div>}
+
+        {/* Advisor Recommendations & Engineering Caveats Banner */}
+        {(primaryRecommendationText || treeConstraints || (caveats && caveats.length > 0)) && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: 12,
+              borderRadius: 8,
+              background: 'var(--accent-bg, rgba(79,70,229,0.06))',
+              border: '1px solid var(--accent, #4f46e5)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 16 }}>🎯</span>
+                <b style={{ color: 'var(--accent, #4f46e5)', fontSize: 13 }}>Advisor Recommendation:</b>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{primaryRecommendationText || 'Matching products found'}</span>
+              </div>
+              {treeConstraints?.recommendedModelFamilies && treeConstraints.recommendedModelFamilies.length > 0 && (
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <span className="muted" style={{ fontSize: 11 }}>Preferred families:</span>
+                  {treeConstraints.recommendedModelFamilies.map((f) => (
+                    <span key={f} className="pill" style={{ background: 'var(--accent, #4f46e5)', color: '#fff', fontSize: 11 }}>
+                      {f}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {treeConstraints?.pitchGuidance && (
+              <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                📏 Pitch guidance: {treeConstraints.pitchGuidance}
+              </p>
+            )}
+
+            {treeConstraints?.gobRequired && (
+              <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--ok, #15803d)', fontWeight: 600 }}>
+                🛡️ GOB (Glass-on-Board) surface protection is automatically flagged for this configuration.
+              </p>
+            )}
+
+            {caveats && caveats.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <b style={{ fontSize: 11, color: 'var(--warn, #b45309)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  Engineering Notices &amp; Caveats:
+                </b>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                  {caveats.map((c, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        fontSize: 12,
+                        padding: '4px 8px',
+                        borderRadius: 4,
+                        background: 'rgba(245, 158, 11, 0.12)',
+                        borderLeft: '3px solid #f59e0b',
+                        color: '#92400e',
+                      }}
+                    >
+                      ⚠️ {c}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
         <div className="step-actions">
           <button className="primary" onClick={configure} disabled={busy}>
             {busy ? 'Configuring…' : '🔍 Find best-fit products'}
@@ -1871,11 +2345,47 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                     )}
                     <div style={{ fontWeight: 600 }}>
                       {t.model}{t.rotated ? ' (rot)' : ''}
+                      {t.recommendedFamily && (
+                        <span
+                          title={t.recommendedReason || 'Recommended by LED Selection Tree'}
+                          style={{
+                            marginLeft: 6, padding: '1px 6px', borderRadius: 10, fontSize: 10, fontWeight: 700,
+                            background: 'var(--accent-bg, rgba(79,70,229,0.15))', color: 'var(--accent, #4f46e5)',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          ⭐ Recommended
+                        </span>
+                      )}
+                      {t.isTransparent && (
+                        <span
+                          title="Transparent screen"
+                          style={{
+                            marginLeft: 4, padding: '1px 5px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                            background: 'rgba(14, 165, 233, 0.15)', color: '#0284c7',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          ✨ Transparent
+                        </span>
+                      )}
+                      {t.supportsCurved && (
+                        <span
+                          title="Supports curved / flexible deployment"
+                          style={{
+                            marginLeft: 4, padding: '1px 5px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                            background: 'rgba(168, 85, 247, 0.15)', color: '#7e22ce',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          🔄 Curved
+                        </span>
+                      )}
                       {t.gobRecommended && (
                         <span
                           title="Fine pitch — GOB recommended"
                           style={{
-                            marginLeft: 6, padding: '0 6px', borderRadius: 10, fontSize: 11, fontWeight: 700,
+                            marginLeft: 4, padding: '0 6px', borderRadius: 10, fontSize: 11, fontWeight: 700,
                             background: 'var(--accent-bg, rgba(79,70,229,0.12))', color: 'var(--accent, #4f46e5)',
                             cursor: 'help', whiteSpace: 'nowrap',
                           }}
@@ -1993,11 +2503,47 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                     <tr key={`${o.productId}-${o.rotated}-${o.sizeMode}-${i}`}>
                       <td>
                         {o.model}{o.rotated ? ' (rot)' : ''}
+                        {o.recommendedFamily && (
+                          <span
+                            title={o.recommendedReason || 'Recommended by LED Selection Tree'}
+                            style={{
+                              marginLeft: 6, padding: '1px 6px', borderRadius: 10, fontSize: 10, fontWeight: 700,
+                              background: 'var(--accent-bg, rgba(79,70,229,0.15))', color: 'var(--accent, #4f46e5)',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            ⭐ Recommended
+                          </span>
+                        )}
+                        {o.isTransparent && (
+                          <span
+                            title="Transparent screen"
+                            style={{
+                              marginLeft: 4, padding: '1px 5px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                              background: 'rgba(14, 165, 233, 0.15)', color: '#0284c7',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            ✨ Transparent
+                          </span>
+                        )}
+                        {o.supportsCurved && (
+                          <span
+                            title="Supports curved / flexible deployment"
+                            style={{
+                              marginLeft: 4, padding: '1px 5px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                              background: 'rgba(168, 85, 247, 0.15)', color: '#7e22ce',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            🔄 Curved
+                          </span>
+                        )}
                         {o.gobRecommended && (
                           <span
                             title="Fine pitch — GOB recommended"
                             style={{
-                              marginLeft: 6, padding: '0 6px', borderRadius: 10, fontSize: 11, fontWeight: 700,
+                              marginLeft: 4, padding: '0 6px', borderRadius: 10, fontSize: 11, fontWeight: 700,
                               background: 'var(--accent-bg, rgba(79,70,229,0.12))', color: 'var(--accent, #4f46e5)',
                               cursor: 'help', whiteSpace: 'nowrap',
                             }}

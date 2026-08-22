@@ -12,3 +12,4 @@ export * from './install.js';
 export * from './freight.js';
 export * from './licence.js';
 export * from './quote.js';
+export * from './tree-evaluator.js';

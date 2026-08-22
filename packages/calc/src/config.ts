@@ -1,5 +1,6 @@
 import { Decimal, d, round } from '@quotezen/shared';
 import { areaSqm, resolutionPx, resolveScreenRatio, type ScreenRatioRow } from './geometry.js';
+import type { TreeConstraints } from './tree-evaluator.js';
 
 /**
  * Preferred aspect-ratio order (T3 guardrail — BR-033 / DR-021).
@@ -65,6 +66,12 @@ export interface ConfigProduct {
   costPerSqmUsd?: number | null;
   kgPerSqm?: number | null;
   rotationAllowed?: boolean;
+  /** Transparency support / transparent cabinet. */
+  isTransparent?: boolean | null;
+  cabinetType?: string | null;
+  /** Curvature / flexible module support. */
+  supportsCurved?: boolean | null;
+  mechanicalOptions?: string | null;
   // ─── U2: manufacturer sourcing priority + lead time. `manufacturerPriority` is the PRIMARY ranking
   // key (lower = preferred); products with no manufacturer default to a high value so they sort last.
   /** Manufacturer sourcing priority — lower wins. Default {@link NO_MANUFACTURER_PRIORITY} when unset. */
@@ -122,6 +129,8 @@ export interface ConfigRequest {
    * no ratio restriction (unchanged behaviour).
    */
   allowedRatios?: readonly string[];
+  /** Optional Selection Tree evaluated constraints (Phase 1). */
+  treeConstraints?: TreeConstraints;
 }
 
 /** Default outdoor-brightness threshold (nits) for the environment fallback (mirrors the seeded setting). */
@@ -191,12 +200,20 @@ export interface ConfigOption {
   leadTimeDays: number | null;
   /** Per-model recommendation priority — SECONDARY sort key within a manufacturer (lower first). */
   modelPriority: number;
+  /** Whether this product belongs to one of the Selection Tree's recommended model families. */
+  recommendedFamily?: boolean;
 }
 
 export interface ConfigResult {
   options: ConfigOption[];
   /** Populated only when `options` is empty — why nothing fit (never an error). */
   reasons: string[];
+  /** Evaluated selection tree constraints (if provided). */
+  treeConstraints?: TreeConstraints;
+  /** Engineering caveats and advisory notes. */
+  caveats?: string[];
+  /** Primary recommendation narrative text. */
+  primaryRecommendationText?: string;
 }
 
 /** Which whole-cabinet rounding to apply: 'fit' = nearest (the original snap), 'under' = floor, 'over' = ceil. */
@@ -290,6 +307,12 @@ const buildOption = (
     manufacturerName: product.manufacturerName ?? null,
     leadTimeDays: product.leadTimeDays ?? null,
     modelPriority: product.modelPriority ?? DEFAULT_MODEL_PRIORITY,
+    recommendedFamily: req.treeConstraints?.recommendedModelFamilies?.length
+      ? req.treeConstraints.recommendedModelFamilies.some((fam) => {
+          const f = fam.toLowerCase();
+          return product.model.toLowerCase().includes(f) || (product.category ?? '').toLowerCase().includes(f);
+        })
+      : false,
   };
 };
 
@@ -324,14 +347,22 @@ export const configureScreen = (
   products: readonly ConfigProduct[],
   req: ConfigRequest,
 ): ConfigResult => {
+  const baseResult = (options: ConfigOption[], reasons: string[]): ConfigResult => ({
+    options,
+    reasons,
+    treeConstraints: req.treeConstraints,
+    caveats: req.treeConstraints?.caveats,
+    primaryRecommendationText: req.treeConstraints?.primaryRecommendationText,
+  });
+
   if (req.desiredWidthMm <= 0 || req.desiredHeightMm <= 0) {
-    return { options: [], reasons: ['Opening width and height must be greater than zero.'] };
+    return baseResult([], ['Opening width and height must be greater than zero.']);
   }
   const complete = products.filter(
     (p) => p.minCabinetWMm > 0 && p.minCabinetHMm > 0 && p.pixelPitchHmm > 0 && p.pixelPitchVmm > 0,
   );
   if (complete.length === 0) {
-    return { options: [], reasons: ['No products have complete cabinet/pitch data to configure.'] };
+    return baseResult([], ['No products have complete cabinet/pitch data to configure.']);
   }
 
   // ─── W0 filters (applied before iteration; each records a distinct empty-with-reasons message) ───
@@ -344,10 +375,44 @@ export const configureScreen = (
       (p) => effectiveEnvironment(p.environment, p.brightnessNits, outdoorThreshold) === req.environment,
     );
     if (usable.length === 0) {
-      return {
-        options: [],
-        reasons: [`No ${req.environment} products available for this opening (by product environment or brightness).`],
-      };
+      return baseResult([], [`No ${req.environment} products available for this opening (by product environment or brightness).`]);
+    }
+  }
+
+  // ─── Selection Tree Constraint Filtering (Phase 1/2) ───
+  if (req.treeConstraints) {
+    const tc = req.treeConstraints;
+
+    if (tc.transparentRequired) {
+      usable = usable.filter(
+        (p) => p.isTransparent === true || /transparent/i.test(p.cabinetType ?? '') || /transparent/i.test(p.model),
+      );
+      if (usable.length === 0) {
+        return baseResult([], ['No transparent LED products available for this opening.']);
+      }
+    }
+
+    if (tc.curvedRequired) {
+      usable = usable.filter(
+        (p) => p.supportsCurved === true || /flex/i.test(p.model) || /curve/i.test(p.mechanicalOptions ?? '') || /curve/i.test(p.category ?? ''),
+      );
+      if (usable.length === 0) {
+        return baseResult([], ['No flexible or curved LED products available for this opening.']);
+      }
+    }
+
+    if (tc.pitchMaxMm != null && tc.pitchMaxMm > 0) {
+      usable = usable.filter((p) => p.pixelPitchHmm <= tc.pitchMaxMm! + 0.05);
+      if (usable.length === 0) {
+        return baseResult([], [`No products fine enough for the recommended pitch (${tc.pitchLabel ?? tc.pitchMaxMm + 'mm'}).`]);
+      }
+    }
+
+    if (tc.minBrightnessNits != null && tc.minBrightnessNits > 0) {
+      usable = usable.filter((p) => p.brightnessNits == null || p.brightnessNits >= tc.minBrightnessNits!);
+      if (usable.length === 0) {
+        return baseResult([], [`No products meet the required brightness (${tc.minBrightnessNits} nits).`]);
+      }
     }
   }
 
@@ -356,10 +421,7 @@ export const configureScreen = (
   if (maxPitchMm != null) {
     usable = usable.filter((p) => p.pixelPitchHmm <= maxPitchMm);
     if (usable.length === 0) {
-      return {
-        options: [],
-        reasons: [`No products fine enough for a ${req.viewingDistanceM}m viewing distance (max pitch ${maxPitchMm}mm).`],
-      };
+      return baseResult([], [`No products fine enough for a ${req.viewingDistanceM}m viewing distance (max pitch ${maxPitchMm}mm).`]);
     }
   }
 
@@ -393,7 +455,7 @@ export const configureScreen = (
   });
 
   if (deduped.length === 0) {
-    return { options: [], reasons: ['No valid cabinet fit for the requested opening.'] };
+    return baseResult([], ['No valid cabinet fit for the requested opening.']);
   }
 
   // AA2 — per-customer allowed-ratios filter. Applied AFTER options are built (ratioLabel is per-option
@@ -403,28 +465,18 @@ export const configureScreen = (
   if (allowed.length > 0) {
     ratioFiltered = deduped.filter((o) => o.ratioLabel !== null && allowed.includes(o.ratioLabel));
     if (ratioFiltered.length === 0) {
-      return {
-        options: [],
-        reasons: [`No configuration matches the client's allowed ratios (${allowed.join(', ')}).`],
-      };
+      return baseResult([], [`No configuration matches the client's allowed ratios (${allowed.join(', ')}).`]);
     }
   }
 
-  // Rank: manufacturer sourcing priority FIRST (U2, lower = preferred), then per-MODEL priority
-  // (admin-set, lower = preferred) as the SECONDARY key — so within a manufacturer the models the admin
-  // has prioritised come first; WITHIN an equal (manufacturer, model) priority the existing best-fit
-  // ranking applies — closest area fit, then exact > under/over at equal deviation, then non-rotated
-  // preferred, then a preferred aspect ratio, then fewer cabinets. W0: when a viewing distance was
-  // requested, a MILD "coarsest pitch that still fits (best value)" preference is applied as a
-  // low-priority tiebreak (after all the fit/geometry keys, before the model-name final tiebreak) — it
-  // never reorders across manufacturers or better fits. Finally model name (stable & explainable).
-  // Order of keys:
-  //   1. manufacturerPriority  2. modelPriority  3. area deviation  4. exact>under>over  5. non-rotated
-  //   6. preferred ratio  7. fewer cabinets  8. [W0 viewing-distance] coarsest pitch  9. model name.
+  // Rank: manufacturer sourcing priority FIRST (U2, lower = preferred), then recommended family priority,
+  // then per-MODEL priority (admin-set, lower = preferred) as the SECONDARY key.
   const sizeRank: Record<SizeMode, number> = { exact: 0, under: 1, over: 2 };
   const preferCoarsest = maxPitchMm != null; // only bias by pitch when the user gave a viewing distance
   ratioFiltered.sort((a, b) => {
     if (a.manufacturerPriority !== b.manufacturerPriority) return a.manufacturerPriority - b.manufacturerPriority;
+    // Selection Tree recommended family float
+    if (a.recommendedFamily !== b.recommendedFamily) return a.recommendedFamily ? -1 : 1;
     if (a.modelPriority !== b.modelPriority) return a.modelPriority - b.modelPriority;
     const da = areaDeviation(a, req);
     const db = areaDeviation(b, req);
@@ -438,7 +490,7 @@ export const configureScreen = (
     return a.model.localeCompare(b.model);
   });
 
-  return { options: ratioFiltered, reasons: [] };
+  return baseResult(ratioFiltered, []);
 };
 
 /**

@@ -131,10 +131,11 @@ export const TABLES: TableDef[] = [
       // Per-model recommendation priority (lower = preferred) — secondary ranking key in the config engine.
       f('priority', 'int'),
       // AA2 — component compatibility group (matched against controller/frame groups in validation).
-      f('compatibilityGroup'),
+      // Phase 1: Explicit transparency and curved capability flags.
+      f('isTransparent', 'boolean'), f('supportsCurved', 'boolean'),
       f('upgradeOptions', 'text'), f('mechanicalOptions', 'text'), DEPRECATED,
     ],
-    listFields: ['vendor', 'model', 'priority', 'pixelPitchH', 'brightnessNits', 'compatibilityGroup', 'costPerSqmUsd', 'cabinetType', 'deprecated'],
+    listFields: ['vendor', 'model', 'priority', 'pixelPitchH', 'brightnessNits', 'isTransparent', 'supportsCurved', 'compatibilityGroup', 'costPerSqmUsd', 'cabinetType', 'deprecated'],
   },
   {
     resource: 'led-commentary', model: 'ledCommentary', label: 'LED Commentary', group: 'LED',

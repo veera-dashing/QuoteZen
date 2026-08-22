@@ -355,6 +355,9 @@ model LedProduct {
   /** AA2 — component compatibility group. When set on BOTH a screen product and a selected controller
       or frame (bracket) with a DIFFERENT group, validation flags a mismatch (error). Null → no check. */
   compatibilityGroup String? @map("compatibility_group")
+  /** Phase 1: Explicit transparency and curved / flexible capability flags. */
+  isTransparent    Boolean  @default(false) @map("is_transparent")
+  supportsCurved   Boolean  @default(false) @map("supports_curved")
   deprecated       Boolean  @default(false) @map("deprecated")
 
   commentary LedCommentary[]
@@ -1076,6 +1079,8 @@ model QuoteLedScreen {
   serviceHoursId      BigInt?  @map("service_hours_id")
   accessEquipmentId   BigInt?  @map("access_equipment_id")
   marginOverride      Decimal? @map("margin_override") @db.Decimal(8, 4)
+  /** Phase 1: Intake questionnaire answers that drove the screen selection. */
+  intakeAnswers       Json?    @map("intake_answers")
   // computed PI / spec outputs
   resolutionWpx       Int?     @map("resolution_w_px")
   resolutionHpx       Int?     @map("resolution_h_px")

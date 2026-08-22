@@ -11,6 +11,7 @@ import {
   lineDiscountSchema,
   recordReviewSchema,
   listQuotesQuerySchema,
+  ledIntakeSchema,
   ledScreenSchema,
   quoteLicenceSchema,
   quoteRisksSchema,
@@ -96,6 +97,7 @@ const configureSchema = z.object({
   // W0: optional environment + viewing-distance filters (absent → unchanged behaviour).
   environment: z.enum(['indoor', 'outdoor']).optional(),
   viewingDistanceM: z.coerce.number().positive().optional(),
+  intake: ledIntakeSchema.optional(),
 });
 
 // AA3b: LCD Good/Better/Best — optional target size + category filter (all optional → catalogue-wide).

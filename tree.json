@@ -1,0 +1,299 @@
+{
+  "source": "Copy of 2026 V1.0 LED Selection Tree.xlsx - sheet 'LED Selection'",
+  "note": "Faithful port of the workbook's 62 rules. Each rule records its source cell. Rules with a `defect` field are broken IN THE WORKBOOK; pass { fixDefects: true } to use their `whenFixed` condition instead.",
+
+  "questions": [
+    { "key": "environment",    "cell": "C4",  "branch": "both",    "text": "Is the screen Indoor or Outdoor?", "options": ["Indoor", "Outdoor"] },
+    { "key": "priority",       "cell": "C5",  "branch": "both",    "text": "Do you want to prioritise value or quality?", "options": ["Value", "Quality"] },
+
+    { "key": "use",            "cell": "C7",  "branch": "indoor",  "text": "What is the use of the screen?", "options": ["Digital poster or retail display", "Directory board", "Information display (computer monitor)"] },
+    { "key": "curved",         "cell": "C8",  "branch": "indoor",  "text": "Is it curved or partially curved?", "options": ["Yes", "No"] },
+    { "key": "transparent",    "cell": "C9",  "branch": "indoor",  "text": "Do you want the screen to be transparent?", "options": ["Yes", "No"] },
+    { "key": "indoorLocation", "cell": "C10", "branch": "indoor",  "text": "Where is the screen to be installed?", "options": ["On a wall", "Behind Window", "On a fixture", "Hanging", "On a ceiling"] },
+    { "key": "smallDimension", "cell": "C11", "branch": "indoor",  "text": "Is it less than 1280mm on one dimension and less than 5000mm on the other?", "options": ["Yes", "No"] },
+    { "key": "underOneAndHalfSqm", "cell": "C12", "branch": "indoor", "text": "Is it smaller than 1.5sqm?", "options": ["Yes", "No"] },
+    { "key": "exact169",       "cell": "C13", "branch": "indoor",  "text": "Do you require it to be precisely 16:9 ratio?", "options": ["Yes", "No"] },
+    { "key": "doubleSided",    "cell": "C14", "branch": "indoor",  "text": "Is it doublesided?", "options": ["Yes", "No"] },
+    { "key": "directSunlight", "cell": "C15", "branch": "indoor",  "text": "Does the window get direct sunlight?", "options": ["Yes", "No"] },
+    { "key": "highAmbientLight", "cell": "C16", "branch": "indoor", "text": "Is the window exposed to high ambient light?", "options": ["Yes", "No"] },
+    { "key": "canSetBack",     "cell": "C17", "branch": "indoor",  "text": "Can it be placed far enough back from the glass (>500mm) with front access?", "options": ["Yes", "No"] },
+    { "key": "convexCorner",   "cell": "C18", "branch": "indoor",  "text": "Does the screen have a hard, convex corner (e.g. 90 degree)?", "options": ["Yes", "No"] },
+    { "key": "viewingIndoor",  "cell": "C19", "branch": "indoor",  "text": "What viewing distance do you want to optimise for?", "options": ["Less than 1 metre", "1 to 2 metres", "2 to 3 metres", "More than 3 metres"] },
+    { "key": "damageRisk",     "cell": "C20", "branch": "indoor",  "text": "Is the screen likely to be subject to physical damage?", "options": ["Yes", "No"] },
+
+    { "key": "outdoorLocation","cell": "C23", "branch": "outdoor", "text": "Where will it be installed?", "options": ["On wall (Front Service)", "On wall (Rear Service)", "Freestanding (Rear Service)"] },
+    { "key": "serviceAccess",  "cell": "C24", "branch": "outdoor", "text": "What is the service access, Front or Rear?", "options": ["Front", "Rear"],
+      "derivedFrom": "outdoorLocation", "derivation": "contains 'rear' (case-insensitive) -> Rear, else Front" },
+    { "key": "viewingOutdoor", "cell": "C25", "branch": "outdoor", "text": "Viewing distance to optimise for?", "options": ["Up to 2 metres", "2 to 3 metres", "3 to 8 metres", "8 to 20 metres", "More than 20 metres"] },
+    { "key": "sizeBand",       "cell": "C26", "branch": "outdoor", "text": "What is the approximate size of one side?", "options": ["Less than 4 sqm", "4 to 10 sqm", "More than 10 sqm"] },
+    { "key": "hardToService",  "cell": "C27", "branch": "outdoor", "text": "Is this difficult to access for service?", "options": ["Yes", "No"] },
+    { "key": "highAvailability","cell": "C28","branch": "outdoor", "text": "Does this need high availability (e.g. DOOH)?", "options": ["Yes", "No"] },
+    { "key": "elevatedSun",    "cell": "C29", "branch": "outdoor", "text": "Is this elevated, direct sun, with long (50m+) viewing lines?", "options": ["Yes", "No"] },
+    { "key": "snowIce",        "cell": "C30", "branch": "outdoor", "text": "Is this subject to snow or ice?", "options": ["Yes", "No"] },
+    { "key": "saltAir",        "cell": "C31", "branch": "outdoor", "text": "Is this subject to extreme moisture or salty air?", "options": ["Yes", "No"] },
+    { "key": "photogenic",     "cell": "C32", "branch": "outdoor", "text": "Does it need to be easy to photograph or video?", "options": ["Yes", "No"] }
+  ],
+
+  "rules": [
+    { "id": "p37", "cell": "A37", "block": "product", "branch": "indoor",
+      "when": { "all": [ {"eq":["indoorLocation","On a wall"]}, {"eq":["priority","Value"]}, {"noneFired":["p47","p48","p49","p50","p51","p52","p53","p54"]} ] },
+      "text": "Use the LEDFul BM Product or ZonePro WallPad product depending on the best fit for size" },
+
+    { "id": "p38", "cell": "A38", "block": "product", "branch": "indoor",
+      "when": { "all": [ {"eq":["indoorLocation","On a Wall"]}, {"eq":["priority","Quality"]}, {"noneFired":["p47","p48","p49","p50","p51","p52","p53","p54"]} ] },
+      "text": "Use the LEDFul BM-Pro Product or ZonePro WallPad Product depending on what is the best fit or value for the desired size (calculate both options)" },
+
+    { "id": "p39", "cell": "A39", "block": "product", "branch": "indoor",
+      "when": { "all": [ {"eq":["smallDimension","Yes"]}, {"eq":["priority","Value"]}, {"noneFired":["p47","p48","p49","p50","p51","p52","p53","p54"]} ] },
+      "text": "Use the LEDFul IF Product" },
+
+    { "id": "p40", "cell": "A40", "block": "product", "branch": "indoor",
+      "when": { "all": [ {"eq":["indoorLocation","Behind Window"]}, {"eq":["priority","Value"]}, {"eq":["canSetBack","Yes"]}, {"noneFired":["p47","p48","p49","p50","p51","p52","p53","p54"]} ] },
+      "text": "Use the LEDFul BM Product or ZonePro WallPad Product depending on what is the best fit or value for the desired size (calculate both options)" },
+
+    { "id": "p41", "cell": "A41", "block": "product", "branch": "indoor",
+      "when": { "all": [ {"eq":["indoorLocation","Behind Window"]}, {"eq":["priority","Quality"]}, {"eq":["canSetBack","Yes"]}, {"eq":["convexCorner","No"]}, {"noneFired":["p47","p48","p49","p50","p51","p52","p53","p54"]} ] },
+      "text": "Use the LEDFul BM-Pro Product or ZonePro WallPad Product depending on what is the best fit or value for the desired size (calculate both options)" },
+
+    { "id": "p42", "cell": "A42", "block": "product", "branch": "indoor",
+      "when": { "all": [ {"eq":["indoorLocation","Behind Window"]}, {"eq":["priority","Quality"]}, {"eq":["canSetBack","Yes"]}, {"eq":["convexCorner","Yes"]}, {"noneFired":["p47","p48","p49","p50","p51","p52","p53","p54"]} ] },
+      "text": "Use the LEDFul BM Product or ZonePro WallPad Product depending on what is the best fit or value for the desired size (calculate both options)" },
+
+    { "id": "p43", "cell": "A43", "block": "product", "branch": "indoor",
+      "defect": "Self-contradictory: requires canSetBack='No' AND canSetBack='Yes'. Can never fire.",
+      "when": { "all": [ {"eq":["indoorLocation","Behind Window"]}, {"eq":["priority","Value"]}, {"eq":["canSetBack","No"]}, {"eq":["smallDimension","No"]}, {"eq":["canSetBack","Yes"]}, {"noneFired":["p47","p48","p49","p50","p51","p52","p53","p54"]} ] },
+      "whenFixed": { "all": [ {"eq":["indoorLocation","Behind Window"]}, {"eq":["priority","Value"]}, {"eq":["canSetBack","No"]}, {"eq":["smallDimension","No"]}, {"noneFired":["p47","p48","p49","p50","p51","p52","p53","p54"]} ] },
+      "text": "Use the LEDFul BM Product with the rear option, or the HI option depending on which is the best fit for the size." },
+
+    { "id": "p44", "cell": "A44", "block": "product", "branch": "indoor",
+      "when": { "all": [ {"eq":["indoorLocation","Behind Window"]}, {"eq":["priority","Value"]}, {"eq":["canSetBack","No"]}, {"eq":["smallDimension","Yes"]}, {"noneFired":["p47","p48","p49","p50","p51","p52","p53","p54"]} ] },
+      "text": "Use the LEDFul IF Product with the rear option" },
+
+    { "id": "p45", "cell": "A45", "block": "product", "branch": "indoor",
+      "when": { "all": [ {"eq":["indoorLocation","Behind Window"]}, {"eq":["priority","Quality"]}, {"eq":["canSetBack","No"]}, {"eq":["convexCorner","No"]}, {"noneFired":["p47","p48","p49","p50","p51","p52","p53","p54"]} ] },
+      "text": "Use the LEDFul BM Product with the rear option, or the LEDFUL HI product depending on which is the best fit for the size." },
+
+    { "id": "p46", "cell": "A46", "block": "product", "branch": "indoor",
+      "when": { "all": [ {"eq":["indoorLocation","Behind Window"]}, {"any":[{"eq":["priority","Quality"]},{"eq":["priority","Value"]}]}, {"eq":["canSetBack","No"]}, {"eq":["convexCorner","Yes"]}, {"noneFired":["p47","p48","p49","p50","p51","p52","p53","p54"]} ] },
+      "text": "Use the LEDFUL HI product with 90degree corner option." },
+
+    { "id": "p47", "cell": "A47", "block": "product", "branch": "indoor", "special": true,
+      "when": { "all": [ {"eq":["curved","Yes"]}, {"eq":["transparent","No"]} ] },
+      "text": "Use the LEDFul FLEX product. Check smallest curve is supported R=205 for P2.5, R=305 for P1.8, R=410 for P1.5)." },
+
+    { "id": "p48", "cell": "A48", "block": "product", "branch": "indoor", "special": true,
+      "when": { "all": [ {"eq":["transparent","Yes"]}, {"eq":["priority","Quality"]} ] },
+      "text": "Use the Muxwave Transparent product. If this is too expensive then use the LEDFUL HIS product, or cheapest option is LEDFUL TGC Product" },
+
+    { "id": "p49", "cell": "A49", "block": "product", "branch": "indoor", "special": true,
+      "when": { "all": [ {"eq":["transparent","Yes"]}, {"eq":["priority","Value"]} ] },
+      "text": "Use the LEDFUL TGC Product." },
+
+    { "id": "p50", "cell": "A50", "block": "product", "branch": "indoor", "special": true,
+      "when": { "all": [ {"eq":["priority","Value"]}, {"eq":["underOneAndHalfSqm","Yes"]}, {"ne":["indoorLocation","On a ceiling"]} ] },
+      "text": "Consider using the LEDFUL IF Product configured as a separate cabinet. Wide range of module sizes; can be made with integrated trim and as shallow as 60mm with alternate power supplies - discuss with LEDFul. Alternatively use LEDFUL BM, Zonepro WallPAD, or Zonepro ViewPAD depending on most suitable cabinet size." },
+
+    { "id": "p51", "cell": "A51", "block": "product", "branch": "indoor", "special": true,
+      "when": { "all": [ {"eq":["priority","Quality"]}, {"eq":["underOneAndHalfSqm","Yes"]}, {"ne":["indoorLocation","On a ceiling"]} ] },
+      "text": "Consider using the LEDFUL IF Product configured as a separate cabinet. Wide range of module sizes; can be made with integrated trim and as shallow as 60mm with alternate power supplies - discuss with LEDFul. Alternatively use LEDFUL BM-PRO, Wall-Pro, or U-PRO depending on most suitable cabinet size." },
+
+    { "id": "p52", "cell": "A52", "block": "product", "branch": "indoor", "special": true,
+      "defect": "Reads B14 (the question TEXT 'Is it doublesided?') instead of C14 (the answer). Comparison is always false, so this rule can never fire.",
+      "when": { "never": true },
+      "whenFixed": { "all": [ {"eq":["doubleSided","Yes"]}, {"eq":["indoorLocation","Hanging"]} ] },
+      "text": "Use LEDFul WallPad product in doublesided mode (53mm deep). Each side can be different brightness if necessary." },
+
+    { "id": "p53", "cell": "A53", "block": "product", "branch": "indoor", "special": true,
+      "when": { "eq": ["indoorLocation", "On a ceiling"] },
+      "text": "Use the LEDFul BM-Pro Product or ZonePro WallPad Product depending on what is the best fit or value for the desired size (calculate both options)" },
+
+    { "id": "p54", "cell": "A54", "block": "product", "branch": "indoor", "special": true,
+      "when": { "eq": ["exact169", "Yes"] },
+      "text": "BM-PRO or Wall-Pro products achieve 16:9 at only specific sizes. If these do not work then consider the LEDFUL U-Pro product which has precisely 16:9 cabinets." },
+
+    { "id": "p55", "cell": "A55", "block": "product", "branch": "outdoor",
+      "when": { "all": [ {"eq":["serviceAccess","Rear"]}, {"eq":["priority","Value"]}, {"in":["sizeBand",["Less than 4 sqm","4 to 10 sqm"]]}, {"noneFired":["p60","p61"]} ] },
+      "text": "Use LEDFUL OF Product" },
+
+    { "id": "p56", "cell": "A56", "block": "product", "branch": "outdoor",
+      "note": "Coverage gap: only accepts 'Less than 4 sqm', so Value + Front service + '4 to 10 sqm' matches nothing and falls to the p62 default.",
+      "when": { "all": [ {"eq":["priority","Value"]}, {"in":["viewingOutdoor",["3 to 8 metres","8 to 20 metres","More than 20 metres"]]}, {"eq":["sizeBand","Less than 4 sqm"]}, {"noneFired":["p55","p60","p61"]} ] },
+      "text": "Use LEDFUL FA Product" },
+
+    { "id": "p57", "cell": "A57", "block": "product", "branch": "outdoor",
+      "when": { "all": [ {"eq":["priority","Quality"]}, {"in":["viewingOutdoor",["3 to 8 metres","8 to 20 metres","More than 20 metres"]]}, {"in":["sizeBand",["Less than 4 sqm","4 to 10 sqm","More than 10 sqm"]]}, {"noneFired":["p55","p60","p61"]} ] },
+      "text": "Use LEDFUL FS-PRO Product" },
+
+    { "id": "p58", "cell": "A58", "block": "product", "branch": "outdoor", "special": true,
+      "defect": "Compares priority to 'Quallity' (typo, three L's). The '2 to 3 metres + Quality' branch can never fire, so those screens fall through to the p62 default.",
+      "when": { "any": [ {"eq":["viewingOutdoor","Up to 2 metres"]}, {"all":[{"eq":["viewingOutdoor","2 to 3 metres"]},{"eq":["priority","Quallity"]}]} ] },
+      "whenFixed": { "any": [ {"eq":["viewingOutdoor","Up to 2 metres"]}, {"all":[{"eq":["viewingOutdoor","2 to 3 metres"]},{"eq":["priority","Quality"]}]} ] },
+      "text": "Use LEDFUL FS-PRO Product or discuss with LEDFul viability of OHD product" },
+
+    { "id": "p59", "cell": "A59", "block": "product", "branch": "outdoor", "special": true,
+      "when": { "all": [ {"eq":["viewingOutdoor","2 to 3 metres"]}, {"eq":["priority","Value"]} ] },
+      "text": "Use LEDFUL FM or FM-PRO Product depending on size" },
+
+    { "id": "p60", "cell": "A60", "block": "product", "branch": "outdoor",
+      "when": { "all": [ {"any":[{"eq":["hardToService","Yes"]},{"eq":["highAvailability","Yes"]},{"eq":["snowIce","Yes"]},{"eq":["saltAir","Yes"]}]}, {"eq":["priority","Quality"]}, {"noneFired":["p58","p59"]} ] },
+      "text": "Use LEDFUL FS-PRO Product" },
+
+    { "id": "p61", "cell": "A61", "block": "product", "branch": "outdoor",
+      "when": { "all": [ {"any":[{"eq":["hardToService","Yes"]},{"eq":["highAvailability","Yes"]},{"eq":["snowIce","Yes"]},{"eq":["saltAir","Yes"]}]}, {"eq":["priority","Value"]}, {"noneFired":["p58","p59"]} ] },
+      "text": "Use LEDFUL FM or FM-PRO Product depending on size" },
+
+    { "id": "p62", "cell": "A62", "block": "product", "branch": "outdoor", "isDefault": true,
+      "when": { "noneFired": ["p55","p56","p57","p58","p59","p60","p61"] },
+      "text": "Use LEDFUL FM Product" },
+
+    { "id": "c66", "cell": "A66", "block": "caveat", "branch": "indoor",
+      "when": { "all": [ {"eq":["convexCorner","Yes"]}, {"eq":["transparent","No"]}, {"noneFired":["p46"]} ] },
+      "text": "WALL-PRO or WALL-PAD products are best for convex corners. If a 320mm based product is necessary use BM rather than BM-Pro as BM-Pro corners are imprecise." },
+
+    { "id": "c67", "cell": "A67", "block": "caveat", "branch": "indoor",
+      "when": { "all": [ {"eq":["canSetBack","No"]}, {"eq":["indoorLocation","Behind Window"]}, {"fired":"p47"} ] },
+      "text": "Note: FLEX MUST be front service. If there is insufficient space to access it from the front then an alternative access method (e.g. gate) must be arranged." },
+
+    { "id": "c68", "cell": "A68", "block": "caveat", "branch": "indoor",
+      "when": { "fired": "p49" },
+      "text": "Note: TGC products are typically hung. If this is not from the ceiling ensure you make allowance for a frame." },
+
+    { "id": "c69", "cell": "A69", "block": "caveat", "branch": "indoor",
+      "when": { "all": [ {"fired":"p49"}, {"eq":["doubleSided","Yes"]} ] },
+      "text": "Note: TGC products can not be made double sided and easily maintained. Discuss with LEDFUL on options if this is required." },
+
+    { "id": "c70", "cell": "A70", "block": "caveat", "branch": "outdoor",
+      "when": { "eq": ["highAvailability", "Yes"] },
+      "text": "Consider options with redundant power supplies (Speak to supplier)" },
+
+    { "id": "c71", "cell": "A71", "block": "caveat", "branch": "outdoor",
+      "when": { "any": [ {"fired":"p58"}, {"fired":"p57"}, {"fired":"p60"} ] },
+      "text": "Note: FS-PRO product is Dual Service but maintenance of control cards and power supplies from the front is slow and requires a stable work platform" },
+
+    { "id": "c72", "cell": "A72", "block": "caveat", "branch": "outdoor",
+      "when": { "any": [ {"fired":"p59"}, {"fired":"p61"}, {"fired":"p62"} ] },
+      "text": "Note: FM and FM-PRO products are Dual Service but maintenance of control cards and power supplies from the front is slow and requires a stable work platform." },
+
+    { "id": "c73", "cell": "A73", "block": "caveat", "branch": "outdoor",
+      "when": { "all": [ {"eq":["photogenic","Yes"]}, {"any":[{"fired":"p55"},{"fired":"p56"}]} ] },
+      "text": "Ensure this is a minimum 3840Hz Refresh screen - check with LEDFUL if uplift is required and cost (typically approx USD56/sqm if not included)" },
+
+    { "id": "c74", "cell": "A74", "block": "caveat", "branch": "outdoor",
+      "when": { "all": [ {"eq":["photogenic","Yes"]}, {"any":[{"fired":"p57"},{"fired":"p58"},{"fired":"p59"},{"fired":"p60"},{"fired":"p61"},{"fired":"p62"}]} ] },
+      "text": "Ensure this is a minimum 3840Hz Refresh screen - FM-PRO and FS-PRO typically are but double check if this is a particular concern" },
+
+    { "id": "c75", "cell": "A75", "block": "caveat", "branch": "outdoor",
+      "when": { "eq": ["saltAir", "Yes"] },
+      "text": "In extreme examples (e.g. beach front, over water, on boats), consider nano-coating as an additional protection. Speak to LEDFul about this option." },
+
+    { "id": "c76", "cell": "A76", "block": "caveat", "branch": "outdoor",
+      "when": { "eq": ["elevatedSun", "Yes"] },
+      "text": "Consider superbright options here (10,000nits) - discuss with LEDFUL." },
+
+    { "id": "r79", "cell": "A79", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["viewingIndoor","Less than 1 metre"]}, {"eq":["transparent","No"]} ] },
+      "text": "This requires a very high resolution product at P1.2, P0.9 or better" },
+
+    { "id": "r80", "cell": "A80", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["transparent","No"]}, {"eq":["curved","No"]}, {"eq":["viewingIndoor","1 to 2 metres"]}, {"eq":["priority","Quality"]}, {"ne":["use","Directory board"]}, {"ne":["use","Information display (computer monitor)"]} ] },
+      "text": "This should be a P1.2 or P1.5 LED" },
+
+    { "id": "r81", "cell": "A81", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["transparent","No"]}, {"eq":["curved","No"]}, {"eq":["viewingIndoor","1 to 2 metres"]}, {"eq":["priority","Value"]}, {"ne":["use","Directory board"]}, {"ne":["use","Information display (computer monitor)"]} ] },
+      "text": "This should be a P1.8 LED" },
+
+    { "id": "r82", "cell": "A82", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["transparent","No"]}, {"eq":["curved","No"]}, {"eq":["viewingIndoor","2 to 3 metres"]}, {"eq":["priority","Quality"]}, {"ne":["use","Directory board"]}, {"ne":["use","Information display (computer monitor)"]} ] },
+      "text": "This should be a P1.8 LED" },
+
+    { "id": "r83", "cell": "A83", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["transparent","No"]}, {"eq":["curved","No"]}, {"any":[{"eq":["viewingIndoor","More than 3 metres"]},{"all":[{"eq":["viewingIndoor","2 to 3 metres"]},{"eq":["priority","Value"]}]}]}, {"ne":["use","Directory board"]}, {"ne":["use","Information display (computer monitor)"]} ] },
+      "text": "This should be a P2.5 LED" },
+
+    { "id": "r84", "cell": "A84", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["transparent","No"]}, {"eq":["curved","No"]}, {"eq":["priority","Quality"]}, {"any":[{"eq":["use","Directory board"]},{"eq":["use","Information display (computer monitor)"]}]}, {"eq":["viewingIndoor","1 to 2 metres"]} ] },
+      "text": "This should be a P1.2 or better (P0.9) LED" },
+
+    { "id": "r85", "cell": "A85", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["transparent","No"]}, {"eq":["curved","No"]}, {"eq":["priority","Value"]}, {"any":[{"eq":["use","Directory board"]},{"eq":["use","Information display (computer monitor)"]}]}, {"eq":["viewingIndoor","1 to 2 metres"]} ] },
+      "text": "This should be a P1.2 or P1.5 LED" },
+
+    { "id": "r86", "cell": "A86", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["transparent","No"]}, {"eq":["curved","No"]}, {"any":[{"eq":["use","Directory board"]},{"eq":["use","Information display (computer monitor)"]}]}, {"any":[{"eq":["viewingIndoor","2 to 3 metres"]},{"eq":["viewingIndoor","More than 3 metres"]}]} ] },
+      "text": "This should be a P1.2 or P1.5 LED" },
+
+    { "id": "r87", "cell": "A87", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["transparent","Yes"]}, {"eq":["priority","Value"]} ] },
+      "text": "This should be P3.9/7.8" },
+
+    { "id": "r88", "cell": "A88", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["transparent","Yes"]}, {"eq":["priority","Quality"]} ] },
+      "text": "This should be P2.8/5.6 or P3.9 symmetrical" },
+
+    { "id": "r89", "cell": "A89", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["curved","Yes"]}, {"any":[{"eq":["viewingIndoor","More than 3 metres"]},{"all":[{"eq":["priority","Value"]},{"eq":["viewingIndoor","2 to 3 metres"]}]}]} ] },
+      "text": "This should be P2.5" },
+
+    { "id": "r90", "cell": "A90", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["curved","Yes"]}, {"any":[{"all":[{"eq":["priority","Quality"]},{"eq":["viewingIndoor","2 to 3 metres"]}]},{"all":[{"eq":["priority","Value"]},{"eq":["viewingIndoor","1 to 2 metres"]}]}]} ] },
+      "text": "This should be P1.8" },
+
+    { "id": "r91", "cell": "A91", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["curved","Yes"]}, {"any":[{"all":[{"eq":["priority","Quality"]},{"eq":["viewingIndoor","1 to 2 metres"]}]},{"all":[{"eq":["priority","Value"]},{"eq":["viewingIndoor","Less than 1 metre"]}]}]} ] },
+      "text": "This should be P1.5" },
+
+    { "id": "r92", "cell": "A92", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"eq":["curved","Yes"]}, {"eq":["priority","Quality"]}, {"eq":["viewingIndoor","Less than 1 metre"]} ] },
+      "text": "This should be P1.2" },
+
+    { "id": "r93", "cell": "A93", "block": "pitch", "branch": "indoor",
+      "defect": "Reads C8 (the curved Yes/No answer) instead of C7 (use of screen). Can never fire.",
+      "when": { "any": [ {"eq":["curved","Directory Board"]}, {"eq":["curved","Information Display (computer monitor)"]} ] },
+      "whenFixed": { "any": [ {"eq":["use","Directory board"]}, {"eq":["use","Information display (computer monitor)"]} ] },
+      "text": "Ensure resolution is high enough for the amount of text you should have (as a rule of thumb, each row of text requires a minimum of 18 pixels)" },
+
+    { "id": "r94", "cell": "A94", "block": "pitch", "branch": "indoor",
+      "note": "Deliberately omits r81 and r83 (the Value-tier P1.8/P2.5 cases) - confirm with the author whether that is intended.",
+      "when": { "any": [ {"eq":["damageRisk","Yes"]}, {"fired":"r79"}, {"fired":"r80"}, {"fired":"r82"}, {"fired":"r84"}, {"fired":"r85"}, {"fired":"r86"}, {"fired":"r90"}, {"fired":"r91"}, {"fired":"r92"} ] },
+      "text": "The product should have GOB" },
+
+    { "id": "r95", "cell": "A95", "block": "pitch", "branch": "indoor",
+      "when": { "eq": ["directSunlight", "Yes"] },
+      "text": "The product should be a high brightness option (>3500nits)" },
+
+    { "id": "r96", "cell": "A96", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"fired":"r94"}, {"fired":"r95"}, {"any":[{"fired":"r80"},{"fired":"r84"},{"fired":"r85"},{"fired":"r86"},{"fired":"r91"},{"fired":"r92"}]} ] },
+      "text": "Check with the manufacturer whether there are issues with GOB and highbright screens at this resolution" },
+
+    { "id": "r97", "cell": "A97", "block": "pitch", "branch": "indoor",
+      "when": { "eq": ["highAmbientLight", "Yes"] },
+      "text": "Consider the specifics of the location and budget to see if a high brightness option is appropriate." },
+
+    { "id": "r98", "cell": "A98", "block": "pitch", "branch": "indoor",
+      "when": { "all": [ {"fired":"r95"}, {"any":[{"fired":"r79"},{"fired":"r80"},{"fired":"r84"},{"fired":"r85"},{"fired":"r86"},{"fired":"r91"},{"fired":"r92"}]} ] },
+      "text": "Note: Highbright screens at resolutions better than P1.8 are emerging technology - check with the supplier on possibilities before quoting" },
+
+    { "id": "r99",  "cell": "A99",  "block": "pitch", "branch": "outdoor", "when": {"eq":["viewingOutdoor","Up to 2 metres"]},      "text": "This should be P1.5 or P1.9 depending on the specific location and application" },
+    { "id": "r100", "cell": "A100", "block": "pitch", "branch": "outdoor", "when": {"eq":["viewingOutdoor","2 to 3 metres"]},       "text": "This should be around P3" },
+    { "id": "r101", "cell": "A101", "block": "pitch", "branch": "outdoor", "when": {"eq":["viewingOutdoor","3 to 8 metres"]},       "text": "This should be around P4" },
+    { "id": "r102", "cell": "A102", "block": "pitch", "branch": "outdoor", "when": {"eq":["viewingOutdoor","8 to 20 metres"]},      "text": "This should be around P6.6" },
+    { "id": "r103", "cell": "A103", "block": "pitch", "branch": "outdoor", "when": {"eq":["viewingOutdoor","More than 20 metres"]}, "text": "This should be P10" }
+  ],
+
+  "knownDefects": [
+    { "cell": "A22", "severity": "high",   "portBehaviour": "FIXED in this port",
+      "summary": "Outdoor branch gate is the literal 1 instead of IF(C4=\"Outdoor\",1,0), so outdoor rules stay live when Indoor is selected. This is the ONE deliberate deviation from the workbook." },
+    { "cell": "A43", "severity": "medium", "portBehaviour": "replicated (whenFixed available)",
+      "summary": "Requires canSetBack='No' AND 'Yes'. Never fires." },
+    { "cell": "A52", "severity": "medium", "portBehaviour": "replicated (whenFixed available)",
+      "summary": "Reads B14 (question text) instead of C14 (answer). Never fires." },
+    { "cell": "A58", "severity": "medium", "portBehaviour": "replicated (whenFixed available)",
+      "summary": "Typo 'Quallity'. Outdoor Quality at 2-3m falls through to the p62 default." },
+    { "cell": "A93", "severity": "low",    "portBehaviour": "replicated (whenFixed available)",
+      "summary": "Reads C8 instead of C7. Never fires." },
+    { "cell": "A44", "severity": "info",   "portBehaviour": "n/a",
+      "summary": "Multiplies by the indoor gate twice. Harmless." },
+    { "cell": "A56", "severity": "medium", "portBehaviour": "replicated",
+      "summary": "Coverage gap, not a formula error: Value + Front service + '4 to 10 sqm' matches no specific outdoor rule and falls to the p62 default." }
+  ]
+}

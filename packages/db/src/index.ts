@@ -16,4 +16,16 @@ if (process.env.NODE_ENV !== 'production') {
   globalForPrisma.prisma = prisma;
 }
 
+export const TX_OPTS = { maxWait: 20000, timeout: 45000 };
+
+const rawTransaction = prisma.$transaction.bind(prisma);
+// Patch interactive transactions to default to a 45s timeout for remote cloud DB latency.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(prisma as any).$transaction = (arg: any, options?: any) => {
+  if (typeof arg === 'function') {
+    return rawTransaction(arg, { ...TX_OPTS, ...options });
+  }
+  return rawTransaction(arg, options);
+};
+
 export * from '@prisma/client';

@@ -173,6 +173,36 @@ export const ledComponentSchema = z
     { message: 'exactly one component reference must be set' },
   );
 
+export const ledIntakeSchema = z.object({
+  environment: z.enum(['Indoor', 'Outdoor']).optional(),
+  priority: z.enum(['Value', 'Quality']).optional(),
+  use: z.enum(['Digital poster or retail display', 'Directory board', 'Information display (computer monitor)']).optional(),
+  curved: z.enum(['Yes', 'No']).optional(),
+  transparent: z.enum(['Yes', 'No']).optional(),
+  indoorLocation: z.enum(['On a wall', 'Behind Window', 'On a fixture', 'Hanging', 'On a ceiling']).optional(),
+  smallDimension: z.enum(['Yes', 'No']).optional(),
+  underOneAndHalfSqm: z.enum(['Yes', 'No']).optional(),
+  exact169: z.enum(['Yes', 'No']).optional(),
+  doubleSided: z.enum(['Yes', 'No']).optional(),
+  directSunlight: z.enum(['Yes', 'No']).optional(),
+  highAmbientLight: z.enum(['Yes', 'No']).optional(),
+  canSetBack: z.enum(['Yes', 'No']).optional(),
+  convexCorner: z.enum(['Yes', 'No']).optional(),
+  viewingIndoor: z.enum(['Less than 1 metre', '1 to 2 metres', '2 to 3 metres', 'More than 3 metres']).optional(),
+  damageRisk: z.enum(['Yes', 'No']).optional(),
+  outdoorLocation: z.enum(['On wall (Front Service)', 'On wall (Rear Service)', 'Freestanding (Rear Service)']).optional(),
+  serviceAccess: z.enum(['Front', 'Rear']).optional(),
+  viewingOutdoor: z.enum(['Up to 2 metres', '2 to 3 metres', '3 to 8 metres', '8 to 20 metres', 'More than 20 metres']).optional(),
+  sizeBand: z.enum(['Less than 4 sqm', '4 to 10 sqm', 'More than 10 sqm']).optional(),
+  hardToService: z.enum(['Yes', 'No']).optional(),
+  highAvailability: z.enum(['Yes', 'No']).optional(),
+  elevatedSun: z.enum(['Yes', 'No']).optional(),
+  snowIce: z.enum(['Yes', 'No']).optional(),
+  saltAir: z.enum(['Yes', 'No']).optional(),
+  photogenic: z.enum(['Yes', 'No']).optional(),
+});
+export type LedIntakeInput = z.infer<typeof ledIntakeSchema>;
+
 export const ledScreenSchema = z.object({
   screenName: z.string().max(120).optional(),
   ledProductId: idSchema.optional(),
@@ -205,6 +235,7 @@ export const ledScreenSchema = z.object({
   serviceHoursId: idSchema.optional(),
   accessEquipmentId: idSchema.optional(),
   marginOverride: z.coerce.number().min(0).max(0.99).optional(),
+  intakeAnswers: z.record(z.unknown()).nullish(),
   components: z.array(ledComponentSchema).default([]),
 });
 export type LedScreenInput = z.infer<typeof ledScreenSchema>;

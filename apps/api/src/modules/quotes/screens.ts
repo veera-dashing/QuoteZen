@@ -5,7 +5,9 @@ import {
   configConfidence,
   configureScreen,
   DEFAULT_OUTDOOR_BRIGHTNESS_NITS,
+  deriveAutoAnswers,
   estimateInstallHours,
+  evaluateSelectionTree,
   fixedLine,
   freightWeightKg,
   highResUplift,
@@ -22,9 +24,10 @@ import {
   type ConfigProduct,
   type LcdCandidate,
   type PricedLine,
+  type TreeConstraints,
 } from '@quotezen/calc';
 import { applyMargin, applyMarkup, round } from '@quotezen/shared';
-import type { LcdScreenInput, LedScreenInput, UpdateLedScreenInput } from '@quotezen/shared';
+import type { LcdScreenInput, LedIntakeInput, LedScreenInput, UpdateLedScreenInput } from '@quotezen/shared';
 import { AppError, notFound } from '../../errors.js';
 import { recordAudit } from '../../services/audit.js';
 import { loadPricingConfig, loadPricingContext } from '../../lib/pricing-config.js';
@@ -54,6 +57,12 @@ export interface ConfigureResult {
   reasons: string[];
   /** The size-tolerance bands (%) applied, ascending — sourced from the `size_tolerance_bands` setting. */
   toleranceBands: number[];
+  /** Phase 1: Selection Tree evaluated constraints (if intake provided). */
+  treeConstraints?: TreeConstraints;
+  /** Active engineering caveats and warnings (c66-c76). */
+  caveats?: string[];
+  /** Primary recommendation narrative text from the tree evaluator. */
+  primaryRecommendationText?: string;
 }
 
 /**
@@ -121,7 +130,7 @@ const bandFor = (sizeDeltaPct: number, bands: readonly number[]): number | null 
  * each carries its manufacturer name + lead time. Options whose size deviation exceeds the largest
  * admin-configured tolerance band are excluded ("show as options only within the allowed bands").
  */
-/** Inputs to the config engine over a quote's opening (W0 adds optional environment + viewing distance). */
+/** Inputs to the config engine over a quote's opening (W0 adds optional environment + viewing distance; Phase 1 adds intake). */
 export interface ConfigureInput {
   desiredWidthMm: number;
   desiredHeightMm: number;
@@ -130,6 +139,8 @@ export interface ConfigureInput {
   environment?: 'indoor' | 'outdoor';
   /** W0: approximate viewing distance (m); excludes products coarser than ≈1mm-per-metre. */
   viewingDistanceM?: number;
+  /** Phase 1: Guided Selection Tree questionnaire inputs. */
+  intake?: LedIntakeInput;
 }
 
 export const configureForQuote = async (
@@ -168,6 +179,10 @@ export const configureForQuote = async (
     environment: p.environment === 'indoor' || p.environment === 'outdoor' ? p.environment : null,
     costPerSqmUsd: p.costPerSqmUsd ? Number(p.costPerSqmUsd) : null,
     kgPerSqm: p.kgPerSqm ? Number(p.kgPerSqm) : null,
+    isTransparent: p.isTransparent,
+    cabinetType: p.cabinetType,
+    supportsCurved: p.supportsCurved,
+    mechanicalOptions: p.mechanicalOptions,
     // U2: manufacturer priority/name/lead-time from the joined relation (high default when unlinked).
     manufacturerPriority: p.manufacturer?.priority ?? null,
     manufacturerName: p.manufacturer?.name ?? null,
@@ -180,17 +195,37 @@ export const configureForQuote = async (
     maxValue: Number(r.maxValue),
     ratioLabel: r.ratioLabel,
   }));
+
+  const treeConstraints = input.intake
+    ? evaluateSelectionTree(
+        deriveAutoAnswers(
+          {
+            widthMm: input.desiredWidthMm,
+            heightMm: input.desiredHeightMm,
+            outdoorLocation: input.intake.outdoorLocation,
+          },
+          input.intake,
+        ),
+        { fixDefects: true },
+      )
+    : undefined;
+
+  const resolvedEnv =
+    input.environment ??
+    (input.intake?.environment ? (input.intake.environment.toLowerCase() as 'indoor' | 'outdoor') : undefined);
+
   const ranked = configureScreen(cfgProducts, {
     desiredWidthMm: input.desiredWidthMm,
     desiredHeightMm: input.desiredHeightMm,
     allowRotation: input.allowRotation ?? true,
     ratios: ratioRows,
     // W0: thread the environment + viewing-distance filters + the outdoor-brightness threshold.
-    environment: input.environment,
+    environment: resolvedEnv,
     viewingDistanceM: input.viewingDistanceM,
     outdoorBrightnessNits: outdoorThreshold,
     // AA2: restrict offered configs to the client's allowed ratios (empty → no restriction).
     allowedRatios,
+    treeConstraints,
   });
 
   // U2: annotate with tolerance band; drop options beyond the largest band (noting how many).
@@ -211,7 +246,14 @@ export const configureForQuote = async (
     const max = toleranceBands[toleranceBands.length - 1]!;
     reasons.push(`${excluded} option(s) excluded for exceeding the largest size-tolerance band (±${max}%).`);
   }
-  return { options: within, reasons, toleranceBands };
+  return {
+    options: within,
+    reasons,
+    toleranceBands,
+    treeConstraints: ranked.treeConstraints,
+    caveats: ranked.caveats,
+    primaryRecommendationText: ranked.primaryRecommendationText,
+  };
 };
 
 /**
@@ -308,7 +350,15 @@ export const optionsForQuote = async (
   quoteId: bigint,
   input: ConfigureInput,
   showCost: boolean,
-): Promise<{ options: TierOption[]; reasons: string[]; distinctProducts: number; commercialHints: CommercialHints }> => {
+): Promise<{
+  options: TierOption[];
+  reasons: string[];
+  distinctProducts: number;
+  commercialHints: CommercialHints;
+  treeConstraints?: unknown;
+  caveats?: string[];
+  primaryRecommendationText?: string;
+}> => {
   const quote = await getQuote(quoteId);
   const commercialHints = commercialHintsOf(quote);
   const ranked = await configureForQuote(quoteId, input);
@@ -397,7 +447,15 @@ export const optionsForQuote = async (
     };
   });
 
-  return { options, reasons: ranked.reasons, distinctProducts: selection.distinctProducts, commercialHints };
+  return {
+    options,
+    reasons: ranked.reasons,
+    distinctProducts: selection.distinctProducts,
+    commercialHints,
+    treeConstraints: ranked.treeConstraints,
+    caveats: ranked.caveats,
+    primaryRecommendationText: ranked.primaryRecommendationText,
+  };
 };
 
 /**
@@ -844,6 +902,7 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
         serviceHoursId: input.serviceHoursId ? BigInt(input.serviceHoursId) : null,
         accessEquipmentId: input.accessEquipmentId ? BigInt(input.accessEquipmentId) : null,
         marginOverride: input.marginOverride ?? null,
+        intakeAnswers: input.intakeAnswers ? (input.intakeAnswers as any) : undefined,
         resolutionWpx: spec?.resolutionWpx ?? null,
         resolutionHpx: spec?.resolutionHpx ?? null,
         totalPixels: spec ? BigInt(spec.totalPixels) : null,
