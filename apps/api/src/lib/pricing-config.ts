@@ -57,6 +57,8 @@ export const loadPricingContext = async (): Promise<PricingContext> => {
     },
     freight: {
       assemblyLabour: num('assembly_labour', f.assemblyLabour),
+      installLabour: num('install_hourly_cost', f.installLabour ?? 95),
+      standardOverheadAud: num('standard_overhead', f.standardOverheadAud ?? 475),
       seaOriginUsd: f.seaOriginUsd,
       seaTransitPerCbmUsd: f.seaTransitPerCbmUsd,
       seaDestinationAud: f.seaDestinationAud,

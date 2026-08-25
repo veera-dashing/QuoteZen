@@ -803,12 +803,13 @@ const computeLedScreenPricing = async (
   let freightKg: number | null = null;
   if (spec) {
     const area = spec.areaSqm.toNumber();
-    const [frame, hangingBar, access, engineering, freightOpt] = await Promise.all([
+    const [frame, hangingBar, access, engineering, freightOpt, installMethod] = await Promise.all([
       input.frameId ? prisma.frame.findUnique({ where: { id: BigInt(input.frameId) } }) : null,
       input.hangingBarId ? prisma.hangingBarOption.findUnique({ where: { id: BigInt(input.hangingBarId) } }) : null,
       input.accessEquipmentId ? prisma.accessEquipment.findUnique({ where: { id: BigInt(input.accessEquipmentId) } }) : null,
       input.engineeringId ? prisma.engineeringOption.findUnique({ where: { id: BigInt(input.engineeringId) } }) : null,
       input.freightOptionId ? prisma.freightOption.findUnique({ where: { id: BigInt(input.freightOptionId) } }) : null,
+      input.installMethodId ? prisma.installMethod.findUnique({ where: { id: BigInt(input.installMethodId) } }) : null,
     ]);
     if (product?.kgPerSqm) {
       const vol = Number(product.volumetricModifier ?? 1);
@@ -821,20 +822,47 @@ const computeLedScreenPricing = async (
     if (freightOpt && !(Number(freightOpt.rate) > 0)) {
       throw new AppError('bad_request', `Freight option "${freightOpt.name}" has no rate configured`);
     }
-    const freightCostAud = freightOpt && freightKg ? freightKg * Number(freightOpt.rate) : 0;
+    const intlFreightAud = freightOpt && freightKg ? freightKg * Number(freightOpt.rate) : 0;
+    // Local Delivery Freight: MAX(freightMultiplier * intlFreight, freightMin)
+    const localMultiplier = quote.location ? Number(quote.location.freightMultiplier ?? 0.1) : 0;
+    const localMin = quote.location ? Number(quote.location.freightMin ?? 0) : 0;
+    const localFreightAud = intlFreightAud > 0 && quote.location ? Math.max(intlFreightAud * localMultiplier, localMin) : 0;
+    const freightCostAud = intlFreightAud + localFreightAud;
+
     // AA6b — region/product freight override: if a row matches (quote location, product manufacturer)
     // the freight component becomes a FLAT per-screen rate, replacing the weight-based figure. With no
     // override rows (the default) this is `null` → the existing freight path is used, byte-for-byte.
     const freightOverride = await resolveFreightOverride(quote.location?.id ?? null, product?.manufacturerId ?? null);
+
+    const cabinetsW = spec.cabinetsWide;
+    const cabinetsH = spec.cabinetsHigh;
+    const baseHours = installMethod?.defaultHours ? Number(installMethod.defaultHours) : 4;
+    const isIT = product?.model?.startsWith('IT') || false;
+
     labourHours = estimateInstallHours({
       areaSqm: area,
+      cabinetsW,
+      cabinetsH,
+      cabinetWMm: spec.cabinetWidthMm,
+      cabinetHMm: spec.cabinetHeightMm,
+      isITProduct: isIT,
+      baseHours,
       frameInstallHours: frame ? Number(frame.installHours) : 0,
       hanging: hangingBar ? Number(hangingBar.widthMultiplier) > 0 : false,
     });
+
+    const hasMediaplayer = compRows.some((c) => c.componentType === 'mediaplayer');
+    // Standard overhead: default 475 ($120 PM, $80 design/prep, $80 screen config, $30 consumables, $60 rubbish, $75 warehouse, $30 controller courier)
+    // + $45 if mediaplayer configured
+    const baseOverhead = config.freight.standardOverheadAud ?? 475;
+    const overheadCostAud = baseOverhead + (hasMediaplayer ? 45 : 0);
+
     const install = ledInstall(
       {
         labourHours,
+        labourRate: config.freight.installLabour ?? 95,
         locationHourlyUplift: quote.location ? Number(quote.location.hourlyUplift) : 0,
+        overheadCostAud,
         accessEquipmentDayRate: access ? Number(access.dayRate) : 0,
         // The override (flat per-screen) replaces the weight-based freight inside the marked-up total.
         freightCostAud,

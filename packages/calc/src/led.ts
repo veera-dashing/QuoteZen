@@ -41,6 +41,10 @@ export interface LedSpec {
   widthMm: number;
   heightMm: number;
   cabinetCount: number;
+  cabinetsWide: number;
+  cabinetsHigh: number;
+  cabinetWidthMm: number;
+  cabinetHeightMm: number;
   areaSqm: Decimal;
   resolutionWpx: number;
   resolutionHpx: number;
@@ -59,6 +63,10 @@ export const ledSpec = (input: LedSpecInput): LedSpec => {
     widthMm: snapped.widthMm,
     heightMm: snapped.heightMm,
     cabinetCount: snapped.cabinetCount,
+    cabinetsWide: snapped.cabinetsWide,
+    cabinetsHigh: snapped.cabinetsHigh,
+    cabinetWidthMm: input.cabinetWidthMm,
+    cabinetHeightMm: input.cabinetHeightMm,
     areaSqm: round(area, 4),
     resolutionWpx: resW,
     resolutionHpx: resH,

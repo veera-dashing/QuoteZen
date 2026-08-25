@@ -8,7 +8,7 @@ export default defineConfig({
     setupFiles: ['src/test/setup.ts'],
     // API tests hit a remote database; run serially and allow generous time per test.
     fileParallelism: false,
-    testTimeout: 60000,
-    hookTimeout: 60000,
+    testTimeout: 120000,
+    hookTimeout: 120000,
   },
 });

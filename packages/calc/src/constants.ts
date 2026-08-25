@@ -32,6 +32,10 @@ export interface Markups {
 export interface FreightConfig {
   /** F10 — Assembly Labour ($/hr). */
   assemblyLabour: number;
+  /** Reference Data / Settings — On-site Install Labour ($/hr, default 95). */
+  installLabour?: number;
+  /** Reference Data / (LED 1) — Standard overhead allowance (AUD, default 475). */
+  standardOverheadAud?: number;
   /** F20 — Seafreight origin charges (USD). */
   seaOriginUsd: number;
   /** F21 — Seafreight transit charge per CBM (USD). */
@@ -73,6 +77,8 @@ export const WORKBOOK_DEFAULTS: PricingConfig = {
   },
   freight: {
     assemblyLabour: 45,
+    installLabour: 95,
+    standardOverheadAud: 475,
     seaOriginUsd: 660,
     seaTransitPerCbmUsd: 90,
     seaDestinationAud: 1200,
