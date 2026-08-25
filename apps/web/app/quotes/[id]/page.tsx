@@ -2394,6 +2394,14 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                         </span>
                       )}
                     </div>
+                    <div style={{ display: 'flex', gap: 6, margin: '8px 0' }}>
+                      <button className="primary" onClick={() => selectProduct(t.productId, t.rotated)} disabled={busy} style={{ flex: 1 }}>
+                        Select this option
+                      </button>
+                      <button className="ghost" onClick={() => setPreview(t)} type="button">
+                        👁 Preview
+                      </button>
+                    </div>
                     <table style={{ width: '100%', fontSize: 13, margin: '8px 0' }}>
                       <tbody>
                         <tr><td className="muted">Manufacturer</td><td>{t.manufacturerName ?? '—'}</td></tr>
@@ -2429,14 +2437,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                         )}
                       </tbody>
                     </table>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button className="primary" onClick={() => selectProduct(t.productId, t.rotated)} disabled={busy} style={{ flex: 1 }}>
-                        Select this option
-                      </button>
-                      <button className="ghost" onClick={() => setPreview(t)} type="button">
-                        👁 Preview
-                      </button>
-                    </div>
                   </div>
                   );
                 })}
@@ -2484,7 +2484,15 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
               <table>
                 <thead>
                   <tr>
-                    {CONFIG_COLUMNS.map((c) => (
+                    <th
+                      onClick={() => toggleSort('model')}
+                      style={{ cursor: 'pointer', userSelect: 'none' }}
+                      title="Click to sort"
+                    >
+                      Product{sortKey === 'model' ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                    </th>
+                    <th style={{ whiteSpace: 'nowrap' }}>Action</th>
+                    {CONFIG_COLUMNS.filter((c) => c.key !== 'model').map((c) => (
                       <th
                         key={c.key}
                         className={c.num ? 'cell-num' : undefined}
@@ -2495,13 +2503,12 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                         {c.label}{sortKey === c.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
                       </th>
                     ))}
-                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {capped.map((o, i) => (
                     <tr key={`${o.productId}-${o.rotated}-${o.sizeMode}-${i}`}>
-                      <td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
                         {o.model}{o.rotated ? ' (rot)' : ''}
                         {o.recommendedFamily && (
                           <span
@@ -2552,6 +2559,14 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                           </span>
                         )}
                       </td>
+                      <td className="actions" style={{ whiteSpace: 'nowrap' }}>
+                        <button className="primary" onClick={() => selectProduct(o.productId, o.rotated)} disabled={busy} style={{ marginRight: 4 }}>
+                          Select
+                        </button>
+                        <button className="ghost" onClick={() => setPreview(o)} type="button">
+                          👁 Preview
+                        </button>
+                      </td>
                       <td>{o.manufacturerName ?? '—'}</td>
                       <td className="cell-num">{o.modelPriority}</td>
                       <td className="cell-num">{o.pixelPitchMm != null ? o.pixelPitchMm : '—'}</td>
@@ -2582,14 +2597,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                       <td className="cell-num">{o.cabinetCount}</td>
                       <td>{o.cutCabinetSuggested ? <span title="Cabinets must be cut to fit the opening — adds cost and lead time" style={{ cursor: 'help' }}>⚠️</span> : '—'}</td>
                       <td className="cell-num">{o.confidence}</td>
-                      <td className="actions">
-                        <button className="ghost" onClick={() => setPreview(o)} type="button" style={{ marginRight: 4 }}>
-                          👁 Preview
-                        </button>
-                        <button className="primary" onClick={() => selectProduct(o.productId, o.rotated)} disabled={busy}>
-                          Select
-                        </button>
-                      </td>
                     </tr>
                   ))}
                 </tbody>
