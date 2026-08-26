@@ -2794,7 +2794,7 @@ const LCD_MANUAL_TEMPLATES: Record<string, Array<{ description: string; unitCost
   ],
 };
 
-interface LcdLine { sectionKey: string; itemType: LcdItemType; displayId?: string; description: string; qty: number; unitCost?: number; manual: boolean }
+interface LcdLine { sectionKey: string; itemType: LcdItemType; displayId?: string; description: string; qty: number; unitCost?: number; margin?: number; manual: boolean }
 
 // AA3b — LCD Good/Better/Best tier option (display pick at a price point; cost/margin admin-only).
 interface LcdTierOption {
@@ -2846,13 +2846,17 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     }).map((it) => {
       const manual = it.displayId == null;
       const sectionKey = LCD_SECTIONS.find((d) => d.itemType === it.itemType)?.key ?? it.itemType;
+      const unitCost = manual ? Number(it.unitCost ?? 0) : undefined;
+      const unitSell = manual && it.unitSell != null ? Number(it.unitSell) : undefined;
+      const margin = manual && unitSell != null && unitSell > 0 && unitCost != null ? Math.round(((unitSell - unitCost) / unitSell) * 100) : undefined;
       return {
         sectionKey,
         itemType: it.itemType,
         displayId: it.displayId != null ? String(it.displayId) : undefined,
         description: it.description ?? '',
         qty: Number(it.qty) || 1,
-        unitCost: manual ? Number(it.unitCost ?? 0) : undefined,
+        unitCost,
+        margin,
         manual,
       };
     }),
@@ -2954,12 +2958,19 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     return Number(row?.totalCost ?? row?.usd ?? 0);
   };
   const sellOf = (l: LcdLine): number => {
-    if (l.manual) return Math.round(costOf(l) * SERVICE_MARKUP * 100) / 100;
+    if (l.manual) {
+      const cost = costOf(l);
+      if (l.margin !== undefined && l.margin < 100) {
+        return Math.round((cost / (1 - l.margin / 100)) * 100) / 100;
+      }
+      return Math.round(cost * SERVICE_MARKUP * 100) / 100;
+    }
     const row = catalog.find((x) => x.id === l.displayId);
     // Catalog list sell; fall back to the margin gross-up only when the catalog row has no list sell.
     return row?.sell != null ? Number(row.sell) : Math.round(costOf(l) / (1 - MARGIN));
   };
   const marginOf = (l: LcdLine): number => {
+    if (l.manual && l.margin !== undefined) return l.margin / 100;
     const s = sellOf(l);
     return s > 0 ? (s - costOf(l)) / s : 0;
   };
@@ -2991,6 +3002,7 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         description: l.description || undefined,
         qty: l.qty,
         unitCost: l.manual ? (l.unitCost ?? 0) : undefined,
+        unitSell: l.manual ? sellOf(l) : undefined,
       }));
       const firstDisplay = lines.find((l) => l.itemType === 'display' && l.displayId)?.displayId;
       const body = {
@@ -3254,7 +3266,7 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                 <span style={{ width: 90, textAlign: 'right' }}>Sell</span>
                 <span style={{ width: 64, textAlign: 'right' }}>Qty</span>
                 <span style={{ width: 100, textAlign: 'right' }}>Price</span>
-                {isAdmin && <span style={{ width: 64, textAlign: 'right' }}>Margin</span>}
+                {isAdmin && <span style={{ width: 64, textAlign: 'right' }}>Margin %</span>}
                 <span style={{ width: 24 }} />
               </div>
             )}
@@ -3275,7 +3287,22 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                 <span style={{ width: 90, textAlign: 'right' }}>{sellOf(l).toLocaleString()}</span>
                 <input style={{ width: 64 }} type="number" min="1" value={l.qty} onChange={(e) => updateLine(i, { qty: Number(e.target.value) || 1 })} />
                 <span style={{ width: 100, textAlign: 'right' }}>{quote.currency?.code} {(sellOf(l) * l.qty).toLocaleString()}</span>
-                {isAdmin && <span style={{ width: 64, textAlign: 'right' }}>{(marginOf(l) * 100).toFixed(0)}%</span>}
+                {isAdmin && (
+                  l.manual ? (
+                    <input
+                      style={{ width: 64, textAlign: 'right' }}
+                      type="number"
+                      min={0}
+                      max={99}
+                      step="1"
+                      value={l.margin !== undefined ? l.margin : Math.round(marginOf(l) * 100)}
+                      title="Margin %"
+                      onChange={(e) => updateLine(i, { margin: Number(e.target.value) })}
+                    />
+                  ) : (
+                    <span style={{ width: 64, textAlign: 'right' }}>{(marginOf(l) * 100).toFixed(0)}%</span>
+                  )
+                )}
                 <button onClick={() => removeLine(i)} aria-label="Remove">✕</button>
               </div>
             ))}
