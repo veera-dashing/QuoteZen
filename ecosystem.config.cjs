@@ -3,8 +3,7 @@ module.exports = {
     {
       name: 'quotezen-api',
       cwd: './apps/api',
-      script: 'node',
-      args: 'dist/server.js',
+      script: 'dist/server.js',
       env: {
         NODE_ENV: 'production',
         PORT: 4000,
@@ -16,8 +15,8 @@ module.exports = {
     {
       name: 'quotezen-web',
       cwd: './apps/web',
-      script: 'node',
-      args: 'node_modules/next/dist/bin/next start -p 3000 -H 127.0.0.1',
+      script: 'node_modules/next/dist/bin/next',
+      args: 'start -p 3000 -H 127.0.0.1',
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
