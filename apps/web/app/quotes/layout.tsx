@@ -48,7 +48,7 @@ export default function QuotesLayout({ children }: { children: ReactNode }) {
           </button>
         </nav>
       </header>
-      <main className="main" style={{ maxWidth: 1100, margin: '0 auto' }}>
+      <main className="main" style={{ maxWidth: 1440, margin: '0 auto' }}>
         {children}
       </main>
     </div>

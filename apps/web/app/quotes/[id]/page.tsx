@@ -101,6 +101,8 @@ export default function QuoteWizard() {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [step, setStep] = useState(() => (isNew ? 0 : Number(searchParams.get('step')) || 0));
   const [error, setError] = useState<string | null>(null);
+  // Raised when the user advances past Select Screens without having added any — see NoScreensDialog.
+  const [noScreensPrompt, setNoScreensPrompt] = useState(false);
   // Collapsible Quote-summary panel — remembered across steps/quotes (handy on smaller screens).
   const [summaryOpen, setSummaryOpen] = useState(true);
   useEffect(() => {
@@ -182,6 +184,13 @@ export default function QuoteWizard() {
         </div>
       )}
 
+      {noScreensPrompt && (
+        <NoScreensDialog
+          onCancel={() => setNoScreensPrompt(false)}
+          onContinue={() => { setNoScreensPrompt(false); setStep(step + 1); }}
+        />
+      )}
+
       {!isNew && (
       <div className="step-actions">
         <button disabled={step === 0} onClick={() => setStep(step - 1)}>
@@ -192,7 +201,19 @@ export default function QuoteWizard() {
             <button className="ghost" onClick={() => setStep(step + 1)}>
               Skip
             </button>
-            <button className="primary" onClick={() => setStep(step + 1)}>
+            <button
+              className="primary"
+              onClick={() => {
+                // Step 1 is Select Screens. Configuring a screen without pressing "+ Add screen"
+                // saves nothing, and that is easy to miss — confirm before moving on.
+                const screenCount = (quote?.ledScreens.length ?? 0) + (quote?.lcdScreens.length ?? 0);
+                if (step === 1 && screenCount === 0) {
+                  setNoScreensPrompt(true);
+                  return;
+                }
+                setStep(step + 1);
+              }}
+            >
               Next →
             </button>
           </>
@@ -1328,6 +1349,99 @@ function CabinetPreview({ option }: { option: PreviewOption }) {
 }
 
 // A simple fixed-overlay modal: click-away on the backdrop + a ✕ button both close it.
+/**
+ * Confirmation shown when leaving Select Screens with an empty quote. Configuring a screen and
+ * pressing "+ Add screen" are separate actions, so an unadded configuration looks like progress
+ * but persists nothing — this makes that explicit before the user moves on.
+ */
+function NoScreensDialog({ onCancel, onContinue }: { onCancel: () => void; onContinue: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  return (
+    <div
+      onClick={onCancel}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="no-screens-title"
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+      }}
+    >
+      <div
+        className="card"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 460, width: '100%', margin: 0 }}
+      >
+        <h3 id="no-screens-title" style={{ marginTop: 0 }}>No screens added to this quote</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          This quote has no LED or LCD screens. If you configured one, remember that it is only saved
+          once you choose <strong>+ Add screen</strong> — configuring alone does not add it.
+        </p>
+        <p className="muted">
+          Screens are optional: you can continue, and the quote will price only its licences and services.
+        </p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <button className="ghost" onClick={onCancel} autoFocus>Back to screen selection</button>
+          <button className="primary" onClick={onContinue}>Continue without screens</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Shown when switching between the LED and LCD flows while the current form holds a product
+ * selection that was never added. Switching remounts the other form, so that configuration is
+ * discarded — this is the last point at which the user can still save it.
+ */
+function UnsavedScreenDialog({ from, to, hasUnsavedSelection, onCancel, onDiscard }: { from: 'LED' | 'LCD'; to: 'LED' | 'LCD'; hasUnsavedSelection: boolean; onCancel: () => void; onDiscard: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  return (
+    <div
+      onClick={onCancel}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="unsaved-screen-title"
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+      }}
+    >
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460, width: '100%', margin: 0 }}>
+        <h3 id="unsaved-screen-title" style={{ marginTop: 0 }}>
+          {hasUnsavedSelection ? `This ${from} screen hasn't been added yet` : `No ${from} screen added`}
+        </h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          {hasUnsavedSelection
+            ? `You have configured a ${from} screen but not added it to the quote. Selecting a product is not the same as adding it — choose "+ Add screen" to save it.`
+            : `This quote has no ${from} screens. If you meant to add one, configure it and choose "+ Add screen" before switching.`}
+        </p>
+        <p className="muted">
+          {hasUnsavedSelection
+            ? `Switching to ${to} now will discard this configuration.`
+            : `You can switch to ${to} and come back to ${from} at any time.`}
+        </p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <button className="ghost" onClick={onCancel} autoFocus>Stay on {from}</button>
+          <button className="primary" onClick={onDiscard}>
+            {hasUnsavedSelection ? `Discard and switch to ${to}` : `Switch to ${to}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PreviewModal({ option, onClose }: { option: PreviewOption; onClose: () => void }) {
   return (
     <div
@@ -1360,10 +1474,16 @@ function PreviewModal({ option, onClose }: { option: PreviewOption; onClose: () 
 // Good-Better-Best / specific-product selection + components + rotate. Adds the screen (POST
 // /led-screens) with panel + geometry + components only; secondary options/services are set
 // afterwards via the per-screen PATCH editor (LedOptionsEditor / Form 2).
-function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quote; onChange: () => Promise<void>; editScreen?: LedScreen; onCancelEdit?: () => void }) {
+function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }: { quote: Quote; onChange: () => Promise<void>; editScreen?: LedScreen; onCancelEdit?: () => void; onDirtyChange?: (dirty: boolean) => void }) {
   const isEditing = !!editScreen;
   const [products, setProducts] = useState<Opt[]>([]);
   const [productId, setProductId] = useState(editScreen?.ledProductId != null ? String(editScreen.ledProductId) : '');
+  // A picked product that hasn't been added yet is work the user would silently lose on a type
+  // switch — surface it to the parent so it can warn before discarding the form.
+  useEffect(() => {
+    onDirtyChange?.(!!productId && !editScreen);
+    return () => onDirtyChange?.(false);
+  }, [productId, editScreen, onDirtyChange]);
   const [name, setName] = useState(editScreen?.screenName ?? '');
   const [w, setW] = useState(editScreen?.desiredWidthMm != null ? String(editScreen.desiredWidthMm) : '1120');
   const [h, setH] = useState(editScreen?.desiredHeightMm != null ? String(editScreen.desiredHeightMm) : '1920');
@@ -2308,7 +2428,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                 Prices shown are the LED <strong>supply</strong> figure (panel material) for a like-for-like
                 comparison; install, frame and components are added when you place the screen.
               </p>
-              <div className="grid3" style={{ alignItems: 'stretch' }}>
+              <div className="tier-grid">
                 {shownTiers.map((t) => {
                   const emphasised = commercialHints?.emphasisTier === t.tier;
                   return (
@@ -2508,58 +2628,65 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                 <tbody>
                   {capped.map((o, i) => (
                     <tr key={`${o.productId}-${o.rotated}-${o.sizeMode}-${i}`}>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {o.model}{o.rotated ? ' (rot)' : ''}
-                        {o.recommendedFamily && (
-                          <span
-                            title={o.recommendedReason || 'Recommended by LED Selection Tree'}
-                            style={{
-                              marginLeft: 6, padding: '1px 6px', borderRadius: 10, fontSize: 10, fontWeight: 700,
-                              background: 'var(--accent-bg, rgba(79,70,229,0.15))', color: 'var(--accent, #4f46e5)',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            ⭐ Recommended
-                          </span>
-                        )}
-                        {o.isTransparent && (
-                          <span
-                            title="Transparent screen"
-                            style={{
-                              marginLeft: 4, padding: '1px 5px', borderRadius: 10, fontSize: 10, fontWeight: 600,
-                              background: 'rgba(14, 165, 233, 0.15)', color: '#0284c7',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            ✨ Transparent
-                          </span>
-                        )}
-                        {o.supportsCurved && (
-                          <span
-                            title="Supports curved / flexible deployment"
-                            style={{
-                              marginLeft: 4, padding: '1px 5px', borderRadius: 10, fontSize: 10, fontWeight: 600,
-                              background: 'rgba(168, 85, 247, 0.15)', color: '#7e22ce',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            🔄 Curved
-                          </span>
-                        )}
-                        {o.gobRecommended && (
-                          <span
-                            title="Fine pitch — GOB recommended"
-                            style={{
-                              marginLeft: 4, padding: '0 6px', borderRadius: 10, fontSize: 11, fontWeight: 700,
-                              background: 'var(--accent-bg, rgba(79,70,229,0.12))', color: 'var(--accent, #4f46e5)',
-                              cursor: 'help', whiteSpace: 'nowrap',
-                            }}
-                          >
-                            GOB
-                          </span>
-                        )}
+                      <td>
+                        {/* Name on its own line, capability badges wrapping underneath. maxWidth caps
+                            the column so the badges never widen it and the table keeps its horizontal
+                            space for the spec/price columns. */}
+                        <div style={{ maxWidth: 230 }}>
+                          <div style={{ whiteSpace: 'nowrap' }}>{o.model}{o.rotated ? ' (rot)' : ''}</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                          {o.recommendedFamily && (
+                            <span
+                              title={o.recommendedReason || 'Recommended by LED Selection Tree'}
+                              style={{
+                                padding: '1px 6px', borderRadius: 10, fontSize: 10, fontWeight: 700,
+                                background: 'var(--accent-bg, rgba(79,70,229,0.15))', color: 'var(--accent, #4f46e5)',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              ⭐ Recommended
+                            </span>
+                          )}
+                          {o.isTransparent && (
+                            <span
+                              title="Transparent screen"
+                              style={{
+                                padding: '1px 5px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                                background: 'rgba(14, 165, 233, 0.15)', color: '#0284c7',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              ✨ Transparent
+                            </span>
+                          )}
+                          {o.supportsCurved && (
+                            <span
+                              title="Supports curved / flexible deployment"
+                              style={{
+                                padding: '1px 5px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                                background: 'rgba(168, 85, 247, 0.15)', color: '#7e22ce',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              🔄 Curved
+                            </span>
+                          )}
+                          {o.gobRecommended && (
+                            <span
+                              title="Fine pitch — GOB recommended"
+                              style={{
+                                padding: '0 6px', borderRadius: 10, fontSize: 11, fontWeight: 700,
+                                background: 'var(--accent-bg, rgba(79,70,229,0.12))', color: 'var(--accent, #4f46e5)',
+                                cursor: 'help', whiteSpace: 'nowrap',
+                              }}
+                            >
+                              GOB
+                            </span>
+                          )}
+                          </div>
+                        </div>
                       </td>
-                      <td className="actions" style={{ whiteSpace: 'nowrap' }}>
+                      <td className="actions" style={{ whiteSpace: 'nowrap', textAlign: 'left', paddingLeft: 4 }}>
                         <button className="primary" onClick={() => selectProduct(o.productId, o.rotated)} disabled={busy} style={{ marginRight: 4 }}>
                           Select
                         </button>
@@ -2810,7 +2937,7 @@ interface LcdTierOption {
   margin: string | null;
 }
 
-function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quote; onChange: () => Promise<void>; editScreen?: LcdScreen; onCancelEdit?: () => void }) {
+function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }: { quote: Quote; onChange: () => Promise<void>; editScreen?: LcdScreen; onCancelEdit?: () => void; onDirtyChange?: (dirty: boolean) => void }) {
   const isEditing = !!editScreen;
   const [catalog, setCatalog] = useState<Opt[]>([]);
   const [serviceHoursId, setServiceHoursId] = useState(editScreen?.serviceHoursId != null ? String(editScreen.serviceHoursId) : '');
@@ -2992,6 +3119,11 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   // AA3a — brand of the chosen display line, shown read-only in the site-requirements block.
   const chosenDisplayId = lines.find((l) => l.itemType === 'display' && l.displayId)?.displayId;
   const chosenDisplayBrand = chosenDisplayId ? (catalog.find((x) => x.id === chosenDisplayId)?.brand ?? null) : null;
+  // Mirrors LedAddForm: an unsaved display selection is losable work on a type switch.
+  useEffect(() => {
+    onDirtyChange?.(!!chosenDisplayId && !editScreen);
+    return () => onDirtyChange?.(false);
+  }, [chosenDisplayId, editScreen, onDirtyChange]);
 
   const save = async () => {
     setBusy(true);
@@ -3739,6 +3871,21 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
     await onChange();
   };
 
+  // True while the visible add form holds a product selection that hasn't been added to the quote.
+  const [formDirty, setFormDirty] = useState(false);
+  // Pending LED/LCD switch, held back until the user resolves the unsaved-selection dialog.
+  const [pendingType, setPendingType] = useState<'LED' | 'LCD' | null>(null);
+
+  const screenCountFor = (t: 'LED' | 'LCD') => (t === 'LED' ? quote.ledScreens.length : quote.lcdScreens.length);
+
+  // Warn on a type switch in two cases: an unsaved product selection is about to be discarded, or
+  // the user is leaving a type they never added a screen for. Both are silent losses otherwise.
+  const requestScreenType = (next: 'LED' | 'LCD') => {
+    if (next === screenType) return;
+    if (formDirty || screenCountFor(screenType) === 0) { setPendingType(next); return; }
+    setScreenType(next);
+  };
+
   const totalScreens = quote.ledScreens.length + quote.lcdScreens.length;
 
   return (
@@ -3749,8 +3896,8 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
           <div style={{ display: 'flex', gap: 8 }}>
             {canWrite && !editing && (
               <>
-                <button className={screenType === 'LED' ? 'primary' : 'ghost'} onClick={() => setScreenType('LED')}>LED</button>
-                <button className={screenType === 'LCD' ? 'primary' : 'ghost'} onClick={() => setScreenType('LCD')}>LCD</button>
+                <button className={screenType === 'LED' ? 'primary' : 'ghost'} onClick={() => requestScreenType('LED')}>LED</button>
+                <button className={screenType === 'LCD' ? 'primary' : 'ghost'} onClick={() => requestScreenType('LCD')}>LCD</button>
               </>
             )}
           </div>
@@ -3769,6 +3916,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
           onChange={onChange}
           editScreen={editLed}
           onCancelEdit={cancelEdit}
+          onDirtyChange={setFormDirty}
         />
       )}
       {canWrite && screenType === 'LCD' && (
@@ -3778,12 +3926,25 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
           onChange={onChange}
           editScreen={editLcd}
           onCancelEdit={cancelEdit}
+          onDirtyChange={setFormDirty}
+        />
+      )}
+
+      {pendingType && (
+        <UnsavedScreenDialog
+          from={screenType}
+          to={pendingType}
+          hasUnsavedSelection={formDirty}
+          onCancel={() => setPendingType(null)}
+          onDiscard={() => { setFormDirty(false); setScreenType(pendingType); setPendingType(null); }}
         />
       )}
 
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Screens on this quote ({totalScreens})</h3>
-        {totalScreens === 0 && <p className="muted">None yet — this step is optional.</p>}
+        {/* Just a list placeholder — the "screens are optional / licences only" explanation lives in
+            NoScreensDialog so it is stated once, at the moment the user tries to move on. */}
+        {totalScreens === 0 && <p className="muted">None yet.</p>}
 
         {quote.ledScreens.map((s, i) => (
           <div key={`led-${s.id}`} style={{ borderBottom: '1px solid var(--border)', paddingBottom: 10, marginBottom: 10 }}>
