@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { clearToken, getRole, getToken, type Role } from '@/lib/api';
 import ThemeToggle from '@/components/ThemeToggle';
+import Logo from '@/components/Logo';
 
 export default function QuotesLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -29,7 +30,8 @@ export default function QuotesLayout({ children }: { children: ReactNode }) {
     <div>
       <header className="qheader">
         <div className="brand">
-          🧾 QuoteZen <small>quotes</small>
+          <Logo />
+          <small>quotes</small>
         </div>
         <nav className="qnav">
           <Link href="/quotes">Quotes</Link>

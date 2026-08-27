@@ -78,6 +78,10 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
 .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 16px 10px; overflow-y: auto; height: 100vh; position: sticky; top: 0; }
 .brand { font-weight: 700; font-size: 16px; padding: 6px 10px 14px; display: flex; align-items: center; gap: 8px; }
 .brand small { color: var(--muted); font-weight: 400; }
+/* Seen wordmark. Artwork is solid black on transparency; the dark palette is the app default,
+   so invert by default and restore the original ink under the light palette. */
+.brand-logo { height: 22px; width: auto; display: block; flex: none; filter: invert(1); }
+[data-theme='light'] .brand-logo { filter: none; }
 .nav-group { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 14px 10px 4px; }
 .nav-item { display: flex; justify-content: space-between; padding: 6px 10px; border-radius: 6px; color: var(--text); cursor: pointer; }
 .nav-item:hover { background: var(--surface-2); }
