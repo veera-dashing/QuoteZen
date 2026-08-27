@@ -22,15 +22,29 @@ export const buildQuotePdf = (
     doc.on('error', reject);
 
     const code = quote.currency?.code ?? 'AUD';
-    const heading = (t: string) => doc.moveDown(0.6).fontSize(13).fillColor('#111').text(t).moveDown(0.2);
+    const L = 50;
+    const CONTENT_W = 495;
+    const RIGHT_X = 410;
+    const RIGHT_W = 135;
+
+    const heading = (t: string) => {
+      doc.moveDown(0.6).fontSize(13).fillColor('#111');
+      doc.text(t, L, doc.y, { width: CONTENT_W });
+      doc.moveDown(0.2);
+      doc.x = L;
+    };
     const line = (l: string, r: string) => {
       const y = doc.y;
-      doc.fontSize(10).fillColor('#333').text(l, 50, y, { width: 360 });
-      doc.text(r, 410, y, { width: 135, align: 'right' });
+      doc.fontSize(10).fillColor('#333').text(l, L, y, { width: 360 });
+      const leftEnd = doc.y;
+      doc.text(r, RIGHT_X, y, { width: RIGHT_W, align: 'right' });
+      const rightEnd = doc.y;
+      doc.x = L;
+      doc.y = Math.max(leftEnd, rightEnd);
     };
 
     // Header
-    doc.fontSize(22).fillColor('#6d6bf6').text('QuoteZen', { continued: true }).fillColor('#999').fontSize(12).text('  Seen Technology');
+    doc.fontSize(18).fillColor('#111').text('Seen Technology', L, doc.y, { width: CONTENT_W });
     doc.moveDown(0.3).fontSize(16).fillColor('#111').text(`Quote ${quote.jobReference}`);
     doc.fontSize(10).fillColor('#666')
       .text(`Client: ${quote.client?.name ?? '—'}`)
@@ -52,7 +66,7 @@ export const buildQuotePdf = (
       for (const s of quote.lcdScreens) {
         line(descriptions.get(s.id.toString()) ?? s.screenName ?? 'LCD', money(s.priceTotal, code));
         const order = lcdOrderList(s);
-        if (order) doc.fontSize(8).fillColor('#888').text(`Order list: ${order}`, 50, doc.y, { width: 495 });
+        if (order) doc.fontSize(8).fillColor('#888').text(`Order list: ${order}`, L, doc.y, { width: CONTENT_W });
       }
     }
     // Licences
@@ -71,8 +85,11 @@ export const buildQuotePdf = (
     doc.moveDown(0.2);
     doc.fontSize(13).fillColor('#111');
     const y = doc.y;
-    doc.text('Grand total', 50, y, { width: 360 });
-    doc.text(money(quote.grandTotal, code), 410, y, { width: 135, align: 'right' });
+    doc.text('Grand total', L, y, { width: 360 });
+    const grandLeftEnd = doc.y;
+    doc.text(money(quote.grandTotal, code), RIGHT_X, y, { width: RIGHT_W, align: 'right' });
+    doc.x = L;
+    doc.y = Math.max(grandLeftEnd, doc.y);
 
     // Assumptions / exclusions / terms (P1-18.2, BR-090/091)
     // Render the quote's STORED terms grouped by kind, falling back to the DEFAULT_* constants for
@@ -80,7 +97,7 @@ export const buildQuotePdf = (
     const bullets = (title: string, items: readonly string[]) => {
       heading(title);
       doc.fontSize(9).fillColor('#444');
-      for (const it of items) doc.text(`•  ${it}`, { width: 495 });
+      for (const it of items) doc.text(`•  ${it}`, L, doc.y, { width: CONTENT_W });
     };
     const storedOf = (kind: string): string[] =>
       quote.terms.filter((t) => t.kind === kind).map((t) => t.text);
@@ -101,9 +118,9 @@ export const buildQuotePdf = (
         const high = r.severity === 'high';
         doc.fillColor(high ? '#dc2626' : '#444');
         const sev = r.severity.toUpperCase();
-        doc.text(`•  [${sev} · ${r.category}] ${r.description}`, { width: 495 });
+        doc.text(`•  [${sev} · ${r.category}] ${r.description}`, L, doc.y, { width: CONTENT_W });
         if (r.mitigation) {
-          doc.fillColor('#666').text(`     Mitigation: ${r.mitigation}`, { width: 495 });
+          doc.fillColor('#666').text(`     Mitigation: ${r.mitigation}`, L, doc.y, { width: CONTENT_W });
         }
       }
     }
