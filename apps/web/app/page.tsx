@@ -7,7 +7,7 @@ import { getToken } from '@/lib/api';
 export default function Home() {
   const router = useRouter();
   useEffect(() => {
-    router.replace(getToken() ? '/admin' : '/login');
+    router.replace(getToken() ? '/quotes' : '/login');
   }, [router]);
   return <div className="center">Loading…</div>;
 }

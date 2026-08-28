@@ -16,7 +16,7 @@ export default function LoginPage() {
     setError(null);
     try {
       await login(em, pw);
-      router.replace('/admin');
+      router.replace('/quotes');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Login failed');
     } finally {
