@@ -33,7 +33,7 @@ Route: `/quotes/[id]` (or `/quotes/new` → redirects to same route with `id ===
 
 `STEPS = Details · Select Screens · Licences · Review`
 
-**Details** — job ref, client (required), location (required), currency, site-context fields, commercial intake fields, dependency fields, discount override %, discount scope. Optimistic-lock PATCH (`expectedVersion`). A 409 conflict banner + "Reload latest" button handles stale saves. Auto-save (debounced, pauses on conflict). Create mode: "Create & continue" → POST /quotes → redirect to `?step=1` (Select Screens).
+**Details** — job ref, client (required, with an inline "+ New client" row in the picker), location (required), currency, site-context fields, commercial intake fields, dependency fields. **No discount field** — it is set in the Review step; the sidebar's Discount section shows the effective rate at every stage. Optimistic-lock PATCH (`expectedVersion`). A 409 conflict banner + "Reload latest" button handles stale saves. Auto-save (debounced, pauses on conflict). Create mode: "Create & continue" → POST /quotes → redirect to `?step=1` (Select Screens).
 
 **Select Screens** — LED/LCD type toggle + combined screen list. LED add form has two parts:
 1. Screen selection (viewing distance, environment, GOB) → ranked config table + G/B/B tiers
@@ -45,7 +45,7 @@ Each screen row has: ✎ Edit (re-opens add form pre-filled), 📊 Cost breakdow
 
 **Licences** — screen-type + volume-tier pickers (SearchSelect).
 
-**Review** — Outputs (PDF, BOM, solution summary, PM handoff), Validation card, Itemised price, Versions panel, Comparison (diff), Proposal text editor, Risks register, Documents + re-run, Approval card (two-stage reviews).
+**Review** — Outputs (PDF, BOM, solution summary, PM handoff), Validation card, **Discount override** (pct + scope + manager note + cap guardrail; sits directly under the totals), Itemised price, Versions panel, Comparison (diff), Proposal text editor, Risks register, Documents + re-run, Approval card (two-stage reviews).
 
 ### Quote summary sidebar
 
@@ -53,7 +53,7 @@ Sticky right-hand aside visible in edit mode. Collapsible — state persisted in
 
 Sections: Quote summary (client/site/job ref) · Stats (lines/units/docs) · Screens · Discount (cap pill) · Completeness (progress bar + checklist) · Totals (grand + recurring).
 
-Stage-aware accent-border emphasis: Details → Completeness+Discount; Select Screens → Screens+Stats; Licences → Totals; Review → Totals+Completeness.
+Stage-aware accent-border emphasis: Details → Completeness; Select Screens → Screens+Stats; Licences → Totals; Review → Totals+Discount (the emphasis follows the discount control, which lives in Review).
 
 ## Role-aware UI
 
@@ -90,11 +90,15 @@ CSS: `globals.css` has `[data-theme='dark']` (default) + `[data-theme='light']` 
 - **Default window:** last two months (`isoMonthsAgo(2)` for `from`, open-ended `to`)
 - **KPI stat cards:** Open quotes count · Pipeline value · Awaiting approval · Won value (honest sums over filter window)
 - **Per-status filter pills with live counts:** All · Draft · Pending approval · Approved · Issued · Won · Lost · Archived (client-side grouping, instant; Archived refetches)
-- **Richer table:** Brief (job ref link + client + relative time) · Stage (coloured badge) · Tier (client tier A+/A/B) · Value (grand total + go-live date or "TBC")
+- **Richer table:** Brief (job ref link + client + relative time) · Stage (coloured badge) · Tier (client tier A+/A/B) · Value (grand total + install start date or "TBC")
 
 ## Key patterns
 
-**Optimistic concurrency (Details step):** save sends `expectedVersion: quote.lockVersion`; 409 → conflict banner + Reload button; lock token `v{n}` shown in card header. Auto-save (debounced) suspends while unmet discount guardrail conditions exist.
+**Optimistic concurrency:** saves send `expectedVersion: quote.lockVersion`; 409 → conflict banner + Reload button; lock token `v{n}` shown in the Details card header. Used by the Details auto-save (debounced) and by the Review step's Apply discount, which reloads and asks the user to re-apply on a conflict.
+
+**Discount is set at the end (Review), not in Details.** Discounting before any screens exist meant conceding margin against a zero total. `DetailsStep` shows no discount field at all (writer form and viewer read-only panel alike), holds no discount state, and does **not** send `discountPct`/`discountNote`/`discountScope` in its PATCH — so a Details auto-save can never overwrite a discount applied later. The cap/note guardrail moved with the control.
+
+**The API gates the discount only when a PATCH touches it.** `updateQuote` evaluates `enforceDiscountGuardrail` only when `discountPct` or `discountNote` is in the payload — otherwise an admin-approved above-cap discount would 403 every later non-admin edit of unrelated fields, and write a spurious `discount_guardrail` audit row on every unrelated admin save. Changing the note alone still gates.
 
 **Client/location required:** `detailsIncomplete = !clientId || !locationId` gates Create/Save button; red hint text. Client-side only enforcement (server stays lenient for existing quotes and test suite).
 

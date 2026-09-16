@@ -294,14 +294,15 @@ function QuoteSummary({ quote, stepIndex, onHide }: { quote: Quote; stepIndex: n
   const pct = total === 0 ? 0 : Math.round((satisfied / total) * 100);
 
   // Stage-aware emphasis: which section gets the accent border for the current step.
-  //  0 Details → Completeness + Discount · 1 Select Screens → Screens + Stats
-  //  2 Licences → Totals · 3 Review → Totals + Completeness
+  //  0 Details → Completeness · 1 Select Screens → Screens + Stats
+  //  2 Licences → Totals · 3 Review → Totals + Discount
+  // Discount follows its control: it is set in the Review step, against the final figure.
   const emph = (section: 'stats' | 'screens' | 'discount' | 'completeness' | 'totals'): boolean => {
     switch (stepIndex) {
-      case 0: return section === 'completeness' || section === 'discount';
+      case 0: return section === 'completeness';
       case 1: return section === 'screens' || section === 'stats';
       case 2: return section === 'totals';
-      case 3: return section === 'totals' || section === 'completeness';
+      case 3: return section === 'totals' || section === 'discount';
       default: return false;
     }
   };
@@ -449,7 +450,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   const [clientId, setClientId] = useState(quote?.clientId ?? '');
   const [locationId, setLocationId] = useState(quote?.locationId ?? '');
   const [currencyCode, setCurrencyCode] = useState(quote?.currency?.code ?? 'AUD');
-  // Project information / commercial (U1). discountPct is stored as a fraction (0..1) but shown as %.
+  // Project information / commercial (U1).
   const [requestedShippingDate, setRequestedShippingDate] = useState(
     quote?.requestedShippingDate ? quote.requestedShippingDate.slice(0, 10) : '',
   );
@@ -490,32 +491,12 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   const [spaceAroundScreenMm, setSpaceAroundScreenMm] = useState(
     quote?.spaceAroundScreenMm != null ? String(quote.spaceAroundScreenMm) : '',
   );
-  const [discountPctInput, setDiscountPctInput] = useState(
-    quote?.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
-  );
-  // A+ discount guardrail: a manager note is required above the note threshold; the cap is a hard limit
-  // for non-admins (admin-overridable). Both come from the admin-maintained DB settings (fetched below).
-  const [discountNote, setDiscountNote] = useState(quote?.discountNote ?? '');
-  const [capPct, setCapPct] = useState(12);
-  const [noteThreshold, setNoteThreshold] = useState(5);
   const isAdmin = getRole() === 'admin';
-  const discPctNum = discountPctInput.trim() === '' ? null : Number(discountPctInput);
-  const needsNote = discPctNum != null && discPctNum > noteThreshold && !discountNote.trim();
-  const overCap = discPctNum != null && discPctNum > capPct;
-  const capBlocked = overCap && !isAdmin;
-  const discountBlocked = needsNote || capBlocked;
   // Client + Location are mandatory on the Details step — gate save/auto-save until both are set.
   const detailsIncomplete = !clientId || !locationId;
-  // Non-admins can't type above the cap (clamped). Admins MAY exceed it — no hard stop; a visible
-  // warning banner flags it (so it isn't accidental) and the server audits the override.
-  const onDiscountChange = (raw: string) => {
-    if (!isAdmin && raw.trim() !== '' && Number(raw) > capPct) { setDiscountPctInput(String(capPct)); setDirty(true); return; }
-    setDiscountPctInput(raw); setDirty(true);
-  };
-  // U5 — where the discount applies (one-off upfront vs every renewal).
-  const [discountScope, setDiscountScope] = useState<'one_off' | 'recurring'>(
-    quote?.discountScope === 'recurring' ? 'recurring' : 'one_off',
-  );
+  // NOTE: the discount override (pct / scope / manager note) and its cap+threshold guardrail live in
+  // the Review step — it is set after the final figure is known. Nothing here reads or writes it, so
+  // a Details save never touches those columns.
   const [selectedViewers, setSelectedViewers] = useState<Set<string>>(
     () => new Set((quote?.viewers ?? []).map((v) => v.user.id)),
   );
@@ -548,14 +529,11 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       api<{ rows: Opt[] }>('/admin/locations?take=200'),
       api<Opt[]>('/catalog/currencies'),
       api<Array<{ id: string; name: string; email: string }>>('/users/viewers'),
-      api<{ capPct: number; noteThresholdPct: number }>('/quotes/discount-policy'),
-    ]).then(([c, l, cur, v, policy]) => {
+    ]).then(([c, l, cur, v]) => {
       setClients(c.rows);
       setLocations(l.rows);
       setCurrencies(cur);
       setViewers(v);
-      setCapPct(Math.round(policy.capPct * 1000) / 10);
-      setNoteThreshold(Math.round(policy.noteThresholdPct * 1000) / 10);
     });
   }, [canWrite]);
 
@@ -617,7 +595,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
     setErr(null);
     setConflict(false);
     setAutoStatus('saving');
-    // Shared body for create + edit; discountPct converts % → fraction, blanks clear the field.
+    // Shared body for create + edit; blanks clear the field.
     const body = {
       jobReference,
       currencyCode,
@@ -650,9 +628,8 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       // Intake form v2 — account exec and space around screen.
       accountExec: accountExec.trim() || null,
       spaceAroundScreenMm: spaceAroundScreenMm.trim() === '' ? null : Number(spaceAroundScreenMm),
-      discountPct: discountPctInput.trim() === '' ? null : Number(discountPctInput) / 100,
-      discountNote: discountNote.trim() ? discountNote.trim() : null,
-      discountScope,
+      // discountPct / discountNote / discountScope are deliberately NOT sent: they are owned by the
+      // Review step. Including them here would let a Details auto-save overwrite a discount set later.
     };
     try {
       if (isNew) {
@@ -696,15 +673,14 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   // conflict is showing, auto-save is suspended until the user reloads (which resets dirty).
   useEffect(() => {
     // No auto-save in CREATE mode (nothing to PATCH yet — the user clicks "Create & continue").
-    // Suspend auto-save while the discount guardrail is unmet (missing note / non-admin over cap) so the
-    // user isn't hit with a mid-typing 422/403; the explicit Save still surfaces the server error.
-    if (isNew || !canWrite || !dirty || conflict || !jobReference || discountBlocked || detailsIncomplete) return;
+    // (The discount guardrail no longer gates this step — the discount is set in Review.)
+    if (isNew || !canWrite || !dirty || conflict || !jobReference || detailsIncomplete) return;
     const t = setTimeout(() => {
       setDirty(false);
       void persist();
     }, 1500);
     return () => clearTimeout(t);
-  }, [isNew, dirty, conflict, canWrite, jobReference, discountBlocked, persist]);
+  }, [isNew, dirty, conflict, canWrite, jobReference, persist]);
 
   // A viewer can't create a quote; guard the create route (the "+ New quote" button is writer-only).
   if (isNew && !canWrite) {
@@ -724,8 +700,8 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
         <div className="grid3">
           <div><label>Install start date</label><input value={quote.requestedShippingDate ? quote.requestedShippingDate.slice(0, 10) : ''} readOnly /></div>
           <div><label>Site address</label><input value={quote.siteAddress ?? ''} readOnly /></div>
-          <div><label>Discount</label><input value={quote.discountPct != null && quote.discountPct !== '' ? `${Number(quote.discountPct) * 100}%` : '(default)'} readOnly /></div>
-          <div><label>Discount applies to</label><input value={quote.discountScope === 'recurring' ? 'Every renewal (recurring)' : 'One-off (upfront)'} readOnly /></div>
+          {/* Discount is not shown on Details for writers, so it isn't shown here either — a viewer
+              reads it in the sidebar's Discount section and on the Review step. */}
         </div>
         <div style={{ marginTop: 8 }}>
           <label>Project notes</label>
@@ -804,7 +780,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       </div>
 
       <h4 style={{ margin: '18px 0 4px' }}>Project information</h4>
-      <p className="muted" style={{ marginTop: 0 }}>Quote-level site &amp; commercial details. The discount overrides the client/system default (leave blank to inherit).</p>
+      <p className="muted" style={{ marginTop: 0 }}>Quote-level site &amp; commercial details.</p>
       <div className="grid3">
         <div>
           {/* Label only — the column/field stays `requestedShippingDate`. Renaming the storage is a
@@ -816,52 +792,9 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
           <label>Site address</label>
           <input value={siteAddress} onChange={(e) => { setSiteAddress(e.target.value); setDirty(true); }} placeholder="e.g. 12 Site St, Sydney" />
         </div>
-        <div>
-          <label>Discount override (%)</label>
-          <input type="number" min={0} max={isAdmin ? 99 : capPct} step="0.5" value={discountPctInput} onChange={(e) => onDiscountChange(e.target.value)} placeholder="(default)" />
-          <p className="muted" style={{ margin: '4px 0 0', fontSize: 12, color: capBlocked ? 'var(--danger, #dc2626)' : undefined }}>
-            {capBlocked
-              ? `Exceeds the ${capPct}% cap — admin approval required.`
-              : `Cap ${capPct}%. Above ${noteThreshold}% requires a manager note.`}
-          </p>
-        </div>
-        <div>
-          <label>Discount applies to</label>
-          <select value={discountScope} onChange={(e) => { setDiscountScope(e.target.value as 'one_off' | 'recurring'); setDirty(true); }}>
-            <option value="one_off">One-off (upfront)</option>
-            <option value="recurring">Every renewal (recurring)</option>
-          </select>
-        </div>
+        {/* No discount field here at all — it belongs to the Review step, applied against the final
+            figure. The sidebar's Discount section still shows the effective rate at every stage. */}
       </div>
-      {/* Admin over-cap: a visible warning (not a hard stop) so it isn't done accidentally; audited on save. */}
-      {isAdmin && overCap && (
-        <div
-          style={{
-            marginTop: 10,
-            padding: '8px 12px',
-            borderRadius: 6,
-            border: '1px solid #f59e0b',
-            background: 'rgba(245,158,11,0.12)',
-            color: '#f59e0b',
-            fontSize: 13,
-          }}
-        >
-          ⚠ This discount ({discPctNum}%) exceeds the {capPct}% cap. You can proceed as an admin, but the
-          override will be recorded in the audit log{discPctNum != null && discPctNum > noteThreshold ? ' (a manager note is required)' : ''}.
-        </div>
-      )}
-      {discPctNum != null && discPctNum > noteThreshold && (
-        <div style={{ marginTop: 8 }}>
-          <label>Manager note (required for discounts above {noteThreshold}%){needsNote && <span style={{ color: 'var(--danger, #dc2626)' }}> *</span>}</label>
-          <textarea
-            value={discountNote}
-            onChange={(e) => { setDiscountNote(e.target.value); setDirty(true); }}
-            rows={2}
-            style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box', borderColor: needsNote ? 'var(--danger, #dc2626)' : undefined }}
-            placeholder="Justification for the discount (e.g. strategic account, competitive tender)…"
-          />
-        </div>
-      )}
       <div style={{ marginTop: 8 }}>
         <label>Project notes</label>
         <textarea value={projectNotes} onChange={(e) => { setProjectNotes(e.target.value); setDirty(true); }} rows={3} style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box' }} placeholder="Internal project notes…" />
@@ -1039,7 +972,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
 
       <div className="step-actions">
-        <button className="primary" onClick={handleSave} disabled={busy || !jobReference || discountBlocked || detailsIncomplete}>
+        <button className="primary" onClick={handleSave} disabled={busy || !jobReference || detailsIncomplete}>
           {busy ? (isNew ? 'Creating…' : 'Saving…') : isNew ? 'Create & continue' : 'Save details'}
         </button>
         {isNew && (
@@ -1047,7 +980,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
             Cancel
           </button>
         )}
-        {detailsIncomplete ? (
+        {detailsIncomplete && (
           <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>
             {!clientId && !locationId
               ? 'Client and location are required.'
@@ -1055,12 +988,6 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
                 ? 'Client is required.'
                 : 'Location is required.'}
           </span>
-        ) : (
-          discountBlocked && (
-            <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>
-              {needsNote ? `Add a manager note to save (discount above ${noteThreshold}%).` : `Discount exceeds the ${capPct}% cap.`}
-            </span>
-          )
         )}
       </div>
 
@@ -1552,8 +1479,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   const [treeConstraints, setTreeConstraints] = useState<TreeConstraints | null>(null);
   const [caveats, setCaveats] = useState<string[]>([]);
   const [primaryRecommendationText, setPrimaryRecommendationText] = useState<string | null>(null);
-  const [sunExposure, setSunExposure] = useState(editScreen?.sunExposure ?? '');
-  const [wallSubstrate, setWallSubstrate] = useState(editScreen?.wallSubstrate ?? '');
   const [guidedIntakeOpen, setGuidedIntakeOpen] = useState(true);
 
   // W0: query-only selection drivers (not persisted on the screen) — environment + viewing distance.
@@ -1627,6 +1552,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   const [highResolution, setHighResolution] = useState(!!editScreen?.highResolution);
   // AA1 — recess/cavity depth (mm); descriptive site-prep detail.
   const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
+  const [sunExposure, setSunExposure] = useState(editScreen?.sunExposure ?? '');
+  const [wallSubstrate, setWallSubstrate] = useState(editScreen?.wallSubstrate ?? '');
   const [frameNote, setFrameNote] = useState(editScreen?.frameNote ?? '');
   const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(editScreen?.serviceDescriptionSuffix ?? '');
   // AA2 — content ratio + supplier + flatness.
@@ -1757,8 +1684,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     try {
       const res = await api<{
         options: TierOption[];
-        ...(sunExposure ? { sunExposure } : {}),
-        ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
         reasons: string[];
         distinctProducts: number;
         toleranceBands?: number[];
@@ -1832,6 +1757,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         backCover,
         highResolution,
         ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
+        ...(sunExposure ? { sunExposure } : {}),
+        ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
         ...(frameNote.trim() ? { frameNote: frameNote.trim() } : {}),
         ...(serviceDescriptionSuffix.trim() ? { serviceDescriptionSuffix: serviceDescriptionSuffix.trim() } : {}),
         // AA2 — content ratio / supplier / flatness.
@@ -2812,15 +2739,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
             <SearchSelect
               value={draftType}
               onChange={(v) => { setDraftType(v as LedComponentType); setDraftItem(''); }}
-          <div>
-            <label title="Sun falling on THIS screen — a shaded wall and a west-facing window in the same job differ">Sun exposure</label>
-            <SearchSelect value={sunExposure} onChange={setSunExposure} allowEmpty placeholder="—"
-              options={[{ value: 'None', label: 'None' }, { value: 'Indirect', label: 'Indirect' }, { value: 'Direct', label: 'Direct' }]} />
-          </div>
-          <div>
-            <label title="What THIS screen mounts to — drives the fixing method">Wall substrate</label>
-            <input value={wallSubstrate} onChange={(e) => setWallSubstrate(e.target.value)} placeholder="e.g. plasterboard, brick, concrete" />
-          </div>
               options={LED_COMPONENT_TABLES.map((t) => ({ value: t.componentType, label: t.label }))}
             />
           </div>
@@ -2895,6 +2813,15 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
             <input type="number" min={0} value={recessDepthMm} onChange={(e) => setRecessDepthMm(e.target.value)} placeholder="optional" />
           </div>
           <div>
+            <label title="Sun falling on THIS screen — a shaded wall and a west-facing window in the same job differ">Sun exposure</label>
+            <SearchSelect value={sunExposure} onChange={setSunExposure} allowEmpty placeholder="—"
+              options={[{ value: 'None', label: 'None' }, { value: 'Indirect', label: 'Indirect' }, { value: 'Direct', label: 'Direct' }]} />
+          </div>
+          <div>
+            <label title="What THIS screen mounts to — drives the fixing method">Wall substrate</label>
+            <input value={wallSubstrate} onChange={(e) => setWallSubstrate(e.target.value)} placeholder="e.g. plasterboard, brick, concrete" />
+          </div>
+          <div>
             <label>Frame / housing description</label>
             <input value={frameNote} onChange={(e) => setFrameNote(e.target.value)} placeholder="optional" />
           </div>
@@ -2940,8 +2867,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
             </button>
           )}
         </div>
-  const [sunExposure, setSunExposure] = useState(editScreen?.sunExposure ?? '');
-  const [wallSubstrate, setWallSubstrate] = useState(editScreen?.wallSubstrate ?? '');
       </div>
       )}
     </div>
@@ -3015,6 +2940,8 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   const [orientation, setOrientation] = useState(editScreen?.orientation ?? '');
   // AA1 — recess/cavity depth (mm); descriptive site-prep detail.
   const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
+  const [sunExposure, setSunExposure] = useState(editScreen?.sunExposure ?? '');
+  const [wallSubstrate, setWallSubstrate] = useState(editScreen?.wallSubstrate ?? '');
   // AA3a — site/requirement fields feeding the LCD selection rules.
   const [requiresAndroid, setRequiresAndroid] = useState(editScreen?.requiresAndroid ?? false);
   const [maxDepthMm, setMaxDepthMm] = useState(editScreen?.maxDepthMm != null ? String(editScreen.maxDepthMm) : '');
@@ -3134,8 +3061,6 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     ]);
   };
   const updateLine = (idx: number, patch: Partial<LcdLine>) =>
-        ...(sunExposure ? { sunExposure } : {}),
-        ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
     setLines((ls) => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   const removeLine = (idx: number) => setLines((ls) => ls.filter((_, i) => i !== idx));
 
@@ -3209,19 +3134,12 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         screenName: screenName || undefined,
         orientation: orientation || undefined,
         ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
+        ...(sunExposure ? { sunExposure } : {}),
+        ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
         // AA3a — site/requirement fields (rules; checkboxes always sent, depth only when set).
         requiresAndroid,
         needsPc,
         needsHardDrive,
-          <div>
-            <label title="Sun falling on THIS screen — a shaded wall and a west-facing window in the same job differ">Sun exposure</label>
-            <SearchSelect value={sunExposure} onChange={setSunExposure} allowEmpty placeholder="—"
-              options={[{ value: 'None', label: 'None' }, { value: 'Indirect', label: 'Indirect' }, { value: 'Direct', label: 'Direct' }]} />
-          </div>
-          <div>
-            <label title="What THIS screen mounts to — drives the fixing method">Wall substrate</label>
-            <input value={wallSubstrate} onChange={(e) => setWallSubstrate(e.target.value)} placeholder="e.g. plasterboard, brick, concrete" />
-          </div>
         ...(maxDepthMm.trim() !== '' ? { maxDepthMm: Number(maxDepthMm) } : {}),
         // Intake form v2 — LCD screen requirement/preference fields.
         ...(brightnessNits.trim() !== '' ? { brightnessNits: Number(brightnessNits) } : {}),
@@ -3294,6 +3212,15 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
           <div>
             <label>Recess depth (mm)</label>
             <input type="number" min={0} value={recessDepthMm} onChange={(e) => setRecessDepthMm(e.target.value)} placeholder="optional" />
+          </div>
+          <div>
+            <label title="Sun falling on THIS screen — a shaded wall and a west-facing window in the same job differ">Sun exposure</label>
+            <SearchSelect value={sunExposure} onChange={setSunExposure} allowEmpty placeholder="—"
+              options={[{ value: 'None', label: 'None' }, { value: 'Indirect', label: 'Indirect' }, { value: 'Direct', label: 'Direct' }]} />
+          </div>
+          <div>
+            <label title="What THIS screen mounts to — drives the fixing method">Wall substrate</label>
+            <input value={wallSubstrate} onChange={(e) => setWallSubstrate(e.target.value)} placeholder="e.g. plasterboard, brick, concrete" />
           </div>
         </div>
         {/* AA3a + intake-v2 — site requirements, brand preference, and display specs. */}
@@ -4598,6 +4525,82 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const canPrice = role === 'admin' || role === 'sales';
   const canWrite = role !== 'viewer';
 
+  // ── Discount override (set HERE, at the end, once the final figure is known) ────────────────────
+  // Moved out of the Details step: discounting before any screens exist meant conceding margin
+  // against a zero total. The guardrail moved with it — a manager note above the threshold, and a
+  // hard cap for non-admins (admins may exceed it; the server audits the override).
+  const [discPctInput, setDiscPctInput] = useState(
+    quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
+  );
+  const [discNote, setDiscNote] = useState(quote.discountNote ?? '');
+  const [discScope, setDiscScope] = useState<'one_off' | 'recurring'>(
+    quote.discountScope === 'recurring' ? 'recurring' : 'one_off',
+  );
+  const [discCapPct, setDiscCapPct] = useState(12);
+  const [discNoteThreshold, setDiscNoteThreshold] = useState(5);
+  const [discBusy, setDiscBusy] = useState(false);
+  const [discErr, setDiscErr] = useState<string | null>(null);
+  const [discSavedAt, setDiscSavedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<{ capPct: number; noteThresholdPct: number }>('/quotes/discount-policy')
+      .then((p) => {
+        setDiscCapPct(Math.round(p.capPct * 1000) / 10);
+        setDiscNoteThreshold(Math.round(p.noteThresholdPct * 1000) / 10);
+      })
+      .catch(() => undefined); // non-fatal: the defaults above still guard the input
+  }, []);
+
+  // Re-sync the draft from the server whenever the quote advances (our own save, or a change made
+  // elsewhere). The step is never unmounted between saves, so without this the inputs would go stale.
+  useEffect(() => {
+    setDiscPctInput(
+      quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
+    );
+    setDiscNote(quote.discountNote ?? '');
+    setDiscScope(quote.discountScope === 'recurring' ? 'recurring' : 'one_off');
+  }, [quote.lockVersion, quote.discountPct, quote.discountNote, quote.discountScope]);
+
+  const discNum = discPctInput.trim() === '' ? null : Number(discPctInput);
+  const discNeedsNote = discNum != null && discNum > discNoteThreshold && !discNote.trim();
+  const discOverCapNow = discNum != null && discNum > discCapPct;
+  const discBlocked = discNeedsNote || (discOverCapNow && !isAdmin);
+  const discDirty =
+    discPctInput !== (quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '') ||
+    discNote !== (quote.discountNote ?? '') ||
+    discScope !== (quote.discountScope === 'recurring' ? 'recurring' : 'one_off');
+
+  // Non-admins are clamped to the cap as they type; admins may exceed it (warned, then audited).
+  const onDiscChange = (raw: string) => {
+    if (!isAdmin && raw.trim() !== '' && Number(raw) > discCapPct) { setDiscPctInput(String(discCapPct)); return; }
+    setDiscPctInput(raw);
+  };
+
+  const saveDiscount = async () => {
+    setDiscBusy(true);
+    setDiscErr(null);
+    try {
+      await api(`/quotes/${quote.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          discountPct: discPctInput.trim() === '' ? null : Number(discPctInput) / 100,
+          discountNote: discNote.trim() ? discNote.trim() : null,
+          discountScope: discScope,
+          expectedVersion: quote.lockVersion,
+        }),
+      });
+      await onChange(); // refetch → totals reflect the discount, and the sync effect above re-seeds.
+      setDiscSavedAt(new Date().toLocaleTimeString());
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'conflict') {
+        await onChange();
+        setDiscErr('Quote changed elsewhere — reloaded. Re-apply the discount.');
+      } else setDiscErr(e instanceof Error ? e.message : 'Could not save the discount');
+    } finally {
+      setDiscBusy(false);
+    }
+  };
+
   // Editable proposal text (P1-18.2): three textareas, one line per item, pre-filled from the API.
   const [assumptionsText, setAssumptionsText] = useState('');
   const [exclusionsText, setExclusionsText] = useState('');
@@ -4956,6 +4959,116 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
           <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(quote.totalRecurring).toLocaleString()}</div></div>
           <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(quote.grandTotal).toLocaleString()}</div></div>
         </div>
+      </div>
+
+      {/* Discount override — deliberately placed directly beneath the totals: it is applied at the end
+          of the process, once the final figure has been reviewed or the customer has come back. */}
+      <div className="card">
+        <div className="topbar">
+          <h3 style={{ margin: 0 }}>Discount override</h3>
+          {discSavedAt && !discDirty && <span className="muted">✓ Saved {discSavedAt}</span>}
+        </div>
+        {!canWrite ? (
+          <p className="muted" style={{ marginTop: 8 }}>
+            Read-only role — the discount is{' '}
+            {quote.discountPct != null && quote.discountPct !== ''
+              ? `${Number(quote.discountPct) * 100}%`
+              : 'the client/system default'}.
+          </p>
+        ) : (
+          <>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Applied to the {discScope === 'recurring' ? 'recurring' : 'up-front'} total above. Leave blank to
+              inherit the client/tier/system default.
+            </p>
+            <div className="grid3">
+              <div>
+                <label>Discount (%)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={isAdmin ? 99 : discCapPct}
+                  step="0.5"
+                  value={discPctInput}
+                  onChange={(e) => onDiscChange(e.target.value)}
+                  placeholder="(default)"
+                />
+                <p
+                  className="muted"
+                  style={{ margin: '4px 0 0', fontSize: 12, color: discOverCapNow && !isAdmin ? 'var(--danger, #dc2626)' : undefined }}
+                >
+                  {discOverCapNow && !isAdmin
+                    ? `Exceeds the ${discCapPct}% cap — admin approval required.`
+                    : `Cap ${discCapPct}%. Above ${discNoteThreshold}% requires a manager note.`}
+                </p>
+              </div>
+              <div>
+                <label>Discount applies to</label>
+                <select value={discScope} onChange={(e) => setDiscScope(e.target.value as 'one_off' | 'recurring')}>
+                  <option value="one_off">One-off (upfront)</option>
+                  <option value="recurring">Every renewal (recurring)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Admin over-cap: a visible warning, not a hard stop, so it can't happen by accident. */}
+            {isAdmin && discOverCapNow && (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  border: '1px solid #f59e0b',
+                  background: 'rgba(245,158,11,0.12)',
+                  color: '#f59e0b',
+                  fontSize: 13,
+                }}
+              >
+                ⚠ This discount ({discNum}%) exceeds the {discCapPct}% cap. You can proceed as an admin, but the
+                override will be recorded in the audit log
+                {discNum != null && discNum > discNoteThreshold ? ' (a manager note is required)' : ''}.
+              </div>
+            )}
+
+            {discNum != null && discNum > discNoteThreshold && (
+              <div style={{ marginTop: 8 }}>
+                <label>
+                  Manager note (required for discounts above {discNoteThreshold}%)
+                  {discNeedsNote && <span style={{ color: 'var(--danger, #dc2626)' }}> *</span>}
+                </label>
+                <textarea
+                  value={discNote}
+                  onChange={(e) => setDiscNote(e.target.value)}
+                  rows={2}
+                  style={{
+                    width: '100%',
+                    fontFamily: 'inherit',
+                    fontSize: 13,
+                    padding: 8,
+                    boxSizing: 'border-box',
+                    borderColor: discNeedsNote ? 'var(--danger, #dc2626)' : undefined,
+                  }}
+                  placeholder="Justification for the discount (e.g. strategic account, competitive tender)…"
+                />
+              </div>
+            )}
+
+            {discErr && <div className="error" style={{ marginTop: 10 }}>{discErr}</div>}
+
+            <div className="step-actions">
+              <button className="primary" onClick={saveDiscount} disabled={discBusy || discBlocked || !discDirty}>
+                {discBusy ? 'Applying…' : 'Apply discount'}
+              </button>
+              {discBlocked && (
+                <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>
+                  {discNeedsNote
+                    ? `Add a manager note (discount above ${discNoteThreshold}%).`
+                    : `Discount exceeds the ${discCapPct}% cap.`}
+                </span>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       <div className="card">

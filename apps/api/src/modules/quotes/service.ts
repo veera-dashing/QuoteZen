@@ -360,10 +360,20 @@ export const updateQuote = async (
   // Quote-level discount guardrail (A+): evaluate the EFFECTIVE discount + note after this update
   // (fall back to the stored values when a field isn't being changed) so the 12% cap and the
   // above-5% note requirement hold whether the user changes the pct, the note, or both.
-  const effectivePct =
-    input.discountPct !== undefined ? input.discountPct : existing.discountPct != null ? Number(existing.discountPct) : null;
-  const effectiveNote = input.discountNote !== undefined ? input.discountNote : existing.discountNote;
-  const { capOverride } = await enforceDiscountGuardrail(effectivePct, effectiveNote, actorRole === 'admin');
+  //
+  // Only gate an update that actually TOUCHES the discount. A PATCH of unrelated fields must not be
+  // judged against a pre-existing discount: otherwise, once an admin approves an above-cap discount,
+  // no non-admin could ever edit anything else on that quote (they'd 403 on the stored value), and
+  // every unrelated admin save would write another spurious `discount_guardrail` audit row.
+  // Changing the note alone still gates — clearing the note on an 8% discount must fail.
+  const touchesDiscount = input.discountPct !== undefined || input.discountNote !== undefined;
+  let capOverride: string | null = null;
+  if (touchesDiscount) {
+    const effectivePct =
+      input.discountPct !== undefined ? input.discountPct : existing.discountPct != null ? Number(existing.discountPct) : null;
+    const effectiveNote = input.discountNote !== undefined ? input.discountNote : existing.discountNote;
+    ({ capOverride } = await enforceDiscountGuardrail(effectivePct, effectiveNote, actorRole === 'admin'));
+  }
 
   const data: Record<string, unknown> = { lockVersion: { increment: 1 } };
   if (input.jobReference !== undefined) data.jobReference = input.jobReference;
