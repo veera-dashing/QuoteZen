@@ -179,6 +179,12 @@ td.actions { text-align: right; }
 .ss-opt:hover { background: var(--surface-2); }
 .ss-opt.sel { background: var(--accent); color: var(--on-accent); }
 .ss-empty { padding: 8px 10px; color: var(--muted); font-size: 13px; }
+/* Pinned "create new" row at the foot of a picker (opt-in via SearchSelect's onCreate). */
+.ss-create {
+  padding: 8px 10px; cursor: pointer; font-size: 13px;
+  color: var(--accent); border-top: 1px solid var(--border); background: var(--surface);
+}
+.ss-create:hover { background: var(--surface-2); }
 
 /* Fixed floating side-tab that restores the hidden quote-summary panel.
    position: fixed keeps it out of flow so the left step column reclaims the full width;

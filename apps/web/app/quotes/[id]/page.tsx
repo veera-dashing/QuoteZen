@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { api, ApiError, downloadFile, getRole, uploadFile } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
+import RecordForm from '@/components/RecordForm';
+import type { Row, TableDef } from '@/lib/types';
 import type { LedIntakeInput } from '@quotezen/shared';
 
 interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null }
@@ -516,6 +518,15 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
     () => new Set((quote?.viewers ?? []).map((v) => v.user.id)),
   );
   const [clients, setClients] = useState<Opt[]>([]);
+  // Inline "new client" (reuses the admin clients drawer so there is ONE client-creation form).
+  // `POST /admin/clients` is restricted to admin+sales, so manager/director — who can otherwise write
+  // quotes — never see the create row, rather than meeting a 403 on save.
+  const canCreateClient = isAdmin || getRole() === 'sales';
+  const [clientTable, setClientTable] = useState<TableDef | null>(null);
+  const [newClientOpen, setNewClientOpen] = useState(false);
+  const [newClientName, setNewClientName] = useState('');
+  const [clientMetaBusy, setClientMetaBusy] = useState(false);
+  const [clientMetaErr, setClientMetaErr] = useState<string | null>(null);
   const [locations, setLocations] = useState<Opt[]>([]);
   const [currencies, setCurrencies] = useState<Opt[]>([]);
   const [viewers, setViewers] = useState<Array<{ id: string; name: string; email: string }>>([]);
@@ -545,6 +556,46 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       setNoteThreshold(Math.round(policy.noteThresholdPct * 1000) / 10);
     });
   }, [canWrite]);
+
+  // Lazy-load the clients table definition only when the drawer is first opened: `/admin/_meta`
+  // describes every registry table, so there's no reason to pull it on every quote-details view.
+  // `typedName` is whatever was in the picker's search box — it seeds the drawer's Name field.
+  const openNewClient = async (typedName: string) => {
+    setClientMetaErr(null);
+    setNewClientName(typedName);
+    if (clientTable) {
+      setNewClientOpen(true);
+      return;
+    }
+    setClientMetaBusy(true);
+    try {
+      const r = await api<{ tables: TableDef[] }>('/admin/_meta');
+      const def = r.tables.find((t) => t.resource === 'clients');
+      if (!def) throw new Error('Client form is unavailable');
+      setClientTable(def);
+      setNewClientOpen(true);
+    } catch (e) {
+      setClientMetaErr(e instanceof Error ? e.message : 'Could not open the client form');
+    } finally {
+      setClientMetaBusy(false);
+    }
+  };
+
+  // Create through the SAME endpoint the admin clients page posts to — one creation path, so the
+  // default-discount seeding and the admin audit row both still happen. RecordForm closes itself on
+  // success and keeps the drawer open (showing the message) if this throws.
+  const saveNewClient = async (payload: Row) => {
+    const created = await api<{ id: string | number; name?: string | null }>('/admin/clients', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    const id = String(created.id);
+    // The list endpoint orders by id asc, so a new row belongs at the end — appending keeps this
+    // picker in the same order as every other client list in the app.
+    setClients((prev) => [...prev, { id, name: created.name ?? String(payload.name ?? '') }]);
+    setClientId(id);
+    setDirty(true);
+  };
 
   const toggleViewer = (id: string) => {
     setDirty(true);
@@ -724,9 +775,14 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
             value={clientId}
             onChange={(v) => { setClientId(v); setDirty(true); }}
             allowEmpty
-            placeholder="Select client…"
+            placeholder={clientMetaBusy ? 'Opening…' : 'Select client…'}
             options={clients.map((c) => ({ value: c.id, label: c.name ?? '' }))}
+            // Creating a client lives IN the picker: search for one, and if it isn't there, the
+            // pinned foot-row opens the shared client drawer pre-filled with whatever was typed.
+            onCreate={canCreateClient ? openNewClient : undefined}
+            createLabel="New client"
           />
+          {clientMetaErr && <div className="error">{clientMetaErr}</div>}
         </div>
         <div>
           <label>Location <span style={{ color: 'var(--danger, #dc2626)' }}>*</span></label>
@@ -1025,6 +1081,19 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
           )
         )}
       </div>
+
+      {newClientOpen && clientTable && (
+        <RecordForm
+          // RecordForm seeds its state on mount, and this conditional render remounts it on every
+          // open — so the typed name lands in the Name field. `mode` keeps the heading "New Client"
+          // even though `initial` is non-null (it's a seed, not an existing record).
+          table={clientTable}
+          mode="create"
+          initial={newClientName ? { name: newClientName } : null}
+          onClose={() => setNewClientOpen(false)}
+          onSave={saveNewClient}
+        />
+      )}
     </div>
   );
 }

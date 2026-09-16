@@ -9,6 +9,11 @@ interface Props {
   initial: Row | null; // null = create
   onClose: () => void;
   onSave: (payload: Row) => Promise<void>;
+  /**
+   * Overrides the heading when `initial` carries seed values for a NEW record (e.g. a name typed into
+   * a picker) — without it the form would read "Edit". Defaults to the `initial`-derived behaviour.
+   */
+  mode?: 'create' | 'edit';
 }
 
 const toInput = (field: FieldDef, value: unknown): string => {
@@ -16,7 +21,8 @@ const toInput = (field: FieldDef, value: unknown): string => {
   return String(value);
 };
 
-export default function RecordForm({ table, initial, onClose, onSave }: Props) {
+export default function RecordForm({ table, initial, onClose, onSave, mode }: Props) {
+  const isEdit = mode ? mode === 'edit' : initial !== null;
   const [values, setValues] = useState<Record<string, string | boolean>>(() => {
     const v: Record<string, string | boolean> = {};
     for (const f of table.fields) {
@@ -62,7 +68,7 @@ export default function RecordForm({ table, initial, onClose, onSave }: Props) {
     <div className="scrim" onClick={onClose}>
       <form className="drawer" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <h2>
-          {initial ? 'Edit' : 'New'} {table.label.replace(/s$/, '')}
+          {isEdit ? 'Edit' : 'New'} {table.label.replace(/s$/, '')}
         </h2>
         {table.fields.map((f) => (
           <div className="field" key={f.name}>

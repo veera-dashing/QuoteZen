@@ -15,6 +15,14 @@ interface Props {
   /** Show a clear "— none —" choice at the top (for optional fields). */
   allowEmpty?: boolean;
   disabled?: boolean;
+  /**
+   * Optional inline "create new" action, rendered as a pinned row at the foot of the popover.
+   * Receives the current search text so the caller can pre-fill the new record's name. Omit to get
+   * a plain picker (every existing usage is unchanged).
+   */
+  onCreate?: (query: string) => void;
+  /** Label for the create row when the search box is empty (e.g. "New client"). */
+  createLabel?: string;
 }
 
 /**
@@ -28,6 +36,8 @@ export default function SearchSelect({
   placeholder = 'Select…',
   allowEmpty = false,
   disabled = false,
+  onCreate,
+  createLabel = 'New',
 }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -64,6 +74,15 @@ export default function SearchSelect({
     setQuery('');
   };
 
+  // Hand the typed text to the caller so a "create" form can open pre-filled, then reset the picker.
+  const create = () => {
+    if (!onCreate) return;
+    const typed = query.trim();
+    setOpen(false);
+    setQuery('');
+    onCreate(typed);
+  };
+
   return (
     <div className="ss" ref={ref}>
       <button
@@ -84,9 +103,14 @@ export default function SearchSelect({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && filtered[0]) {
+              if (e.key !== 'Enter') return;
+              // Enter takes the top match; with nothing matching, it falls through to "create".
+              if (filtered[0]) {
                 e.preventDefault();
                 choose(filtered[0].value);
+              } else if (onCreate) {
+                e.preventDefault();
+                create();
               }
             }}
           />
@@ -107,6 +131,12 @@ export default function SearchSelect({
               </div>
             ))}
           </div>
+          {/* Pinned outside .ss-list so it stays visible while the options scroll. */}
+          {onCreate && (
+            <div className="ss-create" onClick={create} title={`Create a new ${createLabel.toLowerCase()}`}>
+              {query.trim() ? `+ Create “${query.trim()}”` : `+ ${createLabel}`}
+            </div>
+          )}
         </div>
       )}
     </div>
