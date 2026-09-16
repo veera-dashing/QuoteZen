@@ -482,7 +482,9 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   // Intake form v2 — account exec and space around screen.
   const [accountExec, setAccountExec] = useState(quote?.accountExec ?? '');
   const isAdmin = getRole() === 'admin';
-  // Client + Location are mandatory on the Details step — gate save/auto-save until both are set.
+  // Client + Location are required to APPROVE a quote, not to save one. They drive a hint only —
+  // never a save block — so part-finished work is never stranded (e.g. the site address is known but
+  // the location is still being confirmed). Completeness is enforced at finalisation, in changeStatus.
   const detailsIncomplete = !clientId || !locationId;
   // NOTE: the discount override (pct / scope / manager note) and its cap+threshold guardrail live in
   // the Review step — it is set after the final figure is known. Nothing here reads or writes it, so
@@ -653,8 +655,10 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   // conflict is showing, auto-save is suspended until the user reloads (which resets dirty).
   useEffect(() => {
     // No auto-save in CREATE mode (nothing to PATCH yet — the user clicks "Create & continue").
-    // (The discount guardrail no longer gates this step — the discount is set in Review.)
-    if (isNew || !canWrite || !dirty || conflict || !jobReference || detailsIncomplete) return;
+    // Only a missing job reference stops the save: it is the one genuinely NOT NULL / unique column.
+    // An incomplete client/location must NOT suspend auto-save, or edits to every other field on the
+    // step would be silently dropped while the user waits on an address.
+    if (isNew || !canWrite || !dirty || conflict || !jobReference) return;
     const t = setTimeout(() => {
       setDirty(false);
       void persist();
@@ -885,7 +889,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
 
       <div className="step-actions">
-        <button className="primary" onClick={handleSave} disabled={busy || !jobReference || detailsIncomplete}>
+        <button className="primary" onClick={handleSave} disabled={busy || !jobReference}>
           {busy ? (isNew ? 'Creating…' : 'Saving…') : isNew ? 'Create & continue' : 'Save details'}
         </button>
         {isNew && (
@@ -893,13 +897,18 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
             Cancel
           </button>
         )}
-        {detailsIncomplete && (
+        {!jobReference && (
           <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>
-            {!clientId && !locationId
-              ? 'Client and location are required.'
-              : !clientId
-                ? 'Client is required.'
-                : 'Location is required.'}
+            A job reference is required to save.
+          </span>
+        )}
+        {/* Advisory, not a blocker: these are needed to APPROVE the quote, and the work saves without
+            them. Deliberately not danger-red — nothing here is stopping the user. */}
+        {jobReference && detailsIncomplete && (
+          <span className="muted" style={{ alignSelf: 'center' }}>
+            Still to add before approval:{' '}
+            {!clientId && !locationId ? 'client and location' : !clientId ? 'client' : 'location'}. You can save now and
+            finish later.
           </span>
         )}
       </div>

@@ -100,7 +100,9 @@ CSS: `globals.css` has `[data-theme='dark']` (default) + `[data-theme='light']` 
 
 **The API gates the discount only when a PATCH touches it.** `updateQuote` evaluates `enforceDiscountGuardrail` only when `discountPct` or `discountNote` is in the payload — otherwise an admin-approved above-cap discount would 403 every later non-admin edit of unrelated fields, and write a spurious `discount_guardrail` audit row on every unrelated admin save. Changing the note alone still gates.
 
-**Client/location required:** `detailsIncomplete = !clientId || !locationId` gates Create/Save button; red hint text. Client-side only enforcement (server stays lenient for existing quotes and test suite).
+**Part-finished work always saves.** Only a missing **job reference** blocks a Details save (it is the one NOT NULL / unique column). `detailsIncomplete = !clientId || !locationId` drives an **advisory hint only** — never a disabled button and never a suspended auto-save — so a user waiting on an address doesn't lose the twenty other fields they filled in. Client/location are enforced where they matter: at finalisation, in `changeStatus`.
+
+> Screens are the exception: an LED screen still needs product + width + height to add, and an LCD screen needs at least one line, because a screen is **priced on insert** — there is no draft-screen concept in the schema.
 
 **Viewer read-only:** `DetailsStep`, cost breakdown, proposal text editor, risks register all branch on `isViewer`.
 
