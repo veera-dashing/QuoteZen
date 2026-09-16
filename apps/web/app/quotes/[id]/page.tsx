@@ -4669,9 +4669,10 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
     quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
   );
   const [discNote, setDiscNote] = useState(quote.discountNote ?? '');
-  const [discScope, setDiscScope] = useState<'one_off' | 'recurring'>(
-    quote.discountScope === 'recurring' ? 'recurring' : 'one_off',
-  );
+  // Scope is no longer offered: a quote discount is always a one-off up-front concession. The API
+  // still supports `recurring` (see u5.test.ts) — the UI simply never elects it, and pins every save
+  // to `one_off` so the card's wording is always true of what was stored.
+  const discScope = 'one_off' as const;
   const [discCapPct, setDiscCapPct] = useState(12);
   const [discNoteThreshold, setDiscNoteThreshold] = useState(5);
   const [discBusy, setDiscBusy] = useState(false);
@@ -4694,8 +4695,7 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
       quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
     );
     setDiscNote(quote.discountNote ?? '');
-    setDiscScope(quote.discountScope === 'recurring' ? 'recurring' : 'one_off');
-  }, [quote.lockVersion, quote.discountPct, quote.discountNote, quote.discountScope]);
+  }, [quote.lockVersion, quote.discountPct, quote.discountNote]);
 
   const discNum = discPctInput.trim() === '' ? null : Number(discPctInput);
   const discNeedsNote = discNum != null && discNum > discNoteThreshold && !discNote.trim();
@@ -4704,7 +4704,7 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const discDirty =
     discPctInput !== (quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '') ||
     discNote !== (quote.discountNote ?? '') ||
-    discScope !== (quote.discountScope === 'recurring' ? 'recurring' : 'one_off');
+    quote.discountScope === 'recurring'; // a legacy recurring quote is dirty until pinned back
 
   // Non-admins are clamped to the cap as they type; admins may exceed it (warned, then audited).
   const onDiscChange = (raw: string) => {
@@ -5114,8 +5114,8 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
         ) : (
           <>
             <p className="muted" style={{ marginTop: 0 }}>
-              Applied to the {discScope === 'recurring' ? 'recurring' : 'up-front'} total above. Leave blank to
-              inherit the client/tier/system default.
+              Applied as a one-off concession to the up-front total above. Leave blank to inherit the
+              client/tier/system default.
             </p>
             <div className="grid3">
               <div>
@@ -5140,9 +5140,11 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
               </div>
               <div>
                 <label>Discount applies to</label>
-                <select value={discScope} onChange={(e) => setDiscScope(e.target.value as 'one_off' | 'recurring')}>
+                {/* One-off is the only scope offered. The control stays so the quote still states
+                    what the discount applies to; the "recurring" option was withdrawn. The API can
+                    still express it (see u5.test.ts) — the wizard just never elects it. */}
+                <select value={discScope} onChange={() => undefined}>
                   <option value="one_off">One-off (upfront)</option>
-                  <option value="recurring">Every renewal (recurring)</option>
                 </select>
               </div>
             </div>
