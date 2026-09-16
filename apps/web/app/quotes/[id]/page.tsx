@@ -8,7 +8,19 @@ import RecordForm from '@/components/RecordForm';
 import type { Row, TableDef } from '@/lib/types';
 import type { LedIntakeInput } from '@quotezen/shared';
 
-interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null }
+interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null; years?: number }
+
+/**
+ * A NEW screen pre-selects the 3-year warranty. This mirrors the `standard_warranty_years` setting
+ * (3) — the cover already baked into a display's catalog cost — so the default is price-neutral:
+ * the LCD warranty line is only raised for years BEYOND the baseline, and LED prices nothing from it.
+ * Matched on `years`, not on the option's name, so renaming the catalog row doesn't break the default.
+ */
+const DEFAULT_WARRANTY_YEARS = 3;
+
+/** The catalog row a new screen should default its warranty to (undefined → leave unset). */
+const defaultWarranty = (rows: readonly Opt[] | undefined): Opt | undefined =>
+  rows?.find((o) => Number(o.years) === DEFAULT_WARRANTY_YEARS);
 // A stored LED component row (as returned on the screen) — carries the componentType + the one FK id.
 interface LedComponent {
   id: string; componentType: string; qty: number;
@@ -1516,6 +1528,18 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     ).then((entries) => setOptionRows(Object.fromEntries(entries) as unknown as Record<LedOptionKey, Opt[]>));
   }, []);
 
+  // Pre-select the 3-year warranty on a NEW screen, once the catalogs have loaded. Runs at most once
+  // (the ref), never when re-editing an existing screen, and never over a choice the user already
+  // made while the catalogs were still in flight.
+  const warrantyDefaulted = useRef(false);
+  useEffect(() => {
+    if (warrantyDefaulted.current || editScreen) return;
+    const std = defaultWarranty(optionRows.warrantyId);
+    if (!std) return;
+    warrantyDefaulted.current = true;
+    setSelectedOpts((prev) => (prev.warrantyId ? prev : { ...prev, warrantyId: String(std.id) }));
+  }, [optionRows, editScreen]);
+
   // Parse "16:9" → { w: 16, h: 9 }; null when unparseable.
   const parseRatio = (label: string | undefined): { w: number; h: number } | null => {
     if (!label) return null;
@@ -2945,7 +2969,13 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   useEffect(() => {
     api<{ rows: Opt[] }>('/admin/display-catalog?take=500&activeOnly=true').then((r) => setCatalog(r.rows));
     api<{ rows: Opt[] }>('/admin/service-hours?take=200').then((r) => setServiceHours(r.rows));
-    api<{ rows: Opt[] }>('/admin/warranties?take=200').then((r) => setWarranties(r.rows));
+    api<{ rows: Opt[] }>('/admin/warranties?take=200').then((r) => {
+      setWarranties(r.rows);
+      // Same default as the LED form: a NEW screen gets the 3-year warranty; editing keeps its own.
+      if (editScreen) return;
+      const std = defaultWarranty(r.rows);
+      if (std) setWarrantyId((prev) => prev || String(std.id));
+    });
     api<{ rows: Opt[] }>('/admin/install-methods?take=200').then((r) => setInstallMethods(r.rows));
   }, []);
 
