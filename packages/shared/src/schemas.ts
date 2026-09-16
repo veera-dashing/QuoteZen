@@ -48,12 +48,9 @@ export const createQuoteSchema = z.object({
   endCustomer: z.string().max(200).optional(),
   airsideLandside: z.string().max(20).optional(),
   powerDataAvailable: z.string().max(20).optional(),
-  controllerLocation: z.string().max(200).optional(),
   windowFacing: z.boolean().optional(),
   /** AA5 — software/hardware dependency intake fields (Group E). Descriptive; no pricing impact. */
   mediaPlayerSupply: z.string().max(50).optional(),
-  sharedDevicePlayers: z.coerce.number().int().nonnegative().optional(),
-  sharedDeviceScreens: z.coerce.number().int().nonnegative().optional(),
   storeSizeSqm: z.coerce.number().nonnegative().optional(),
   customContentCuration: z.boolean().optional(),
   pcRequired: z.boolean().optional(),
@@ -68,7 +65,6 @@ export const createQuoteSchema = z.object({
   /** Account exec / owner for the quote (free text). */
   accountExec: z.string().max(200).optional(),
   /** Space around the screen (mm) — determines if an articulated bracket is needed. */
-  spaceAroundScreenMm: z.coerce.number().int().nonnegative().optional(),
   /** Viewer users this quote is shared with (they can read only quotes assigned to them). */
   viewerUserIds: z.array(idSchema).optional(),
 });
@@ -92,12 +88,9 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   endCustomer: z.string().max(200).nullish(),
   airsideLandside: z.string().max(20).nullish(),
   powerDataAvailable: z.string().max(20).nullish(),
-  controllerLocation: z.string().max(200).nullish(),
   windowFacing: z.boolean().nullish(),
   /** AA5 — software/hardware dependency intake fields (nullish on update so they can be cleared). */
   mediaPlayerSupply: z.string().max(50).nullish(),
-  sharedDevicePlayers: z.coerce.number().int().nonnegative().nullish(),
-  sharedDeviceScreens: z.coerce.number().int().nonnegative().nullish(),
   storeSizeSqm: z.coerce.number().nonnegative().nullish(),
   customContentCuration: z.boolean().nullish(),
   pcRequired: z.boolean().nullish(),
@@ -110,7 +103,6 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   needsSolutionsEngineer: z.boolean().nullish(),
   // Intake form v2 — quote-level fields (nullish on update so they can be cleared).
   accountExec: z.string().max(200).nullish(),
-  spaceAroundScreenMm: z.coerce.number().int().nonnegative().nullish(),
   /** Optimistic-locking token from the last read; a mismatch is a 409 conflict (P1-05.2). */
   expectedVersion: z.coerce.number().int().nonnegative().optional(),
 });
@@ -212,6 +204,13 @@ export const ledScreenSchema = z.object({
   sunExposure: z.string().max(20).optional(),
   /** AA1 — what this screen mounts to (e.g. plasterboard, brick, concrete); drives the fixing method. */
   wallSubstrate: z.string().max(200).optional(),
+  /** AA1 — where this screen's controller / media-player lives (free text). */
+  controllerLocation: z.string().max(200).optional(),
+  /** Space around this screen (mm) — determines whether an articulated bracket is needed. */
+  spaceAroundScreenMm: z.coerce.number().int().nonnegative().optional(),
+  /** AA5 — shared-device ratio for this screen: N players per M screens. */
+  sharedDevicePlayers: z.coerce.number().int().nonnegative().optional(),
+  sharedDeviceScreens: z.coerce.number().int().nonnegative().optional(),
   orientation: z.enum(ORIENTATIONS).optional(),
   aspectRatioId: idSchema.optional(),
   backCover: z.boolean().default(false),
@@ -289,6 +288,13 @@ export const lcdScreenSchema = z.object({
   sunExposure: z.string().max(20).optional(),
   /** AA1 — what this screen mounts to (e.g. plasterboard, brick, concrete); drives the fixing method. */
   wallSubstrate: z.string().max(200).optional(),
+  /** AA1 — where this screen's controller / media-player lives (free text). */
+  controllerLocation: z.string().max(200).optional(),
+  /** Space around this screen (mm) — determines whether an articulated bracket is needed. */
+  spaceAroundScreenMm: z.coerce.number().int().nonnegative().optional(),
+  /** AA5 — shared-device ratio for this screen: N players per M screens. */
+  sharedDevicePlayers: z.coerce.number().int().nonnegative().optional(),
+  sharedDeviceScreens: z.coerce.number().int().nonnegative().optional(),
   // ─── AA3a — site/requirement fields feeding the LCD selection rules (all optional) ───
   requiresAndroid: z.boolean().optional(),
   maxDepthMm: z.coerce.number().int().nonnegative().optional(),

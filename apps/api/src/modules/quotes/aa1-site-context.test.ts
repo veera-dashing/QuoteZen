@@ -39,12 +39,11 @@ const SITE_CONTEXT = {
   endCustomer: 'Airport Retailer Pty Ltd',
   airsideLandside: 'Airside',
   powerDataAvailable: 'Unknown',
-  controllerLocation: 'comms room, level 2',
   windowFacing: true,
 } as const;
 
 describe('AA1 — site/context intake fields', () => {
-  it('round-trips the 5 quote-level site-context fields through create → GET', async () => {
+  it('round-trips the 4 quote-level site-context fields through create → GET', async () => {
     const created = await app.inject({
       method: 'POST',
       url: '/quotes',
@@ -64,7 +63,6 @@ describe('AA1 — site/context intake fields', () => {
     expect(q.endCustomer).toBe(SITE_CONTEXT.endCustomer);
     expect(q.airsideLandside).toBe(SITE_CONTEXT.airsideLandside);
     expect(q.powerDataAvailable).toBe(SITE_CONTEXT.powerDataAvailable);
-    expect(q.controllerLocation).toBe(SITE_CONTEXT.controllerLocation);
     expect(q.windowFacing).toBe(true);
   });
 
@@ -83,13 +81,13 @@ describe('AA1 — site/context intake fields', () => {
       method: 'PATCH',
       url: `/quotes/${id}`,
       headers: auth(),
-      payload: { expectedVersion: lockVersion, controllerLocation: 'plant room, level 3', endCustomer: null, windowFacing: false },
+      payload: { expectedVersion: lockVersion, powerDataAvailable: 'Yes', endCustomer: null, windowFacing: false },
     });
     expect(patched.statusCode).toBe(200);
 
     const got = await app.inject({ method: 'GET', url: `/quotes/${id}`, headers: auth() });
     const q = got.json();
-    expect(q.controllerLocation).toBe('plant room, level 3');
+    expect(q.powerDataAvailable).toBe('Yes');
     expect(q.endCustomer).toBeNull();
     expect(q.windowFacing).toBe(false);
     // Untouched field stays.
@@ -126,12 +124,20 @@ describe('AA1 — site/context intake fields', () => {
         recessDepthMm: 85,
         sunExposure: 'Direct',
         wallSubstrate: 'brick',
+        controllerLocation: 'comms room, level 2',
+        spaceAroundScreenMm: 50,
+        sharedDevicePlayers: 1,
+        sharedDeviceScreens: 4,
       },
     });
     expect(led.statusCode).toBe(201);
     expect(led.json().recessDepthMm).toBe(85);
     expect(led.json().sunExposure).toBe('Direct');
     expect(led.json().wallSubstrate).toBe('brick');
+    expect(led.json().controllerLocation).toBe('comms room, level 2');
+    expect(led.json().spaceAroundScreenMm).toBe(50);
+    expect(led.json().sharedDevicePlayers).toBe(1);
+    expect(led.json().sharedDeviceScreens).toBe(4);
 
     const lcd = await app.inject({
       method: 'POST',
@@ -144,6 +150,8 @@ describe('AA1 — site/context intake fields', () => {
         // quote is that two screens on ONE site can disagree.
         sunExposure: 'None',
         wallSubstrate: 'plasterboard over steel stud',
+        controllerLocation: 'behind screen',
+        spaceAroundScreenMm: 120,
         items: [{ itemType: 'display', displayId: Number(display!.id), qty: 1 }],
       },
     });
@@ -151,6 +159,8 @@ describe('AA1 — site/context intake fields', () => {
     expect(lcd.json().recessDepthMm).toBe(120);
     expect(lcd.json().sunExposure).toBe('None');
     expect(lcd.json().wallSubstrate).toBe('plasterboard over steel stud');
+    expect(lcd.json().controllerLocation).toBe('behind screen');
+    expect(lcd.json().spaceAroundScreenMm).toBe(120);
 
     // Confirm both persisted (re-read via GET quote).
     const got = await app.inject({ method: 'GET', url: `/quotes/${id}`, headers: auth() });

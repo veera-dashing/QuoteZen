@@ -906,17 +906,11 @@ model Quote {
   airsideLandside       String?     @map("airside_landside")
   /** Whether power & data are available at the location: Yes / No / Unknown. */
   powerDataAvailable    String?     @map("power_data_available")
-  /** Where the controller / media-player will live (free text). */
-  controllerLocation    String?     @map("controller_location")
   /** Window-facing / glare risk flag. */
   windowFacing          Boolean?    @map("window_facing")
   // AA5 — software/hardware dependency intake fields (Group E). Descriptive; feed the PM handoff + solution summary; no pricing impact.
   /** Who supplies the media player: 'Seen' / 'Client-supplied' / 'Mandated'. */
   mediaPlayerSupply     String?     @map("media_player_supply")
-  /** Shared-device ratio — N players … (paired with sharedDeviceScreens). */
-  sharedDevicePlayers   Int?        @map("shared_device_players")
-  /** Shared-device ratio — … per M screens (paired with sharedDevicePlayers). */
-  sharedDeviceScreens   Int?        @map("shared_device_screens")
   /** Store size (m²) — drives music-service sizing. */
   storeSizeSqm          Decimal?    @map("store_size_sqm") @db.Decimal(10, 2)
   /** Custom content curation required. */
@@ -940,8 +934,6 @@ model Quote {
   // Intake form v2 — quote-level fields from the intake questionnaire V0.2.
   /** Account exec / owner for the quote (free text). */
   accountExec           String?     @map("account_exec")
-  /** Space around the screen (mm) — determines if an articulated bracket is needed. */
-  spaceAroundScreenMm   Int?        @map("space_around_screen_mm")
   /** Soft-delete / archive timestamp (P1-05.1); null = active. The row is never hard-deleted. */
   archivedAt            DateTime?   @map("archived_at")
   estimatedCost         Decimal?    @map("estimated_cost") @db.Decimal(12, 2)
@@ -1096,6 +1088,14 @@ model QuoteLedScreen {
   /** AA1 — what THIS screen mounts to (e.g. plasterboard, brick, concrete) — drives the fixing
       method. Per-screen: screens in one job routinely land on different substrates. */
   wallSubstrate       String?  @map("wall_substrate")
+  /** AA1 — where THIS screen's controller / media-player lives (free text). */
+  controllerLocation  String?  @map("controller_location")
+  /** Space around THIS screen (mm) — determines whether an articulated bracket is needed. */
+  spaceAroundScreenMm Int?     @map("space_around_screen_mm")
+  /** AA5 — shared-device ratio for THIS screen: N players … (paired with sharedDeviceScreens). */
+  sharedDevicePlayers Int?     @map("shared_device_players")
+  /** AA5 — … per M screens (paired with sharedDevicePlayers). */
+  sharedDeviceScreens Int?     @map("shared_device_screens")
   freightKg           Decimal? @map("freight_kg") @db.Decimal(10, 2)
   labourHours         Decimal? @map("labour_hours") @db.Decimal(8, 2)
   // per-screen PI fields
@@ -1200,6 +1200,14 @@ model QuoteLcdScreen {
   sunExposure            String?  @map("sun_exposure")
   /** AA1 — what THIS screen mounts to (e.g. plasterboard, brick, concrete) — drives the fixing method. */
   wallSubstrate          String?  @map("wall_substrate")
+  /** AA1 — where THIS screen's controller / media-player lives (free text). */
+  controllerLocation     String?  @map("controller_location")
+  /** Space around THIS screen (mm) — determines whether an articulated bracket is needed. */
+  spaceAroundScreenMm    Int?     @map("space_around_screen_mm")
+  /** AA5 — shared-device ratio for THIS screen: N players … (paired with sharedDeviceScreens). */
+  sharedDevicePlayers    Int?     @map("shared_device_players")
+  /** AA5 — … per M screens (paired with sharedDevicePlayers). */
+  sharedDeviceScreens    Int?     @map("shared_device_screens")
   /** AA3a — site/requirement fields feeding the LCD selection rules (all nullable). */
   requiresAndroid        Boolean? @map("requires_android")
   maxDepthMm             Int?     @map("max_depth_mm")

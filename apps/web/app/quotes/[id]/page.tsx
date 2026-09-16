@@ -26,6 +26,9 @@ interface LedScreen {
   recessDepthMm?: number | null; // AA1 — recess/cavity depth (mm)
   sunExposure?: string | null;   // AA1 — sun exposure at this screen's position
   wallSubstrate?: string | null; // AA1 — what this screen mounts to
+  controllerLocation?: string | null;  // AA1 — where this screen's controller lives
+  spaceAroundScreenMm?: number | null; // space around this screen (mm)
+  sharedDevicePlayers?: number | null; sharedDeviceScreens?: number | null; // AA5 — ratio for this screen
   // The attached LED product (model) + its manufacturer, for the "Manufacturer - Model" row label.
   ledProduct?: { model: string; manufacturer?: { name: string } | null } | null;
   components?: LedComponent[];
@@ -53,6 +56,9 @@ interface LcdScreen {
   recessDepthMm?: number | null; // AA1 — recess/cavity depth (mm)
   sunExposure?: string | null;   // AA1 — sun exposure at this screen's position
   wallSubstrate?: string | null; // AA1 — what this screen mounts to
+  controllerLocation?: string | null;  // AA1 — where this screen's controller lives
+  spaceAroundScreenMm?: number | null; // space around this screen (mm)
+  sharedDevicePlayers?: number | null; sharedDeviceScreens?: number | null; // AA5 — ratio for this screen
   // AA3a — site/requirement fields (selection rules).
   requiresAndroid?: boolean | null; maxDepthMm?: number | null; needsPc?: boolean | null; needsHardDrive?: boolean | null;
   // Intake form v2 — LCD screen-level requirement/preference fields.
@@ -71,10 +77,10 @@ interface Quote {
   requestedShippingDate?: string | null; siteAddress?: string | null; projectNotes?: string | null;
   // AA1 — site/context intake fields (one-per-quote site details).
   endCustomer?: string | null; airsideLandside?: string | null;
-  powerDataAvailable?: string | null; controllerLocation?: string | null;
+  powerDataAvailable?: string | null;
   windowFacing?: boolean | null;
   // AA5 — software/hardware dependency intake fields (Group E). Descriptive; no pricing impact.
-  mediaPlayerSupply?: string | null; sharedDevicePlayers?: number | null; sharedDeviceScreens?: number | null;
+  mediaPlayerSupply?: string | null;
   storeSizeSqm?: string | null; customContentCuration?: boolean | null;
   pcRequired?: boolean | null; hardDriveRequired?: boolean | null;
   // AA6a — commercial intake fields (Group F). Descriptive/advisory; no pricing impact.
@@ -82,7 +88,7 @@ interface Quote {
   budgetAud?: string | null; tenureMonths?: number | null;
   clientMustHaves?: string | null; needsSolutionsEngineer?: boolean | null;
   // Intake form v2 — quote-level fields.
-  accountExec?: string | null; spaceAroundScreenMm?: number | null;
+  accountExec?: string | null;
   discountPct?: string | null; // stored as a fraction 0..1
   discountNote?: string | null; // manager justification, required above 5%
   discountScope?: 'one_off' | 'recurring' | null; // U5 — upfront vs every renewal
@@ -457,25 +463,12 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   const [siteAddress, setSiteAddress] = useState(quote?.siteAddress ?? '');
   const [projectNotes, setProjectNotes] = useState(quote?.projectNotes ?? '');
   // AA1 — site/context intake fields (one-per-quote site details from the intake questionnaire).
-  const [endCustomer, setEndCustomer] = useState(quote?.endCustomer ?? '');
   const [airsideLandside, setAirsideLandside] = useState(quote?.airsideLandside ?? '');
-  const [powerDataAvailable, setPowerDataAvailable] = useState(quote?.powerDataAvailable ?? '');
-  const [controllerLocation, setControllerLocation] = useState(quote?.controllerLocation ?? '');
-  const [windowFacing, setWindowFacing] = useState<boolean>(quote?.windowFacing ?? false);
   // AA5 — software/hardware dependency intake fields (Group E).
   const [mediaPlayerSupply, setMediaPlayerSupply] = useState(quote?.mediaPlayerSupply ?? '');
-  const [sharedDevicePlayers, setSharedDevicePlayers] = useState(
-    quote?.sharedDevicePlayers != null ? String(quote.sharedDevicePlayers) : '',
-  );
-  const [sharedDeviceScreens, setSharedDeviceScreens] = useState(
-    quote?.sharedDeviceScreens != null ? String(quote.sharedDeviceScreens) : '',
-  );
   const [storeSizeSqm, setStoreSizeSqm] = useState(
     quote?.storeSizeSqm != null && quote.storeSizeSqm !== '' ? String(quote.storeSizeSqm) : '',
   );
-  const [customContentCuration, setCustomContentCuration] = useState<boolean>(quote?.customContentCuration ?? false);
-  const [pcRequired, setPcRequired] = useState<boolean>(quote?.pcRequired ?? false);
-  const [hardDriveRequired, setHardDriveRequired] = useState<boolean>(quote?.hardDriveRequired ?? false);
   // AA6a — commercial intake fields (Group F).
   const [priceSensitivity, setPriceSensitivity] = useState(quote?.priceSensitivity ?? '');
   const [budgetAud, setBudgetAud] = useState(
@@ -488,9 +481,6 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   const [needsSolutionsEngineer, setNeedsSolutionsEngineer] = useState<boolean>(quote?.needsSolutionsEngineer ?? false);
   // Intake form v2 — account exec and space around screen.
   const [accountExec, setAccountExec] = useState(quote?.accountExec ?? '');
-  const [spaceAroundScreenMm, setSpaceAroundScreenMm] = useState(
-    quote?.spaceAroundScreenMm != null ? String(quote.spaceAroundScreenMm) : '',
-  );
   const isAdmin = getRole() === 'admin';
   // Client + Location are mandatory on the Details step — gate save/auto-save until both are set.
   const detailsIncomplete = !clientId || !locationId;
@@ -605,20 +595,11 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       requestedShippingDate: requestedShippingDate || null,
       siteAddress: siteAddress.trim() ? siteAddress.trim() : null,
       projectNotes: projectNotes.trim() ? projectNotes.trim() : null,
-      // AA1 — site/context intake fields (null clears; windowFacing is a boolean flag).
-      endCustomer: endCustomer.trim() ? endCustomer.trim() : null,
+      // AA1 — site/context intake fields (null clears).
       airsideLandside: airsideLandside || null,
-      powerDataAvailable: powerDataAvailable || null,
-      controllerLocation: controllerLocation.trim() ? controllerLocation.trim() : null,
-      windowFacing,
-      // AA5 — software/hardware dependency intake fields (null clears; the flags are booleans).
+      // AA5 — software/hardware dependency intake fields (null clears).
       mediaPlayerSupply: mediaPlayerSupply || null,
-      sharedDevicePlayers: sharedDevicePlayers.trim() === '' ? null : Number(sharedDevicePlayers),
-      sharedDeviceScreens: sharedDeviceScreens.trim() === '' ? null : Number(sharedDeviceScreens),
       storeSizeSqm: storeSizeSqm.trim() === '' ? null : Number(storeSizeSqm),
-      customContentCuration,
-      pcRequired,
-      hardDriveRequired,
       // AA6a — commercial intake fields (null clears; needsSolutionsEngineer is a boolean flag).
       priceSensitivity: priceSensitivity || null,
       budgetAud: budgetAud.trim() === '' ? null : Number(budgetAud),
@@ -627,7 +608,6 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       needsSolutionsEngineer,
       // Intake form v2 — account exec and space around screen.
       accountExec: accountExec.trim() || null,
-      spaceAroundScreenMm: spaceAroundScreenMm.trim() === '' ? null : Number(spaceAroundScreenMm),
       // discountPct / discountNote / discountScope are deliberately NOT sent: they are owned by the
       // Review step. Including them here would let a Details auto-save overwrite a discount set later.
     };
@@ -657,7 +637,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
     } finally {
       setBusy(false);
     }
-  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, endCustomer, airsideLandside, powerDataAvailable, controllerLocation, windowFacing, mediaPlayerSupply, sharedDevicePlayers, sharedDeviceScreens, storeSizeSqm, customContentCuration, pcRequired, hardDriveRequired, priceSensitivity, budgetAud, tenureMonths, clientMustHaves, needsSolutionsEngineer, accountExec, spaceAroundScreenMm, onChange]);
+  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, airsideLandside, mediaPlayerSupply, storeSizeSqm, priceSensitivity, budgetAud, tenureMonths, clientMustHaves, needsSolutionsEngineer, accountExec, onChange]);
 
   const save = persist;
 
@@ -710,12 +690,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
         <h4 style={{ margin: '16px 0 4px' }}>Site context</h4>
         <div className="grid3">
           <div><label>Account exec</label><input value={quote.accountExec ?? ''} readOnly /></div>
-          <div><label>End customer</label><input value={quote.endCustomer ?? ''} readOnly /></div>
           <div><label>Airside / Landside</label><input value={quote.airsideLandside ?? ''} readOnly /></div>
-          <div><label>Power &amp; data available</label><input value={quote.powerDataAvailable ?? ''} readOnly /></div>
-          <div><label>Controller / media-player location</label><input value={quote.controllerLocation ?? ''} readOnly /></div>
-          <div><label>Window-facing / glare risk</label><input value={quote.windowFacing == null ? '' : quote.windowFacing ? 'Yes' : 'No'} readOnly /></div>
-          <div><label>Space around screen (mm)</label><input value={quote.spaceAroundScreenMm != null ? String(quote.spaceAroundScreenMm) : ''} readOnly /></div>
         </div>
         <div style={{ marginTop: 12 }}>
           <label>Shared with viewers</label>
@@ -809,10 +784,6 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
           <input value={accountExec} onChange={(e) => { setAccountExec(e.target.value); setDirty(true); }} placeholder="Account exec / owner name" />
         </div>
         <div>
-          <label>End customer</label>
-          <input value={endCustomer} onChange={(e) => { setEndCustomer(e.target.value); setDirty(true); }} placeholder="Where it's installed (e.g. Airport retailer)" />
-        </div>
-        <div>
           <label>Airside / Landside</label>
           <SearchSelect
             value={airsideLandside}
@@ -826,47 +797,11 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
             ]}
           />
         </div>
-        <div>
-          <label>Power &amp; data available</label>
-          <SearchSelect
-            value={powerDataAvailable}
-            onChange={(v) => { setPowerDataAvailable(v); setDirty(true); }}
-            allowEmpty
-            placeholder="—"
-            options={[
-              { value: 'Yes', label: 'Yes' },
-              { value: 'No', label: 'No' },
-              { value: 'Unknown', label: 'Unknown' },
-            ]}
-          />
-        </div>
-        <div>
-          <label>Controller / media-player location</label>
-          <input value={controllerLocation} onChange={(e) => { setControllerLocation(e.target.value); setDirty(true); }} placeholder="e.g. comms room, behind screen" />
-        </div>
-      </div>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-        <div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
-            <input type="checkbox" checked={windowFacing} onChange={(e) => { setWindowFacing(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
-            Window-facing / glare risk
-          </label>
-        </div>
-        <div>
-          <label>Space around screen (mm)</label>
-          <input
-            type="number"
-            min={0}
-            value={spaceAroundScreenMm}
-            onChange={(e) => { setSpaceAroundScreenMm(e.target.value); setDirty(true); }}
-            placeholder="e.g. 50"
-          />
-        </div>
       </div>
 
       {/* AA5 — software/hardware dependency intake fields (Group E). Descriptive; no pricing impact. */}
       <h4 style={{ margin: '18px 0 4px' }}>Software &amp; dependencies</h4>
-      <p className="muted" style={{ marginTop: 0 }}>Media-player supply, shared-device ratio, and content/hardware dependencies (informational — feeds the PM handoff).</p>
+      <p className="muted" style={{ marginTop: 0 }}>Media-player supply and store size (informational — feeds the PM handoff).</p>
       <div className="grid3">
         <div>
           <label>Media player supply</label>
@@ -883,31 +818,9 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
           />
         </div>
         <div>
-          <label>Shared-device ratio (players)</label>
-          <input type="number" min={0} value={sharedDevicePlayers} onChange={(e) => { setSharedDevicePlayers(e.target.value); setDirty(true); }} placeholder="e.g. 1" />
-        </div>
-        <div>
-          <label>… per (screens)</label>
-          <input type="number" min={0} value={sharedDeviceScreens} onChange={(e) => { setSharedDeviceScreens(e.target.value); setDirty(true); }} placeholder="e.g. 4" />
-        </div>
-        <div>
           <label>Store size (m²)</label>
           <input type="number" min={0} step="0.01" value={storeSizeSqm} onChange={(e) => { setStoreSizeSqm(e.target.value); setDirty(true); }} placeholder="for music sizing" />
         </div>
-      </div>
-      <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 16 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={customContentCuration} onChange={(e) => { setCustomContentCuration(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
-          Custom content curation
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={pcRequired} onChange={(e) => { setPcRequired(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
-          PC required
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={hardDriveRequired} onChange={(e) => { setHardDriveRequired(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
-          Hard drive required
-        </label>
       </div>
 
       {/* AA6a — commercial intake (Group F). Advisory only; emphasises the matching G/B/B tier + feeds the PM handoff. */}
@@ -1554,6 +1467,10 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
   const [sunExposure, setSunExposure] = useState(editScreen?.sunExposure ?? '');
   const [wallSubstrate, setWallSubstrate] = useState(editScreen?.wallSubstrate ?? '');
+  const [controllerLocation, setControllerLocation] = useState(editScreen?.controllerLocation ?? '');
+  const [spaceAroundScreenMm, setSpaceAroundScreenMm] = useState(editScreen?.spaceAroundScreenMm != null ? String(editScreen.spaceAroundScreenMm) : '');
+  const [sharedDevicePlayers, setSharedDevicePlayers] = useState(editScreen?.sharedDevicePlayers != null ? String(editScreen.sharedDevicePlayers) : '');
+  const [sharedDeviceScreens, setSharedDeviceScreens] = useState(editScreen?.sharedDeviceScreens != null ? String(editScreen.sharedDeviceScreens) : '');
   const [frameNote, setFrameNote] = useState(editScreen?.frameNote ?? '');
   const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(editScreen?.serviceDescriptionSuffix ?? '');
   // AA2 — content ratio + supplier + flatness.
@@ -1759,6 +1676,10 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
         ...(sunExposure ? { sunExposure } : {}),
         ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
+        ...(controllerLocation.trim() ? { controllerLocation: controllerLocation.trim() } : {}),
+        ...(spaceAroundScreenMm.trim() !== '' ? { spaceAroundScreenMm: Number(spaceAroundScreenMm) } : {}),
+        ...(sharedDevicePlayers.trim() !== '' ? { sharedDevicePlayers: Number(sharedDevicePlayers) } : {}),
+        ...(sharedDeviceScreens.trim() !== '' ? { sharedDeviceScreens: Number(sharedDeviceScreens) } : {}),
         ...(frameNote.trim() ? { frameNote: frameNote.trim() } : {}),
         ...(serviceDescriptionSuffix.trim() ? { serviceDescriptionSuffix: serviceDescriptionSuffix.trim() } : {}),
         // AA2 — content ratio / supplier / flatness.
@@ -2822,6 +2743,22 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
             <input value={wallSubstrate} onChange={(e) => setWallSubstrate(e.target.value)} placeholder="e.g. plasterboard, brick, concrete" />
           </div>
           <div>
+            <label title="Where THIS screen's controller / media player lives">Controller / media-player location</label>
+            <input value={controllerLocation} onChange={(e) => setControllerLocation(e.target.value)} placeholder="e.g. comms room, behind screen" />
+          </div>
+          <div>
+            <label title="Clearance around THIS screen — determines whether an articulated bracket is needed">Space around screen (mm)</label>
+            <input type="number" min={0} value={spaceAroundScreenMm} onChange={(e) => setSpaceAroundScreenMm(e.target.value)} placeholder="e.g. 50" />
+          </div>
+          <div>
+            <label>Shared-device ratio (players)</label>
+            <input type="number" min={0} value={sharedDevicePlayers} onChange={(e) => setSharedDevicePlayers(e.target.value)} placeholder="e.g. 1" />
+          </div>
+          <div>
+            <label>… per (screens)</label>
+            <input type="number" min={0} value={sharedDeviceScreens} onChange={(e) => setSharedDeviceScreens(e.target.value)} placeholder="e.g. 4" />
+          </div>
+          <div>
             <label>Frame / housing description</label>
             <input value={frameNote} onChange={(e) => setFrameNote(e.target.value)} placeholder="optional" />
           </div>
@@ -2942,6 +2879,10 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
   const [sunExposure, setSunExposure] = useState(editScreen?.sunExposure ?? '');
   const [wallSubstrate, setWallSubstrate] = useState(editScreen?.wallSubstrate ?? '');
+  const [controllerLocation, setControllerLocation] = useState(editScreen?.controllerLocation ?? '');
+  const [spaceAroundScreenMm, setSpaceAroundScreenMm] = useState(editScreen?.spaceAroundScreenMm != null ? String(editScreen.spaceAroundScreenMm) : '');
+  const [sharedDevicePlayers, setSharedDevicePlayers] = useState(editScreen?.sharedDevicePlayers != null ? String(editScreen.sharedDevicePlayers) : '');
+  const [sharedDeviceScreens, setSharedDeviceScreens] = useState(editScreen?.sharedDeviceScreens != null ? String(editScreen.sharedDeviceScreens) : '');
   // AA3a — site/requirement fields feeding the LCD selection rules.
   const [requiresAndroid, setRequiresAndroid] = useState(editScreen?.requiresAndroid ?? false);
   const [maxDepthMm, setMaxDepthMm] = useState(editScreen?.maxDepthMm != null ? String(editScreen.maxDepthMm) : '');
@@ -3136,6 +3077,10 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
         ...(sunExposure ? { sunExposure } : {}),
         ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
+        ...(controllerLocation.trim() ? { controllerLocation: controllerLocation.trim() } : {}),
+        ...(spaceAroundScreenMm.trim() !== '' ? { spaceAroundScreenMm: Number(spaceAroundScreenMm) } : {}),
+        ...(sharedDevicePlayers.trim() !== '' ? { sharedDevicePlayers: Number(sharedDevicePlayers) } : {}),
+        ...(sharedDeviceScreens.trim() !== '' ? { sharedDeviceScreens: Number(sharedDeviceScreens) } : {}),
         // AA3a — site/requirement fields (rules; checkboxes always sent, depth only when set).
         requiresAndroid,
         needsPc,
@@ -3221,6 +3166,22 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
           <div>
             <label title="What THIS screen mounts to — drives the fixing method">Wall substrate</label>
             <input value={wallSubstrate} onChange={(e) => setWallSubstrate(e.target.value)} placeholder="e.g. plasterboard, brick, concrete" />
+          </div>
+          <div>
+            <label title="Where THIS screen's controller / media player lives">Controller / media-player location</label>
+            <input value={controllerLocation} onChange={(e) => setControllerLocation(e.target.value)} placeholder="e.g. comms room, behind screen" />
+          </div>
+          <div>
+            <label title="Clearance around THIS screen — determines whether an articulated bracket is needed">Space around screen (mm)</label>
+            <input type="number" min={0} value={spaceAroundScreenMm} onChange={(e) => setSpaceAroundScreenMm(e.target.value)} placeholder="e.g. 50" />
+          </div>
+          <div>
+            <label>Shared-device ratio (players)</label>
+            <input type="number" min={0} value={sharedDevicePlayers} onChange={(e) => setSharedDevicePlayers(e.target.value)} placeholder="e.g. 1" />
+          </div>
+          <div>
+            <label>… per (screens)</label>
+            <input type="number" min={0} value={sharedDeviceScreens} onChange={(e) => setSharedDeviceScreens(e.target.value)} placeholder="e.g. 4" />
           </div>
         </div>
         {/* AA3a + intake-v2 — site requirements, brand preference, and display specs. */}

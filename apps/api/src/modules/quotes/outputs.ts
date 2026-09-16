@@ -233,6 +233,15 @@ export const sortedRisks = (quote: QuoteWithChildren) =>
   );
 
 /**
+ * AA5 — the shared-device ratio for one screen, phrased as it was when this lived on the quote
+ * (e.g. "1 player per 4 screens"). Null unless BOTH halves are captured — half a ratio says nothing.
+ */
+const sharedDeviceRatio = (players: number | null, screens: number | null): string | null =>
+  players != null && screens != null
+    ? `${players} player${players === 1 ? '' : 's'} per ${screens} screen${screens === 1 ? '' : 's'}`
+    : null;
+
+/**
  * Site context (AA1): the one-per-quote intake/PI fields from the workshop intake questionnaire.
  * Defensive — only the fields that are set are surfaced (nulls omitted). Returns `null` when none
  * of them are populated, so the PM handoff can omit the section entirely.
@@ -243,11 +252,9 @@ const buildSiteContext = (quote: QuoteWithChildren): Record<string, string> | nu
   if (quote.siteAddress) ctx.siteAddress = quote.siteAddress;
   if (quote.airsideLandside) ctx.airsideLandside = quote.airsideLandside;
   if (quote.powerDataAvailable) ctx.powerDataAvailable = quote.powerDataAvailable;
-  if (quote.controllerLocation) ctx.controllerLocation = quote.controllerLocation;
   if (quote.windowFacing != null) ctx.windowFacing = quote.windowFacing ? 'Yes' : 'No';
-  // Intake form v2 — account exec and space-around-screen.
+  // Intake form v2 — account exec.
   if (quote.accountExec) ctx.accountExec = quote.accountExec;
-  if (quote.spaceAroundScreenMm != null) ctx.spaceAroundScreenMm = `${quote.spaceAroundScreenMm} mm`;
   return Object.keys(ctx).length > 0 ? ctx : null;
 };
 
@@ -259,11 +266,6 @@ const buildSiteContext = (quote: QuoteWithChildren): Record<string, string> | nu
 const buildDependencies = (quote: QuoteWithChildren): Record<string, string> | null => {
   const dep: Record<string, string> = {};
   if (quote.mediaPlayerSupply) dep.mediaPlayerSupply = quote.mediaPlayerSupply;
-  if (quote.sharedDevicePlayers != null && quote.sharedDeviceScreens != null) {
-    dep.sharedDeviceRatio = `${quote.sharedDevicePlayers} player${
-      quote.sharedDevicePlayers === 1 ? '' : 's'
-    } per ${quote.sharedDeviceScreens} screen${quote.sharedDeviceScreens === 1 ? '' : 's'}`;
-  }
   if (quote.storeSizeSqm != null) dep.storeSizeSqm = `${dec(quote.storeSizeSqm)} m²`;
   if (quote.customContentCuration != null)
     dep.customContentCuration = quote.customContentCuration ? 'Yes' : 'No';
@@ -345,6 +347,10 @@ export const buildPmHandoff = (quote: QuoteWithChildren) => ({
     sunExposure: s.sunExposure ?? null,
     // AA1 — what this screen mounts to; omitted (null) when not captured.
     wallSubstrate: s.wallSubstrate ?? null,
+    // AA1 / intake-v2 / AA5 — per-screen controller location, surrounding space, and shared-device ratio.
+    controllerLocation: s.controllerLocation ?? null,
+    spaceAroundScreenMm: s.spaceAroundScreenMm != null ? `${s.spaceAroundScreenMm} mm` : null,
+    sharedDeviceRatio: sharedDeviceRatio(s.sharedDevicePlayers, s.sharedDeviceScreens),
     // AA2 — content authoring + flatness notes (null/false when not captured).
     contentRatio: s.contentRatio ?? null,
     contentSupplier: s.contentSupplier ?? null,
@@ -361,6 +367,10 @@ export const buildPmHandoff = (quote: QuoteWithChildren) => ({
     sunExposure: s.sunExposure ?? null,
     // AA1 — what this screen mounts to; omitted (null) when not captured.
     wallSubstrate: s.wallSubstrate ?? null,
+    // AA1 / intake-v2 / AA5 — per-screen controller location, surrounding space, and shared-device ratio.
+    controllerLocation: s.controllerLocation ?? null,
+    spaceAroundScreenMm: s.spaceAroundScreenMm != null ? `${s.spaceAroundScreenMm} mm` : null,
+    sharedDeviceRatio: sharedDeviceRatio(s.sharedDevicePlayers, s.sharedDeviceScreens),
     // AA3a — site/requirement fields (defensive: null when not captured).
     requiresAndroid: s.requiresAndroid ?? null,
     maxDepthMm: s.maxDepthMm ?? null,
