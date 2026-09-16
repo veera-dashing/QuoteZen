@@ -47,8 +47,6 @@ export const createQuoteSchema = z.object({
   /** AA1 — site/context intake fields (one-per-quote site details from the intake questionnaire). */
   endCustomer: z.string().max(200).optional(),
   airsideLandside: z.string().max(20).optional(),
-  sunExposure: z.string().max(20).optional(),
-  wallSubstrate: z.string().max(200).optional(),
   powerDataAvailable: z.string().max(20).optional(),
   controllerLocation: z.string().max(200).optional(),
   windowFacing: z.boolean().optional(),
@@ -93,8 +91,6 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   /** AA1 — site/context intake fields (nullish on update so they can be cleared). */
   endCustomer: z.string().max(200).nullish(),
   airsideLandside: z.string().max(20).nullish(),
-  sunExposure: z.string().max(20).nullish(),
-  wallSubstrate: z.string().max(200).nullish(),
   powerDataAvailable: z.string().max(20).nullish(),
   controllerLocation: z.string().max(200).nullish(),
   windowFacing: z.boolean().nullish(),
@@ -212,6 +208,10 @@ export const ledScreenSchema = z.object({
   rotateCabinets: z.boolean().default(false),
   /** AA1 — recess/cavity depth in mm (site-prep detail; descriptive, not priced). */
   recessDepthMm: z.coerce.number().int().nonnegative().optional(),
+  /** AA1 — sun exposure at this screen's position: None / Indirect / Direct (descriptive, not priced). */
+  sunExposure: z.string().max(20).optional(),
+  /** AA1 — what this screen mounts to (e.g. plasterboard, brick, concrete); drives the fixing method. */
+  wallSubstrate: z.string().max(200).optional(),
   orientation: z.enum(ORIENTATIONS).optional(),
   aspectRatioId: idSchema.optional(),
   backCover: z.boolean().default(false),
@@ -285,6 +285,10 @@ export const lcdScreenSchema = z.object({
   warrantyId: idSchema.optional(),
   /** AA1 — recess/cavity depth in mm (site-prep detail; descriptive, not priced). */
   recessDepthMm: z.coerce.number().int().nonnegative().optional(),
+  /** AA1 — sun exposure at this screen's position: None / Indirect / Direct (descriptive, not priced). */
+  sunExposure: z.string().max(20).optional(),
+  /** AA1 — what this screen mounts to (e.g. plasterboard, brick, concrete); drives the fixing method. */
+  wallSubstrate: z.string().max(200).optional(),
   // ─── AA3a — site/requirement fields feeding the LCD selection rules (all optional) ───
   requiresAndroid: z.boolean().optional(),
   maxDepthMm: z.coerce.number().int().nonnegative().optional(),

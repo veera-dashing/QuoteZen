@@ -904,10 +904,6 @@ model Quote {
   endCustomer           String?     @map("end_customer")
   /** Airside / Landside / N/A — relevant for airport & secure-zone sites. */
   airsideLandside       String?     @map("airside_landside")
-  /** Sun exposure at the install location: None / Indirect / Direct (affects brightness suitability). */
-  sunExposure           String?     @map("sun_exposure")
-  /** Wall substrate free-text (e.g. plasterboard, brick, concrete) — drives fixing method. */
-  wallSubstrate         String?     @map("wall_substrate")
   /** Whether power & data are available at the location: Yes / No / Unknown. */
   powerDataAvailable    String?     @map("power_data_available")
   /** Where the controller / media-player will live (free text). */
@@ -1094,6 +1090,12 @@ model QuoteLedScreen {
   recessSize          String?  @map("recess_size")
   /** AA1 — recess/cavity depth in mm (complements the front/rear `serviceAccess`). */
   recessDepthMm       Int?     @map("recess_depth_mm")
+  /** AA1 — sun exposure at THIS screen's position: None / Indirect / Direct (affects brightness
+      suitability). Per-screen, not per-quote: one site can hold a shaded screen and a west-facing one. */
+  sunExposure         String?  @map("sun_exposure")
+  /** AA1 — what THIS screen mounts to (e.g. plasterboard, brick, concrete) — drives the fixing
+      method. Per-screen: screens in one job routinely land on different substrates. */
+  wallSubstrate       String?  @map("wall_substrate")
   freightKg           Decimal? @map("freight_kg") @db.Decimal(10, 2)
   labourHours         Decimal? @map("labour_hours") @db.Decimal(8, 2)
   // per-screen PI fields
@@ -1194,6 +1196,10 @@ model QuoteLcdScreen {
   warrantyId             BigInt?  @map("warranty_id")
   /** AA1 — recess/cavity depth in mm (site-prep detail). */
   recessDepthMm          Int?     @map("recess_depth_mm")
+  /** AA1 — sun exposure at THIS screen's position: None / Indirect / Direct. */
+  sunExposure            String?  @map("sun_exposure")
+  /** AA1 — what THIS screen mounts to (e.g. plasterboard, brick, concrete) — drives the fixing method. */
+  wallSubstrate          String?  @map("wall_substrate")
   /** AA3a — site/requirement fields feeding the LCD selection rules (all nullable). */
   requiresAndroid        Boolean? @map("requires_android")
   maxDepthMm             Int?     @map("max_depth_mm")

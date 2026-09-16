@@ -24,6 +24,8 @@ interface LedScreen {
   ledProductId?: string | null; desiredWidthMm?: number | null; desiredHeightMm?: number | null;
   rotateCabinets?: boolean; aspectRatioId?: string | null;
   recessDepthMm?: number | null; // AA1 — recess/cavity depth (mm)
+  sunExposure?: string | null;   // AA1 — sun exposure at this screen's position
+  wallSubstrate?: string | null; // AA1 — what this screen mounts to
   // The attached LED product (model) + its manufacturer, for the "Manufacturer - Model" row label.
   ledProduct?: { model: string; manufacturer?: { name: string } | null } | null;
   components?: LedComponent[];
@@ -49,6 +51,8 @@ interface LcdScreen {
   orientation?: string | null; displayId?: string | null;
   installMethodId?: string | null; serviceHoursId?: string | null; warrantyId?: string | null;
   recessDepthMm?: number | null; // AA1 — recess/cavity depth (mm)
+  sunExposure?: string | null;   // AA1 — sun exposure at this screen's position
+  wallSubstrate?: string | null; // AA1 — what this screen mounts to
   // AA3a — site/requirement fields (selection rules).
   requiresAndroid?: boolean | null; maxDepthMm?: number | null; needsPc?: boolean | null; needsHardDrive?: boolean | null;
   // Intake form v2 — LCD screen-level requirement/preference fields.
@@ -66,8 +70,8 @@ interface Quote {
   // Quote-level PI / commercial fields (U1).
   requestedShippingDate?: string | null; siteAddress?: string | null; projectNotes?: string | null;
   // AA1 — site/context intake fields (one-per-quote site details).
-  endCustomer?: string | null; airsideLandside?: string | null; sunExposure?: string | null;
-  wallSubstrate?: string | null; powerDataAvailable?: string | null; controllerLocation?: string | null;
+  endCustomer?: string | null; airsideLandside?: string | null;
+  powerDataAvailable?: string | null; controllerLocation?: string | null;
   windowFacing?: boolean | null;
   // AA5 — software/hardware dependency intake fields (Group E). Descriptive; no pricing impact.
   mediaPlayerSupply?: string | null; sharedDevicePlayers?: number | null; sharedDeviceScreens?: number | null;
@@ -454,8 +458,6 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   // AA1 — site/context intake fields (one-per-quote site details from the intake questionnaire).
   const [endCustomer, setEndCustomer] = useState(quote?.endCustomer ?? '');
   const [airsideLandside, setAirsideLandside] = useState(quote?.airsideLandside ?? '');
-  const [sunExposure, setSunExposure] = useState(quote?.sunExposure ?? '');
-  const [wallSubstrate, setWallSubstrate] = useState(quote?.wallSubstrate ?? '');
   const [powerDataAvailable, setPowerDataAvailable] = useState(quote?.powerDataAvailable ?? '');
   const [controllerLocation, setControllerLocation] = useState(quote?.controllerLocation ?? '');
   const [windowFacing, setWindowFacing] = useState<boolean>(quote?.windowFacing ?? false);
@@ -628,8 +630,6 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       // AA1 — site/context intake fields (null clears; windowFacing is a boolean flag).
       endCustomer: endCustomer.trim() ? endCustomer.trim() : null,
       airsideLandside: airsideLandside || null,
-      sunExposure: sunExposure || null,
-      wallSubstrate: wallSubstrate.trim() ? wallSubstrate.trim() : null,
       powerDataAvailable: powerDataAvailable || null,
       controllerLocation: controllerLocation.trim() ? controllerLocation.trim() : null,
       windowFacing,
@@ -680,7 +680,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
     } finally {
       setBusy(false);
     }
-  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, endCustomer, airsideLandside, sunExposure, wallSubstrate, powerDataAvailable, controllerLocation, windowFacing, mediaPlayerSupply, sharedDevicePlayers, sharedDeviceScreens, storeSizeSqm, customContentCuration, pcRequired, hardDriveRequired, priceSensitivity, budgetAud, tenureMonths, clientMustHaves, needsSolutionsEngineer, accountExec, spaceAroundScreenMm, discountPctInput, discountNote, discountScope, onChange]);
+  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, endCustomer, airsideLandside, powerDataAvailable, controllerLocation, windowFacing, mediaPlayerSupply, sharedDevicePlayers, sharedDeviceScreens, storeSizeSqm, customContentCuration, pcRequired, hardDriveRequired, priceSensitivity, budgetAud, tenureMonths, clientMustHaves, needsSolutionsEngineer, accountExec, spaceAroundScreenMm, onChange]);
 
   const save = persist;
 
@@ -736,8 +736,6 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
           <div><label>Account exec</label><input value={quote.accountExec ?? ''} readOnly /></div>
           <div><label>End customer</label><input value={quote.endCustomer ?? ''} readOnly /></div>
           <div><label>Airside / Landside</label><input value={quote.airsideLandside ?? ''} readOnly /></div>
-          <div><label>Sun exposure</label><input value={quote.sunExposure ?? ''} readOnly /></div>
-          <div><label>Wall substrate</label><input value={quote.wallSubstrate ?? ''} readOnly /></div>
           <div><label>Power &amp; data available</label><input value={quote.powerDataAvailable ?? ''} readOnly /></div>
           <div><label>Controller / media-player location</label><input value={quote.controllerLocation ?? ''} readOnly /></div>
           <div><label>Window-facing / glare risk</label><input value={quote.windowFacing == null ? '' : quote.windowFacing ? 'Yes' : 'No'} readOnly /></div>
@@ -894,24 +892,6 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
               { value: 'N/A', label: 'N/A' },
             ]}
           />
-        </div>
-        <div>
-          <label>Sun exposure</label>
-          <SearchSelect
-            value={sunExposure}
-            onChange={(v) => { setSunExposure(v); setDirty(true); }}
-            allowEmpty
-            placeholder="—"
-            options={[
-              { value: 'None', label: 'None' },
-              { value: 'Indirect', label: 'Indirect' },
-              { value: 'Direct', label: 'Direct' },
-            ]}
-          />
-        </div>
-        <div>
-          <label>Wall substrate</label>
-          <input value={wallSubstrate} onChange={(e) => { setWallSubstrate(e.target.value); setDirty(true); }} placeholder="e.g. plasterboard, brick, concrete" />
         </div>
         <div>
           <label>Power &amp; data available</label>
@@ -1572,6 +1552,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   const [treeConstraints, setTreeConstraints] = useState<TreeConstraints | null>(null);
   const [caveats, setCaveats] = useState<string[]>([]);
   const [primaryRecommendationText, setPrimaryRecommendationText] = useState<string | null>(null);
+  const [sunExposure, setSunExposure] = useState(editScreen?.sunExposure ?? '');
+  const [wallSubstrate, setWallSubstrate] = useState(editScreen?.wallSubstrate ?? '');
   const [guidedIntakeOpen, setGuidedIntakeOpen] = useState(true);
 
   // W0: query-only selection drivers (not persisted on the screen) — environment + viewing distance.
@@ -1775,6 +1757,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     try {
       const res = await api<{
         options: TierOption[];
+        ...(sunExposure ? { sunExposure } : {}),
+        ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
         reasons: string[];
         distinctProducts: number;
         toleranceBands?: number[];
@@ -2828,6 +2812,15 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
             <SearchSelect
               value={draftType}
               onChange={(v) => { setDraftType(v as LedComponentType); setDraftItem(''); }}
+          <div>
+            <label title="Sun falling on THIS screen — a shaded wall and a west-facing window in the same job differ">Sun exposure</label>
+            <SearchSelect value={sunExposure} onChange={setSunExposure} allowEmpty placeholder="—"
+              options={[{ value: 'None', label: 'None' }, { value: 'Indirect', label: 'Indirect' }, { value: 'Direct', label: 'Direct' }]} />
+          </div>
+          <div>
+            <label title="What THIS screen mounts to — drives the fixing method">Wall substrate</label>
+            <input value={wallSubstrate} onChange={(e) => setWallSubstrate(e.target.value)} placeholder="e.g. plasterboard, brick, concrete" />
+          </div>
               options={LED_COMPONENT_TABLES.map((t) => ({ value: t.componentType, label: t.label }))}
             />
           </div>
@@ -2947,6 +2940,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
             </button>
           )}
         </div>
+  const [sunExposure, setSunExposure] = useState(editScreen?.sunExposure ?? '');
+  const [wallSubstrate, setWallSubstrate] = useState(editScreen?.wallSubstrate ?? '');
       </div>
       )}
     </div>
@@ -3139,6 +3134,8 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     ]);
   };
   const updateLine = (idx: number, patch: Partial<LcdLine>) =>
+        ...(sunExposure ? { sunExposure } : {}),
+        ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
     setLines((ls) => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   const removeLine = (idx: number) => setLines((ls) => ls.filter((_, i) => i !== idx));
 
@@ -3216,6 +3213,15 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         requiresAndroid,
         needsPc,
         needsHardDrive,
+          <div>
+            <label title="Sun falling on THIS screen — a shaded wall and a west-facing window in the same job differ">Sun exposure</label>
+            <SearchSelect value={sunExposure} onChange={setSunExposure} allowEmpty placeholder="—"
+              options={[{ value: 'None', label: 'None' }, { value: 'Indirect', label: 'Indirect' }, { value: 'Direct', label: 'Direct' }]} />
+          </div>
+          <div>
+            <label title="What THIS screen mounts to — drives the fixing method">Wall substrate</label>
+            <input value={wallSubstrate} onChange={(e) => setWallSubstrate(e.target.value)} placeholder="e.g. plasterboard, brick, concrete" />
+          </div>
         ...(maxDepthMm.trim() !== '' ? { maxDepthMm: Number(maxDepthMm) } : {}),
         // Intake form v2 — LCD screen requirement/preference fields.
         ...(brightnessNits.trim() !== '' ? { brightnessNits: Number(brightnessNits) } : {}),

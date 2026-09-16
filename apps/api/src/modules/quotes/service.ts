@@ -49,8 +49,6 @@ const QUOTE_HEADER_FIELDS = [
   'projectNotes',
   'endCustomer',
   'airsideLandside',
-  'sunExposure',
-  'wallSubstrate',
   'powerDataAvailable',
   'controllerLocation',
   'windowFacing',
@@ -175,8 +173,6 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput, actor
         projectNotes: input.projectNotes ?? null,
         endCustomer: input.endCustomer ?? null,
         airsideLandside: input.airsideLandside ?? null,
-        sunExposure: input.sunExposure ?? null,
-        wallSubstrate: input.wallSubstrate ?? null,
         powerDataAvailable: input.powerDataAvailable ?? null,
         controllerLocation: input.controllerLocation ?? null,
         windowFacing: input.windowFacing ?? null,
@@ -384,8 +380,6 @@ export const updateQuote = async (
   if (input.projectNotes !== undefined) data.projectNotes = input.projectNotes;
   if (input.endCustomer !== undefined) data.endCustomer = input.endCustomer;
   if (input.airsideLandside !== undefined) data.airsideLandside = input.airsideLandside;
-  if (input.sunExposure !== undefined) data.sunExposure = input.sunExposure;
-  if (input.wallSubstrate !== undefined) data.wallSubstrate = input.wallSubstrate;
   if (input.powerDataAvailable !== undefined) data.powerDataAvailable = input.powerDataAvailable;
   if (input.controllerLocation !== undefined) data.controllerLocation = input.controllerLocation;
   if (input.windowFacing !== undefined) data.windowFacing = input.windowFacing;

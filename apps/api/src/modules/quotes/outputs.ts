@@ -242,8 +242,6 @@ const buildSiteContext = (quote: QuoteWithChildren): Record<string, string> | nu
   if (quote.endCustomer) ctx.endCustomer = quote.endCustomer;
   if (quote.siteAddress) ctx.siteAddress = quote.siteAddress;
   if (quote.airsideLandside) ctx.airsideLandside = quote.airsideLandside;
-  if (quote.sunExposure) ctx.sunExposure = quote.sunExposure;
-  if (quote.wallSubstrate) ctx.wallSubstrate = quote.wallSubstrate;
   if (quote.powerDataAvailable) ctx.powerDataAvailable = quote.powerDataAvailable;
   if (quote.controllerLocation) ctx.controllerLocation = quote.controllerLocation;
   if (quote.windowFacing != null) ctx.windowFacing = quote.windowFacing ? 'Yes' : 'No';
@@ -343,6 +341,10 @@ export const buildPmHandoff = (quote: QuoteWithChildren) => ({
     serviceAccess: s.serviceAccess ?? null,
     // AA1 — recess/cavity depth (mm); omitted (null) when not captured.
     recessDepthMm: s.recessDepthMm ?? null,
+    // AA1 — sun exposure at this screen's position; omitted (null) when not captured.
+    sunExposure: s.sunExposure ?? null,
+    // AA1 — what this screen mounts to; omitted (null) when not captured.
+    wallSubstrate: s.wallSubstrate ?? null,
     // AA2 — content authoring + flatness notes (null/false when not captured).
     contentRatio: s.contentRatio ?? null,
     contentSupplier: s.contentSupplier ?? null,
@@ -355,6 +357,10 @@ export const buildPmHandoff = (quote: QuoteWithChildren) => ({
     orientation: s.orientation ?? null,
     // AA1 — recess/cavity depth (mm); omitted (null) when not captured.
     recessDepthMm: s.recessDepthMm ?? null,
+    // AA1 — sun exposure at this screen's position; omitted (null) when not captured.
+    sunExposure: s.sunExposure ?? null,
+    // AA1 — what this screen mounts to; omitted (null) when not captured.
+    wallSubstrate: s.wallSubstrate ?? null,
     // AA3a — site/requirement fields (defensive: null when not captured).
     requiresAndroid: s.requiresAndroid ?? null,
     maxDepthMm: s.maxDepthMm ?? null,
