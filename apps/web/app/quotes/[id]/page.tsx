@@ -1047,6 +1047,66 @@ type LedComponentIdField = (typeof LED_COMPONENT_TABLES)[number]['idField'];
 // A chosen component row in local state: its type, the selected catalog id, and a qty.
 interface ComponentRow { componentType: LedComponentType; itemId: string; qty: number }
 
+// ─── Half-finished screen drafts ──────────────────────────────────────────────
+// A screen row is PRICED the moment it is inserted, so the server has no concept of an unpriced
+// screen — which is why "+ Add screen" needs a product and dimensions. Until a draft-screen record
+// exists server-side, a part-built screen is kept HERE, in this browser, so a long add (advisor
+// answers, site context, options & services) survives a tab switch, a reload or a closed tab.
+//
+// Deliberately local-only, and the UI says so: this is not on the quote and teammates cannot see it.
+interface ScreenDraft<T> { savedAt: string; data: T }
+
+const draftKey = (kind: 'led' | 'lcd', quoteId: string): string => `quotezen_${kind}_draft:${quoteId}`;
+
+/** Read a stored draft. Storage can be unavailable (private mode / blocked) — never throw. */
+const readDraft = <T,>(kind: 'led' | 'lcd', quoteId: string): ScreenDraft<T> | null => {
+  try {
+    const raw = window.localStorage.getItem(draftKey(kind, quoteId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ScreenDraft<T>;
+    return parsed && typeof parsed === 'object' && parsed.data ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Persist a draft; returns the timestamp stored, or null when storage is unavailable/full. */
+const writeDraft = <T,>(kind: 'led' | 'lcd', quoteId: string, data: T): string | null => {
+  try {
+    const savedAt = new Date().toISOString();
+    window.localStorage.setItem(draftKey(kind, quoteId), JSON.stringify({ savedAt, data }));
+    return savedAt;
+  } catch {
+    return null;
+  }
+};
+
+const clearDraft = (kind: 'led' | 'lcd', quoteId: string): void => {
+  try {
+    window.localStorage.removeItem(draftKey(kind, quoteId));
+  } catch {
+    /* storage unavailable — nothing to clear */
+  }
+};
+
+const draftTime = (iso: string): string => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? 'earlier' : d.toLocaleString();
+};
+
+/** The user-entered half of the LED add form — everything worth keeping mid-build. */
+interface LedScreenDraft {
+  productId: string; name: string; w: string; h: string; rotate: boolean;
+  intake: LedIntakeInput; environment: string; viewingDistanceM: string;
+  orientation: string; aspectRatioId: string;
+  components: ComponentRow[]; selectedOpts: Record<string, string>;
+  backCover: boolean; recessDepthMm: string;
+  sunExposure: string; wallSubstrate: string; controllerLocation: string;
+  spaceAroundScreenMm: string; sharedDevicePlayers: string; sharedDeviceScreens: string;
+  frameNote: string; serviceDescriptionSuffix: string;
+  contentRatio: string; flatnessRequired: boolean;
+}
+
 // T3: human "Size" indicator for a config — under/exact/over with the signed % delta vs the opening.
 function sizeLabel(o: Pick<ConfigOption, 'sizeMode' | 'sizeDeltaPct'>): string {
   const pct = Number(o.sizeDeltaPct);
@@ -1340,7 +1400,7 @@ function UnsavedScreenDialog({ from, to, hasUnsavedSelection, onCancel, onDiscar
         </p>
         <p className="muted">
           {hasUnsavedSelection
-            ? `Switching to ${to} now will discard this configuration.`
+            ? `Switching to ${to} now will discard this configuration — unless you cancel and choose "Save draft" first, which keeps it in this browser to come back to.`
             : `You can switch to ${to} and come back to ${from} at any time.`}
         </p>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
@@ -1495,6 +1555,58 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   // AA2 — content ratio + supplier + flatness.
   const [contentRatio, setContentRatio] = useState(editScreen?.contentRatio ?? '');
   const [flatnessRequired, setFlatnessRequired] = useState(!!editScreen?.flatnessRequired);
+
+  // Half-finished draft (this browser only). `pendingDraft` is one found on mount and offered for
+  // restore — never applied silently, since it would otherwise quietly overwrite a fresh form.
+  const [pendingDraft, setPendingDraft] = useState<ScreenDraft<LedScreenDraft> | null>(null);
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [draftErr, setDraftErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (editScreen) return; // editing a real screen — its own values win
+    setPendingDraft(readDraft<LedScreenDraft>('led', quote.id));
+  }, [editScreen, quote.id]);
+
+  const collectDraft = (): LedScreenDraft => ({
+    productId, name, w, h, rotate,
+    intake, environment, viewingDistanceM,
+    orientation, aspectRatioId,
+    components, selectedOpts,
+    backCover, recessDepthMm,
+    sunExposure, wallSubstrate, controllerLocation,
+    spaceAroundScreenMm, sharedDevicePlayers, sharedDeviceScreens,
+    frameNote, serviceDescriptionSuffix,
+    contentRatio, flatnessRequired,
+  });
+
+  const saveDraft = () => {
+    const at = writeDraft('led', quote.id, collectDraft());
+    if (!at) { setDraftErr('Could not save the draft — browser storage is unavailable.'); return; }
+    setDraftErr(null);
+    setDraftSavedAt(at);
+    setPendingDraft(null); // the banner refers to an older draft we have just replaced
+  };
+
+  const restoreDraft = (d: LedScreenDraft) => {
+    setProductId(d.productId); setName(d.name); setW(d.w); setH(d.h); setRotate(d.rotate);
+    setIntake(d.intake); setEnvironment(d.environment); setViewingDistanceM(d.viewingDistanceM);
+    setOrientation(d.orientation); setAspectRatioId(d.aspectRatioId);
+    setComponents(d.components ?? []);
+    setSelectedOpts(d.selectedOpts as unknown as Record<LedOptionKey, string>);
+    setBackCover(d.backCover); setRecessDepthMm(d.recessDepthMm);
+    setSunExposure(d.sunExposure); setWallSubstrate(d.wallSubstrate);
+    setControllerLocation(d.controllerLocation); setSpaceAroundScreenMm(d.spaceAroundScreenMm);
+    setSharedDevicePlayers(d.sharedDevicePlayers); setSharedDeviceScreens(d.sharedDeviceScreens);
+    setFrameNote(d.frameNote); setServiceDescriptionSuffix(d.serviceDescriptionSuffix);
+    setContentRatio(d.contentRatio); setFlatnessRequired(d.flatnessRequired);
+    setPendingDraft(null);
+  };
+
+  const discardDraft = () => {
+    clearDraft('led', quote.id);
+    setPendingDraft(null);
+    setDraftSavedAt(null);
+  };
 
   useEffect(() => {
     // activeOnly=true hides deprecated catalog rows from NEW selections (P1-11.4); existing quotes
@@ -1727,6 +1839,10 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         onCancelEdit?.();
         return;
       }
+      // The screen is on the quote now, so the local draft has served its purpose.
+      clearDraft('led', quote.id);
+      setDraftSavedAt(null);
+      setPendingDraft(null);
       // Reset the whole form for the next screen and re-open the selection accordion.
       setName('');
       setProductId('');
@@ -1817,6 +1933,22 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
           <div className="list-row" style={{ alignItems: 'center' }}>
             <span><b>Editing:</b> {editScreen?.screenName || 'LED screen'} <span className="muted">— change any field below and Save changes.</span></span>
             <button className="ghost" onClick={() => onCancelEdit?.()} disabled={busy}>Cancel edit</button>
+          </div>
+        </div>
+      )}
+      {/* A half-finished screen saved earlier in this browser. Offered, never auto-applied — silently
+          overwriting a form the user has already started typing into would be worse than losing it. */}
+      {!isEditing && pendingDraft && (
+        <div className="card" style={{ borderColor: '#f59e0b', background: 'rgba(245,158,11,0.10)' }}>
+          <div className="list-row" style={{ alignItems: 'center' }}>
+            <span>
+              <b>Unfinished screen saved {draftTime(pendingDraft.savedAt)}</b>
+              <span className="muted"> — kept in this browser; it was never added to the quote.</span>
+            </span>
+            <span className="row-actions">
+              <button className="primary" onClick={() => restoreDraft(pendingDraft.data)}>Restore</button>
+              <button className="ghost" onClick={discardDraft}>Discard</button>
+            </span>
           </div>
         </div>
       )}
@@ -2826,10 +2958,25 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
           <button className="primary" onClick={() => addScreen()} disabled={busy || !canAddSpecific}>
             {busy ? (isEditing ? 'Saving…' : 'Pricing…') : isEditing ? 'Save changes' : '+ Add screen'}
           </button>
+          {/* Save a half-built screen. Only offered while ADDING — an existing screen already has
+              "Save changes", which writes to the quote itself. */}
+          {!isEditing && (
+            <button onClick={saveDraft} disabled={busy} title="Keep this part-built screen in this browser and come back to it">
+              Save draft
+            </button>
+          )}
           {isEditing && (
             <button className="ghost" onClick={() => onCancelEdit?.()} disabled={busy} style={{ marginLeft: 8 }}>
               Cancel edit
             </button>
+          )}
+          {!isEditing && draftSavedAt && (
+            <span className="muted" style={{ alignSelf: 'center' }}>
+              ✓ Draft saved {draftTime(draftSavedAt)} — on this browser only, not yet on the quote.
+            </span>
+          )}
+          {!isEditing && draftErr && (
+            <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>{draftErr}</span>
           )}
         </div>
       </div>
