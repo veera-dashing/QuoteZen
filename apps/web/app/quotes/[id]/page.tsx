@@ -722,7 +722,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
         </div>
         <h4 style={{ margin: '16px 0 4px' }}>Project information</h4>
         <div className="grid3">
-          <div><label>Requested shipping date</label><input value={quote.requestedShippingDate ? quote.requestedShippingDate.slice(0, 10) : ''} readOnly /></div>
+          <div><label>Install start date</label><input value={quote.requestedShippingDate ? quote.requestedShippingDate.slice(0, 10) : ''} readOnly /></div>
           <div><label>Site address</label><input value={quote.siteAddress ?? ''} readOnly /></div>
           <div><label>Discount</label><input value={quote.discountPct != null && quote.discountPct !== '' ? `${Number(quote.discountPct) * 100}%` : '(default)'} readOnly /></div>
           <div><label>Discount applies to</label><input value={quote.discountScope === 'recurring' ? 'Every renewal (recurring)' : 'One-off (upfront)'} readOnly /></div>
@@ -809,7 +809,9 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       <p className="muted" style={{ marginTop: 0 }}>Quote-level site &amp; commercial details. The discount overrides the client/system default (leave blank to inherit).</p>
       <div className="grid3">
         <div>
-          <label>Requested shipping date</label>
+          {/* Label only — the column/field stays `requestedShippingDate`. Renaming the storage is a
+              separate migration, and a CRM autofill source for this date is not built yet. */}
+          <label>Install start date</label>
           <input type="date" value={requestedShippingDate} onChange={(e) => { setRequestedShippingDate(e.target.value); setDirty(true); }} />
         </div>
         <div>
@@ -4294,8 +4296,17 @@ interface VersionView {
   snapshot: VersionSnapshot;
 }
 
+// Keys whose stored name no longer matches what the field is called in the UI. Without this a
+// version diff would show the storage name ("Requested Shipping Date") for a field the rest of the
+// app labels "Install start date".
+const FIELD_LABELS: Record<string, string> = {
+  requestedShippingDate: 'Install start date',
+};
+
 // camelCase / snake_case key → "Title Case" human label.
 function titleCase(key: string): string {
+  const override = FIELD_LABELS[key];
+  if (override) return override;
   const spaced = key
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .replace(/_/g, ' ')
