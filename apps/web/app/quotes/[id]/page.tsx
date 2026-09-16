@@ -1482,8 +1482,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     })) as unknown as Record<LedOptionKey, string>,
   );
   const [backCover, setBackCover] = useState(!!editScreen?.backCover);
-  // AA4 — high-resolution supply upgrade (fractional uplift; priced only when the admin rate > 0).
-  const [highResolution, setHighResolution] = useState(!!editScreen?.highResolution);
   // AA1 — recess/cavity depth (mm); descriptive site-prep detail.
   const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
   const [sunExposure, setSunExposure] = useState(editScreen?.sunExposure ?? '');
@@ -1496,7 +1494,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(editScreen?.serviceDescriptionSuffix ?? '');
   // AA2 — content ratio + supplier + flatness.
   const [contentRatio, setContentRatio] = useState(editScreen?.contentRatio ?? '');
-  const [contentSupplier, setContentSupplier] = useState(editScreen?.contentSupplier ?? '');
   const [flatnessRequired, setFlatnessRequired] = useState(!!editScreen?.flatnessRequired);
 
   useEffect(() => {
@@ -1705,7 +1702,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         // Options & services FKs (only the selected ones).
         ...optionFks,
         backCover,
-        highResolution,
         ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
         ...(sunExposure ? { sunExposure } : {}),
         ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
@@ -1715,9 +1711,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         ...(sharedDeviceScreens.trim() !== '' ? { sharedDeviceScreens: Number(sharedDeviceScreens) } : {}),
         ...(frameNote.trim() ? { frameNote: frameNote.trim() } : {}),
         ...(serviceDescriptionSuffix.trim() ? { serviceDescriptionSuffix: serviceDescriptionSuffix.trim() } : {}),
-        // AA2 — content ratio / supplier / flatness.
+        // AA2 — content ratio / flatness.
         ...(contentRatio.trim() ? { contentRatio: contentRatio.trim() } : {}),
-        ...(contentSupplier.trim() ? { contentSupplier: contentSupplier.trim() } : {}),
         flatnessRequired,
       };
       if (isEditing && editScreen) {
@@ -1741,9 +1736,17 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
       setComponents([]);
       setOrientation('');
       setAspectRatioId('');
-      setSelectedOpts(Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, ''])) as unknown as Record<LedOptionKey, string>);
+      // Clearing the form for the NEXT screen re-applies the 3-year warranty default — otherwise only
+      // the first screen added in a session would get it (the one-shot effect has already run).
+      setSelectedOpts(
+        Object.fromEntries(
+          LED_OPTION_TABLES.map((t) => [
+            t.key,
+            t.key === 'warrantyId' ? (defaultWarranty(optionRows.warrantyId)?.id ?? '') : '',
+          ]),
+        ) as unknown as Record<LedOptionKey, string>,
+      );
       setBackCover(false);
-      setHighResolution(false);
       setRecessDepthMm('');
       setFrameNote('');
       setServiceDescriptionSuffix('');
@@ -2759,10 +2762,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
             <input type="checkbox" checked={backCover} onChange={(e) => setBackCover(e.target.checked)} style={{ width: 'auto' }} />
           </div>
           <div>
-            <label title="Higher-resolution supply upgrade — priced only when the admin uplift rate is set">High-resolution</label>
-            <input type="checkbox" checked={highResolution} onChange={(e) => setHighResolution(e.target.checked)} style={{ width: 'auto' }} />
-          </div>
-          <div>
             <label>Recess depth (mm)</label>
             <input type="number" min={0} value={recessDepthMm} onChange={(e) => setRecessDepthMm(e.target.value)} placeholder="optional" />
           </div>
@@ -2805,10 +2804,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
           <div>
             <label>Content ratio</label>
             <input value={contentRatio} onChange={(e) => setContentRatio(e.target.value)} placeholder="e.g. 16:9" />
-          </div>
-          <div>
-            <label>Content supplier</label>
-            <input value={contentSupplier} onChange={(e) => setContentSupplier(e.target.value)} placeholder="optional" />
           </div>
           <div>
             <label>Flatness critical</label>
@@ -3509,7 +3504,6 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
     ) as unknown as Record<LedOptionKey, string>;
   const [selected, setSelected] = useState<Record<LedOptionKey, string>>(initial);
   const [backCover, setBackCover] = useState(!!screen.backCover);
-  const [highResolution, setHighResolution] = useState(!!screen.highResolution); // AA4
   const [frameNote, setFrameNote] = useState(screen.frameNote ?? '');
   const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(screen.serviceDescriptionSuffix ?? '');
   const [busy, setBusy] = useState(false);
@@ -3533,7 +3527,6 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
     try {
       const body: Record<string, unknown> = {
         backCover,
-        highResolution,
         frameNote: frameNote.trim() ? frameNote.trim() : null,
         serviceDescriptionSuffix: serviceDescriptionSuffix.trim() ? serviceDescriptionSuffix.trim() : null,
       };
@@ -3573,10 +3566,6 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
         <div>
           <label>Back cover</label>
           <input type="checkbox" checked={backCover} disabled={!canWrite} onChange={(e) => { setBackCover(e.target.checked); setSaved(false); }} style={{ width: 'auto' }} />
-        </div>
-        <div>
-          <label title="Higher-resolution supply upgrade — priced only when the admin uplift rate is set">High-resolution</label>
-          <input type="checkbox" checked={highResolution} disabled={!canWrite} onChange={(e) => { setHighResolution(e.target.checked); setSaved(false); }} style={{ width: 'auto' }} />
         </div>
         <div>
           <label>Frame / housing description</label>
