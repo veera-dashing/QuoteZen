@@ -116,6 +116,48 @@ const lcdScreenDiscountedSell = (s: LcdScreen): Decimal => {
   return round(priceTotal.times(frac));
 };
 
+/**
+ * The share of a LED screen's sell that is SERVICES (install / labour / freight / engineering),
+ * taken from its own cost-breakdown categories with per-line discounts applied. 0 when the screen
+ * has no priced lines.
+ */
+const ledServicesFraction = (s: LedScreen): Decimal => {
+  let services = d(0);
+  let total = d(0);
+  for (const l of s.costBreakdown) {
+    if (!l.sell) continue;
+    const eff = d(l.sell.toString()).times(d(1).minus(lineDisc(l.discountPct)));
+    total = total.plus(eff);
+    if (l.category === 'services') services = services.plus(eff);
+  }
+  return total.greaterThan(0) ? services.div(total) : d(0);
+};
+
+/** The same share for a LCD screen, from its stored section subtotals (the `(LCD 1)` analysis block). */
+const lcdServicesFraction = (s: LcdScreen): Decimal => {
+  const total = d(dec(s.priceTotal));
+  const services = d(dec(s.priceServices));
+  return total.greaterThan(0) ? services.div(total) : d(0);
+};
+
+/**
+ * Split a screen's extended sell into its equipment and services portions for the quote rollup.
+ *
+ * Without this a screen contributed its WHOLE sell as `equipment`, so the quote's Services total was
+ * only ever software activities — install, labour and freight (a third of some quotes) were reported
+ * as equipment. This is a RE-BUCKETING ONLY: services is derived from the screen's own bucket mix and
+ * equipment is the REMAINDER, so the two always add back to `extended` to the cent and the grand
+ * total is unchanged. A screen-level price override — which pins one number carrying no bucket split
+ * of its own — is apportioned pro-rata rather than landing wholesale in equipment.
+ */
+const splitScreenSell = (
+  extended: Decimal,
+  servicesFraction: Decimal,
+): { equipment: Decimal; services: Decimal } => {
+  const services = round(extended.times(servicesFraction));
+  return { equipment: round(extended.minus(services)), services };
+};
+
 /** True when any LED cost line or LCD item on the quote carries a per-line discount (V2). */
 const hasLineDiscounts = (quote: QuoteWithChildren): boolean => {
   for (const s of quote.ledScreens) for (const l of s.costBreakdown) if (lineDisc(l.discountPct) > 0) return true;
@@ -923,12 +965,24 @@ export const computeQuoteTotals = (
   // carry a screen-level qty; LCD screens have none (their item rows carry their own qty), so the
   // stored LCD priceTotal is already the full screen price.
   for (const s of quote.ledScreens) {
-    // V2 — per-line-discounted per-unit sell (override pin wins), × screen qty.
-    lines.push({ kind: 'equipment', extendedSell: round(ledScreenDiscountedSell(overrides, s).times(s.qty)).toString() });
+    // V2 — per-line-discounted per-unit sell (override pin wins), × screen qty, then split across
+    // the equipment/services buckets the screen's own cost lines carry.
+    const extended = round(ledScreenDiscountedSell(overrides, s).times(s.qty));
+    const split = splitScreenSell(extended, ledServicesFraction(s));
+    lines.push({ kind: 'equipment', extendedSell: split.equipment.toString() });
+    if (split.services.greaterThan(0)) {
+      lines.push({ kind: 'services', extendedSell: split.services.toString() });
+    }
   }
   for (const s of quote.lcdScreens) {
-    // V2 — per-line-discounted extended sell (Σ item.unitSell × qty × (1 − discountPct)).
-    lines.push({ kind: 'equipment', extendedSell: lcdScreenDiscountedSell(s).toString() });
+    // V2 — per-line-discounted extended sell (Σ item.unitSell × qty × (1 − discountPct)), split the
+    // same way using the screen's stored section subtotals.
+    const extended = lcdScreenDiscountedSell(s);
+    const split = splitScreenSell(extended, lcdServicesFraction(s));
+    lines.push({ kind: 'equipment', extendedSell: split.equipment.toString() });
+    if (split.services.greaterThan(0)) {
+      lines.push({ kind: 'services', extendedSell: split.services.toString() });
+    }
   }
   for (const m of quote.manufacturedItems) {
     lines.push({ kind: 'equipment', extendedSell: Number(dec(m.product.sell)) * m.qty });
