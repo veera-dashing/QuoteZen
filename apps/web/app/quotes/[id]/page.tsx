@@ -1104,7 +1104,7 @@ interface LedScreenDraft {
   sunExposure: string; wallSubstrate: string; controllerLocation: string;
   spaceAroundScreenMm: string; sharedDevicePlayers: string; sharedDeviceScreens: string;
   frameNote: string; serviceDescriptionSuffix: string;
-  contentRatio: string; flatnessRequired: boolean;
+  flatnessRequired: boolean;
 }
 
 // T3: human "Size" indicator for a config — under/exact/over with the signed % delta vs the opening.
@@ -1496,6 +1496,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else { setSortKey(key); setSortDir('asc'); }
   };
+  // True when the options table came from "Manual choice" (geometry only, no guided filtering).
+  const [manualMode, setManualMode] = useState(false);
   // Good / Better / Best tiered options (T2).
   const [tiers, setTiers] = useState<TierOption[] | null>(null);
   const [tierReasons, setTierReasons] = useState<string[]>([]);
@@ -1553,7 +1555,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   const [frameNote, setFrameNote] = useState(editScreen?.frameNote ?? '');
   const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(editScreen?.serviceDescriptionSuffix ?? '');
   // AA2 — content ratio + supplier + flatness.
-  const [contentRatio, setContentRatio] = useState(editScreen?.contentRatio ?? '');
   const [flatnessRequired, setFlatnessRequired] = useState(!!editScreen?.flatnessRequired);
 
   // Half-finished draft (this browser only). `pendingDraft` is one found on mount and offered for
@@ -1576,7 +1577,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     sunExposure, wallSubstrate, controllerLocation,
     spaceAroundScreenMm, sharedDevicePlayers, sharedDeviceScreens,
     frameNote, serviceDescriptionSuffix,
-    contentRatio, flatnessRequired,
+    flatnessRequired,
   });
 
   const saveDraft = () => {
@@ -1598,7 +1599,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     setControllerLocation(d.controllerLocation); setSpaceAroundScreenMm(d.spaceAroundScreenMm);
     setSharedDevicePlayers(d.sharedDevicePlayers); setSharedDeviceScreens(d.sharedDeviceScreens);
     setFrameNote(d.frameNote); setServiceDescriptionSuffix(d.serviceDescriptionSuffix);
-    setContentRatio(d.contentRatio); setFlatnessRequired(d.flatnessRequired);
+    setFlatnessRequired(d.flatnessRequired);
     setPendingDraft(null);
   };
 
@@ -1715,6 +1716,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
       );
       setOptions(res.options);
       setReasons(res.reasons);
+      setManualMode(false);
       setTreeConstraints(res.treeConstraints ?? null);
       setCaveats(res.caveats ?? []);
       setPrimaryRecommendationText(res.primaryRecommendationText ?? null);
@@ -1726,6 +1728,60 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
       setSortKey(null);
       setSortDir('asc');
       // Surface the allowed tolerance bands and default the filter to the widest (least restrictive).
+      const bands = (res.toleranceBands ?? []).slice().sort((a, b) => a - b);
+      setToleranceBands(bands);
+      if (selectedBand === null && bands.length > 0) setSelectedBand(bands[bands.length - 1]!);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Manual product choice — every product that can build this opening, ranked on geometry alone.
+   *
+   * Sends ONLY the opening (width, height, allow-rotation): no intake answers, so no Selection-Tree
+   * family boost or pitch bounds, and no environment / viewing-distance filter. That is the point —
+   * it is the escape hatch for when the guided questionnaire has narrowed the list too far, or the
+   * user already knows the panel they want. Results render in the SAME table as best-fit.
+   */
+  /**
+   * Which result view is currently on screen, so the three buttons can show which one produced it.
+   * The views are mutually exclusive: `loadTiers` nulls `options`, and the two configure calls null
+   * `tiers`. Before anything has been run, best-fit stays highlighted as the suggested first action.
+   */
+  const activeView: 'bestfit' | 'tiers' | 'manual' =
+    tiers !== null ? 'tiers' : options !== null && manualMode ? 'manual' : 'bestfit';
+
+  const configureManual = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await api<{ options: ConfigOption[]; reasons: string[]; toleranceBands?: number[] }>(
+        `/quotes/${quote.id}/screens/configure`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            desiredWidthMm: Number(w),
+            desiredHeightMm: Number(h),
+            allowRotation: rotate,
+          }),
+        },
+      );
+      setOptions(res.options);
+      setReasons(res.reasons);
+      setManualMode(true);
+      // No intake was sent, so any tree advice on screen belongs to a previous run — clear it rather
+      // than leave "Recommended family" badges that nothing in this result set was ranked against.
+      setTreeConstraints(null);
+      setCaveats([]);
+      setPrimaryRecommendationText(null);
+      setTiers(null);
+      setTierReasons([]);
+      setConfigSearch('');
+      setSortKey(null);
+      setSortDir('asc');
       const bands = (res.toleranceBands ?? []).slice().sort((a, b) => a - b);
       setToleranceBands(bands);
       if (selectedBand === null && bands.length > 0) setSelectedBand(bands[bands.length - 1]!);
@@ -1755,6 +1811,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         { method: 'POST', body: JSON.stringify(selectionBody()) },
       );
       setTiers(res.options);
+      setManualMode(false);
       setTierReasons(res.reasons);
       setDistinctProducts(res.distinctProducts);
       setCommercialHints(res.commercialHints ?? null);
@@ -1823,8 +1880,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         ...(sharedDeviceScreens.trim() !== '' ? { sharedDeviceScreens: Number(sharedDeviceScreens) } : {}),
         ...(frameNote.trim() ? { frameNote: frameNote.trim() } : {}),
         ...(serviceDescriptionSuffix.trim() ? { serviceDescriptionSuffix: serviceDescriptionSuffix.trim() } : {}),
-        // AA2 — content ratio / flatness.
-        ...(contentRatio.trim() ? { contentRatio: contentRatio.trim() } : {}),
         flatnessRequired,
       };
       if (isEditing && editScreen) {
@@ -2440,11 +2495,29 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
 
         {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
         <div className="step-actions">
-          <button className="primary" onClick={configure} disabled={busy}>
+          <button
+            className={activeView === 'bestfit' ? 'primary' : ''}
+            onClick={configure}
+            disabled={busy}
+          >
             {busy ? 'Configuring…' : '🔍 Find best-fit products'}
           </button>
-          <button onClick={loadTiers} disabled={busy} style={{ marginLeft: 8 }}>
+          <button
+            className={activeView === 'tiers' ? 'primary' : ''}
+            onClick={loadTiers}
+            disabled={busy}
+            style={{ marginLeft: 8 }}
+          >
             {busy ? 'Comparing…' : '⚖️ Good / Better / Best'}
+          </button>
+          <button
+            className={activeView === 'manual' ? 'primary' : ''}
+            onClick={configureManual}
+            disabled={busy}
+            style={{ marginLeft: 8 }}
+            title="Every product that fits this opening, ranked on size alone — ignores the questionnaire"
+          >
+            {busy ? 'Listing…' : '📐 Manual choice'}
           </button>
         </div>
 
@@ -2648,7 +2721,17 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         const capped = shownOptions.slice(0, CONFIG_CAP);
         return (
         <div className="card">
-          <h3 style={{ marginTop: 0 }}>Ranked configurations ({shownOptions.length}{selectedBand !== null && banded.length !== options.length ? ` of ${options.length}` : ''})</h3>
+          <h3 style={{ marginTop: 0 }}>
+            {manualMode ? 'Manual choice' : 'Ranked configurations'} ({shownOptions.length}{selectedBand !== null && banded.length !== options.length ? ` of ${options.length}` : ''})
+          </h3>
+          {/* Say plainly that this list ignored the questionnaire, so a product missing from the
+              guided results but present here isn't mistaken for a contradiction. */}
+          {manualMode && (
+            <p className="muted" style={{ marginTop: 0 }}>
+              Every product that fits {w} × {h} mm{rotate ? ' (rotation allowed)' : ' (no rotation)'}, ranked on size
+              alone — the guided questionnaire, environment and viewing-distance filters are not applied.
+            </p>
+          )}
           {options.length === 0 && <p className="muted">No fit: {reasons.join(' ')}</p>}
           {options.length > 0 && banded.length === 0 && (
             <p className="muted">No configurations within ±{selectedBand}% — widen the allowed size tolerance above.</p>
@@ -2677,7 +2760,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
                   <tr>
                     <th
                       onClick={() => toggleSort('model')}
-                      style={{ cursor: 'pointer', userSelect: 'none' }}
+                      style={{ cursor: 'pointer', userSelect: 'none', minWidth: 230 }}
                       title="Click to sort"
                     >
                       Product{sortKey === 'model' ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
@@ -2700,11 +2783,23 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
                   {capped.map((o, i) => (
                     <tr key={`${o.productId}-${o.rotated}-${o.sizeMode}-${i}`}>
                       <td>
-                        {/* Name on its own line, capability badges wrapping underneath. maxWidth caps
-                            the column so the badges never widen it and the table keeps its horizontal
-                            space for the spec/price columns. */}
-                        <div style={{ maxWidth: 230 }}>
-                          <div style={{ whiteSpace: 'nowrap' }}>{o.model}{o.rotated ? ' (rot)' : ''}</div>
+                        {/* Name on one line, truncated with an ellipsis; hover for the full name.
+                            A FIXED width (not maxWidth) is what makes the ellipsis work and stops the
+                            auto-layout table collapsing this column. Do NOT use overflow-wrap:anywhere
+                            here — it lets the column shrink to one character and breaks names mid-word.
+                            Capability badges wrap underneath. */}
+                        <div style={{ width: 230 }}>
+                          <div
+                            title={`${o.model}${o.rotated ? ' (rotated)' : ''}`}
+                            style={{
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              cursor: 'help',
+                            }}
+                          >
+                            {o.model}{o.rotated ? ' (rot)' : ''}
+                          </div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: 3 }}>
                           {o.recommendedFamily && (
                             <span
@@ -2890,6 +2985,10 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         <h4 style={{ margin: '14px 0 4px' }}>Housing &amp; descriptions</h4>
         <div className="grid3">
           <div>
+            <label>Flatness critical</label>
+            <input type="checkbox" checked={flatnessRequired} onChange={(e) => setFlatnessRequired(e.target.checked)} style={{ width: 'auto' }} />
+          </div>
+          <div>
             <label>Back cover</label>
             <input type="checkbox" checked={backCover} onChange={(e) => setBackCover(e.target.checked)} style={{ width: 'auto' }} />
           </div>
@@ -2929,17 +3028,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
           <div>
             <label>Service description suffix</label>
             <input value={serviceDescriptionSuffix} onChange={(e) => setServiceDescriptionSuffix(e.target.value)} placeholder="optional" />
-          </div>
-        </div>
-        <h4 style={{ margin: '14px 0 4px' }}>Content &amp; flatness</h4>
-        <div className="grid3">
-          <div>
-            <label>Content ratio</label>
-            <input value={contentRatio} onChange={(e) => setContentRatio(e.target.value)} placeholder="e.g. 16:9" />
-          </div>
-          <div>
-            <label>Flatness critical</label>
-            <input type="checkbox" checked={flatnessRequired} onChange={(e) => setFlatnessRequired(e.target.checked)} style={{ width: 'auto' }} />
           </div>
         </div>
 
