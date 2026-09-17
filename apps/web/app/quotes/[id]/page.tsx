@@ -8,7 +8,7 @@ import RecordForm from '@/components/RecordForm';
 import type { Row, TableDef } from '@/lib/types';
 import type { LedIntakeInput } from '@quotezen/shared';
 
-interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null; years?: number }
+interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null; years?: number; rate?: string | number | null }
 
 /**
  * A NEW screen pre-selects the 3-year warranty. This mirrors the `standard_warranty_years` setting
@@ -1047,6 +1047,33 @@ type LedComponentIdField = (typeof LED_COMPONENT_TABLES)[number]['idField'];
 // A chosen component row in local state: its type, the selected catalog id, and a qty.
 interface ComponentRow { componentType: LedComponentType; itemId: string; qty: number }
 
+/**
+ * The client's preferred freight, as resolved by `/rules/client/:id/effective` (client's own value
+ * wins over its tier's). ADVISORY ONLY — it defaults the picker and is shown on screen; it does not
+ * price anything. Freight cost still comes from the freight option actually selected.
+ */
+interface PreferredFreight { value: string | null; source: 'client' | 'tier' | 'system' }
+
+/**
+ * Match a preference word ("Air", "Sea") to a freight option, since the two vocabularies differ:
+ * preferences are short words, options are named "Freight (Standard Air)", "Freight (Sea FCL)"…
+ * Substring match, then the CHEAPEST matching rate so the default is predictable (Standard Air $13
+ * rather than Express Air $30). Returns undefined when nothing matches — e.g. "Road", for which no
+ * freight option exists at all — and the caller then defaults nothing.
+ */
+const matchFreightOption = (preference: string | null, rows: readonly Opt[] | undefined): Opt | undefined => {
+  const want = (preference ?? '').trim().toLowerCase();
+  if (!want || !rows?.length) return undefined;
+  const hits = rows.filter((r) => (r.name ?? '').toLowerCase().includes(want));
+  if (hits.length === 0) return undefined;
+  const rate = (r: Opt): number => {
+    const n = Number(r.rate ?? NaN);
+    return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY; // no rate → never the cheapest
+  };
+  return [...hits].sort((a, b) => rate(a) - rate(b) || String(a.id).localeCompare(String(b.id)))[0];
+};
+
+
 // ─── Half-finished screen drafts ──────────────────────────────────────────────
 // A screen row is PRICED the moment it is inserted, so the server has no concept of an unpriced
 // screen — which is why "+ Add screen" needs a product and dimensions. Until a draft-screen record
@@ -1557,6 +1584,16 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   // AA2 — content ratio + supplier + flatness.
   const [flatnessRequired, setFlatnessRequired] = useState(!!editScreen?.flatnessRequired);
 
+  // The client's preferred freight (client's own value, else its tier's). Advisory: it defaults the
+  // picker and is shown beside it — it never prices anything.
+  const [preferredFreight, setPreferredFreight] = useState<PreferredFreight | null>(null);
+  useEffect(() => {
+    if (!quote.clientId) { setPreferredFreight(null); return; }
+    api<{ preferredFreight?: PreferredFreight }>(`/rules/client/${quote.clientId}/effective`)
+      .then((r) => setPreferredFreight(r.preferredFreight ?? null))
+      .catch(() => setPreferredFreight(null)); // advisory only — never block the form on it
+  }, [quote.clientId]);
+
   // Half-finished draft (this browser only). `pendingDraft` is one found on mount and offered for
   // restore — never applied silently, since it would otherwise quietly overwrite a fresh form.
   const [pendingDraft, setPendingDraft] = useState<ScreenDraft<LedScreenDraft> | null>(null);
@@ -1649,6 +1686,18 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     warrantyDefaulted.current = true;
     setSelectedOpts((prev) => (prev.warrantyId ? prev : { ...prev, warrantyId: String(std.id) }));
   }, [optionRows, editScreen]);
+
+  // Default the freight option from the client's preference, once, on a NEW screen. Needs BOTH the
+  // catalogs and the preference, which arrive independently — hence its own effect. A preference with
+  // no matching option (e.g. "Road") simply defaults nothing; the note below still explains it.
+  const freightDefaulted = useRef(false);
+  useEffect(() => {
+    if (freightDefaulted.current || editScreen || !preferredFreight?.value) return;
+    const match = matchFreightOption(preferredFreight.value, optionRows.freightOptionId);
+    if (!match) return;
+    freightDefaulted.current = true;
+    setSelectedOpts((prev) => (prev.freightOptionId ? prev : { ...prev, freightOptionId: String(match.id) }));
+  }, [optionRows, editScreen, preferredFreight]);
 
   // Parse "16:9" → { w: 16, h: 9 }; null when unparseable.
   const parseRatio = (label: string | undefined): { w: number; h: number } | null => {
@@ -1907,14 +1956,18 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
       setComponents([]);
       setOrientation('');
       setAspectRatioId('');
-      // Clearing the form for the NEXT screen re-applies the 3-year warranty default — otherwise only
-      // the first screen added in a session would get it (the one-shot effect has already run).
+      // Clearing the form for the NEXT screen re-applies the defaults (3-year warranty, the client's
+      // preferred freight) — otherwise only the first screen added in a session would get them, since
+      // the one-shot effects have already run.
       setSelectedOpts(
         Object.fromEntries(
-          LED_OPTION_TABLES.map((t) => [
-            t.key,
-            t.key === 'warrantyId' ? (defaultWarranty(optionRows.warrantyId)?.id ?? '') : '',
-          ]),
+          LED_OPTION_TABLES.map((t) => {
+            if (t.key === 'warrantyId') return [t.key, defaultWarranty(optionRows.warrantyId)?.id ?? ''];
+            if (t.key === 'freightOptionId') {
+              return [t.key, matchFreightOption(preferredFreight?.value ?? null, optionRows.freightOptionId)?.id ?? ''];
+            }
+            return [t.key, ''];
+          }),
         ) as unknown as Record<LedOptionKey, string>,
       );
       setBackCover(false);
@@ -2979,6 +3032,17 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
                 placeholder={`Select ${t.label.toLowerCase()}…`}
                 options={(optionRows[t.key] ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
               />
+              {/* Say which freight this client expects, and be explicit when no option matches it —
+                  otherwise a preference like "Road" looks as though it was simply ignored. */}
+              {t.key === 'freightOptionId' && preferredFreight?.value && (
+                <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                  Client prefers <b>{preferredFreight.value}</b>
+                  {preferredFreight.source === 'tier' ? ' (from client tier)' : ' (set on the client)'}
+                  {matchFreightOption(preferredFreight.value, optionRows.freightOptionId)
+                    ? '. Pre-selected — change it if this job differs.'
+                    : ' — no freight option matches that, so none was pre-selected.'}
+                </p>
+              )}
             </div>
           ))}
         </div>
