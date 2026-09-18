@@ -839,7 +839,9 @@ const computeLedScreenPricing = async (
     const baseHours = installMethod?.defaultHours ? Number(installMethod.defaultHours) : 4;
     const isIT = product?.model?.startsWith('IT') || false;
 
-    labourHours = estimateInstallHours({
+    // A user-set figure REPLACES the estimate outright (it is the installer's own number, not an
+    // adjustment to ours). Null/absent → derive it as before.
+    const estimatedHours = estimateInstallHours({
       areaSqm: area,
       cabinetsW,
       cabinetsH,
@@ -850,6 +852,7 @@ const computeLedScreenPricing = async (
       frameInstallHours: frame ? Number(frame.installHours) : 0,
       hanging: hangingBar ? Number(hangingBar.widthMultiplier) > 0 : false,
     });
+    labourHours = input.labourHoursOverride ?? estimatedHours;
 
     const hasMediaplayer = compRows.some((c) => c.componentType === 'mediaplayer');
     // Standard overhead: default 475 ($120 PM, $80 design/prep, $80 screen config, $30 consumables, $60 rubbish, $75 warehouse, $30 controller courier)
@@ -945,6 +948,7 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
         powerMaxW: spec?.powerMaxW ? Math.round(spec.powerMaxW.toNumber()) : null,
         cabinetDepthMm: product?.cabinetDepthMm ?? null,
         labourHours: labourHours ? labourHours.toString() : null,
+        labourHoursOverride: input.labourHoursOverride != null ? String(input.labourHoursOverride) : null,
         freightKg: freightKg !== null ? freightKg.toString() : null,
         priceScreenMediaplayer: totals.screenMediaplayerSell.toString(),
         priceFrameTrim: totals.frameTrimSell.toString(),
@@ -1220,6 +1224,11 @@ export const updateLedScreen = async (
     warrantyId: opt(input.warrantyId, num(screen.warrantyId) ?? null),
     serviceHoursId: opt(input.serviceHoursId, num(screen.serviceHoursId) ?? null),
     accessEquipmentId: opt(input.accessEquipmentId, num(screen.accessEquipmentId) ?? null),
+    // The stored OVERRIDE (not the computed labourHours) is what carries forward on a re-edit.
+    labourHoursOverride: opt(
+      input.labourHoursOverride,
+      screen.labourHoursOverride != null ? Number(screen.labourHoursOverride) : null,
+    ),
     marginOverride:
       input.marginOverride === undefined
         ? (screen.marginOverride != null ? Number(screen.marginOverride) : undefined)
@@ -1259,6 +1268,7 @@ export const updateLedScreen = async (
         marginOverride: pricingInput.marginOverride ?? null,
         cabinetDepthMm: product?.cabinetDepthMm ?? null,
         labourHours: labourHours ? labourHours.toString() : null,
+        labourHoursOverride: input.labourHoursOverride != null ? String(input.labourHoursOverride) : null,
         freightKg: freightKg !== null ? freightKg.toString() : null,
         priceScreenMediaplayer: totals.screenMediaplayerSell.toString(),
         priceFrameTrim: totals.frameTrimSell.toString(),
@@ -1370,6 +1380,7 @@ export const updateLedScreenFull = async (
         powerMaxW: spec?.powerMaxW ? Math.round(spec.powerMaxW.toNumber()) : null,
         cabinetDepthMm: product?.cabinetDepthMm ?? null,
         labourHours: labourHours ? labourHours.toString() : null,
+        labourHoursOverride: input.labourHoursOverride != null ? String(input.labourHoursOverride) : null,
         freightKg: freightKg !== null ? freightKg.toString() : null,
         priceScreenMediaplayer: totals.screenMediaplayerSell.toString(),
         priceFrameTrim: totals.frameTrimSell.toString(),

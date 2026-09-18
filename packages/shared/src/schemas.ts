@@ -229,6 +229,8 @@ export const ledScreenSchema = z.object({
   hangingBarId: idSchema.optional(),
   engineeringId: idSchema.optional(),
   installMethodId: idSchema.optional(),
+  /** Manual install labour hours; omit/null to derive them from the geometry + options. */
+  labourHoursOverride: z.coerce.number().nonnegative().max(2000).nullish(),
   freightOptionId: idSchema.optional(),
   warrantyId: idSchema.optional(),
   serviceHoursId: idSchema.optional(),
@@ -254,6 +256,7 @@ export const updateLedScreenSchema = z.object({
   hangingBarId: idSchema.nullish(),
   engineeringId: idSchema.nullish(),
   installMethodId: idSchema.nullish(),
+  labourHoursOverride: z.coerce.number().nonnegative().max(2000).nullish(),
   freightOptionId: idSchema.nullish(),
   warrantyId: idSchema.nullish(),
   serviceHoursId: idSchema.nullish(),

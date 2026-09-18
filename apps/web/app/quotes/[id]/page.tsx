@@ -35,6 +35,8 @@ interface LedScreen {
   // Full-edit pre-fill (V4): the panel + geometry inputs finalised at add time.
   ledProductId?: string | null; desiredWidthMm?: number | null; desiredHeightMm?: number | null;
   rotateCabinets?: boolean; aspectRatioId?: string | null;
+  labourHours?: string | number | null;         // hours actually used to price this screen
+  labourHoursOverride?: string | number | null; // manual install hours; null = estimated
   recessDepthMm?: number | null; // AA1 — recess/cavity depth (mm)
   sunExposure?: string | null;   // AA1 — sun exposure at this screen's position
   wallSubstrate?: string | null; // AA1 — what this screen mounts to
@@ -1571,6 +1573,15 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     })) as unknown as Record<LedOptionKey, string>,
   );
   const [backCover, setBackCover] = useState(!!editScreen?.backCover);
+  // Install labour hours — see the per-screen editor for the 'auto' vs 'manual' reasoning. A NEW
+  // screen has no computed figure yet, so the box starts empty and estimates on save.
+  const computedHours = editScreen?.labourHours != null ? String(editScreen.labourHours) : '';
+  const [hoursMode, setHoursMode] = useState<'auto' | 'manual'>(
+    editScreen?.labourHoursOverride != null ? 'manual' : 'auto',
+  );
+  const [labourHoursOverride, setLabourHoursOverride] = useState(
+    editScreen?.labourHoursOverride != null ? String(editScreen.labourHoursOverride) : computedHours,
+  );
   // AA1 — recess/cavity depth (mm); descriptive site-prep detail.
   const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
   const [sunExposure, setSunExposure] = useState(editScreen?.sunExposure ?? '');
@@ -1920,6 +1931,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         // Options & services FKs (only the selected ones).
         ...optionFks,
         backCover,
+        labourHoursOverride:
+          hoursMode === 'manual' && labourHoursOverride.trim() !== '' ? Number(labourHoursOverride) : null,
         ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
         ...(sunExposure ? { sunExposure } : {}),
         ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
@@ -3051,6 +3064,38 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
               )}
             </div>
           ))}
+          {/* Install labour hours. The computed estimate is used unless a number is typed here — it
+              drives the "Install, labour & freight" line, so it is set beside the install pickers. */}
+          <div>
+            <label>Install labour (hours)</label>
+            <input
+              type="number"
+              min={0}
+              step="0.5"
+              value={labourHoursOverride}
+              onChange={(e) => { setLabourHoursOverride(e.target.value); setHoursMode('manual'); }}
+              placeholder="auto"
+            />
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+              {hoursMode === 'manual' ? (
+                <>
+                  Set manually.{' '}
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => { setHoursMode('auto'); setLabourHoursOverride(computedHours); }}
+                    style={{ padding: 0, fontSize: 12, color: 'var(--accent)' }}
+                  >
+                    Reset to estimate
+                  </button>
+                </>
+              ) : computedHours ? (
+                'Estimated from size, cabinets, frame and hanging — edit to override.'
+              ) : (
+                'Leave blank to estimate from size, cabinets, frame and hanging.'
+              )}
+            </p>
+          </div>
         </div>
         <h4 style={{ margin: '14px 0 4px' }}>Housing &amp; descriptions</h4>
         <div className="grid3">
@@ -3805,6 +3850,16 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
     ) as unknown as Record<LedOptionKey, string>;
   const [selected, setSelected] = useState<Record<LedOptionKey, string>>(initial);
   const [backCover, setBackCover] = useState(!!screen.backCover);
+  // Install labour hours. The box always SHOWS the hours in use, but `hoursMode` decides what is
+  // saved: in 'auto' the figure is just being displayed and null is sent (so the screen keeps
+  // re-estimating when the panel or frame changes); typing switches it to 'manual'.
+  const computedHours = screen.labourHours != null ? String(screen.labourHours) : '';
+  const [hoursMode, setHoursMode] = useState<'auto' | 'manual'>(
+    screen.labourHoursOverride != null ? 'manual' : 'auto',
+  );
+  const [labourHoursOverride, setLabourHoursOverride] = useState(
+    screen.labourHoursOverride != null ? String(screen.labourHoursOverride) : computedHours,
+  );
   const [frameNote, setFrameNote] = useState(screen.frameNote ?? '');
   const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(screen.serviceDescriptionSuffix ?? '');
   const [busy, setBusy] = useState(false);
@@ -3828,6 +3883,8 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
     try {
       const body: Record<string, unknown> = {
         backCover,
+        labourHoursOverride:
+          hoursMode === 'manual' && labourHoursOverride.trim() !== '' ? Number(labourHoursOverride) : null,
         frameNote: frameNote.trim() ? frameNote.trim() : null,
         serviceDescriptionSuffix: serviceDescriptionSuffix.trim() ? serviceDescriptionSuffix.trim() : null,
       };
@@ -3861,6 +3918,38 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
             />
           </div>
         ))}
+        {/* Install labour hours — sits with the install pickers, since it drives the same
+            "Install, labour & freight" line. Blank = estimate from geometry + options. */}
+        <div>
+          <label>Install labour (hours)</label>
+          <input
+            type="number"
+            min={0}
+            step="0.5"
+            value={labourHoursOverride}
+            disabled={!canWrite}
+            onChange={(e) => { setLabourHoursOverride(e.target.value); setHoursMode('manual'); setSaved(false); }}
+            placeholder="auto"
+          />
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+            {hoursMode === 'manual' ? (
+              <>
+                Set manually.{' '}
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={!canWrite}
+                  onClick={() => { setHoursMode('auto'); setLabourHoursOverride(computedHours); setSaved(false); }}
+                  style={{ padding: 0, fontSize: 12, color: 'var(--accent)' }}
+                >
+                  Reset to estimate
+                </button>
+              </>
+            ) : (
+              'Estimated from size, cabinets, frame and hanging — edit to override.'
+            )}
+          </p>
+        </div>
       </div>
       <h4 style={{ margin: '14px 0 4px' }}>Housing &amp; descriptions</h4>
       <div className="grid3">

@@ -1097,7 +1097,12 @@ model QuoteLedScreen {
   /** AA5 — … per M screens (paired with sharedDevicePlayers). */
   sharedDeviceScreens Int?     @map("shared_device_screens")
   freightKg           Decimal? @map("freight_kg") @db.Decimal(10, 2)
+  /** COMPUTED install labour hours for this screen (the estimate, or the override below). */
   labourHours         Decimal? @map("labour_hours") @db.Decimal(8, 2)
+  /** User-set install labour hours. When present it REPLACES `estimateInstallHours`; null = auto.
+      Kept separate from `labourHours` so re-editing a screen never mistakes a previous estimate
+      for a deliberate override. */
+  labourHoursOverride Decimal? @map("labour_hours_override") @db.Decimal(8, 2)
   // per-screen PI fields
   spareModulesPct     Decimal? @map("spare_modules_pct") @db.Decimal(6, 2)
   spareHubCard        Int?     @map("spare_hub_card")
