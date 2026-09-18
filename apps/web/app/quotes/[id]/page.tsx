@@ -2118,6 +2118,12 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
             <label>Allow rotation</label>
             <input type="checkbox" checked={rotate} onChange={(e) => setRotate(e.target.checked)} style={{ width: 'auto' }} />
           </div>
+          {/* Flatness sits with the geometry controls: it is a property of the opening being
+              specified, not of the housing chosen later. */}
+          <div>
+            <label title="The opening must be flat — no bow or curvature in the mounting surface">Flatness critical</label>
+            <input type="checkbox" checked={flatnessRequired} onChange={(e) => setFlatnessRequired(e.target.checked)} style={{ width: 'auto' }} />
+          </div>
         </div>
         <p className="muted" style={{ marginTop: 4 }}>
           Pick orientation + an aspect ratio and one dimension auto-fills the other (still editable).
@@ -3048,10 +3054,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         </div>
         <h4 style={{ margin: '14px 0 4px' }}>Housing &amp; descriptions</h4>
         <div className="grid3">
-          <div>
-            <label>Flatness critical</label>
-            <input type="checkbox" checked={flatnessRequired} onChange={(e) => setFlatnessRequired(e.target.checked)} style={{ width: 'auto' }} />
-          </div>
           <div>
             <label>Back cover</label>
             <input type="checkbox" checked={backCover} onChange={(e) => setBackCover(e.target.checked)} style={{ width: 'auto' }} />
