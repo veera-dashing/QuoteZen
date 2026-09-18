@@ -73,6 +73,8 @@ export const ruleRoutes = async (app: FastifyInstance): Promise<void> => {
         }
         return { value: null, source: 'system' as const, overridesGlobal: false, tierDefault: null };
       })(),
+      /** Standing per-client requirement: always coat their LED screens (advisory default). */
+      requiresProtectiveCoating: client.requiresProtectiveCoating,
       preferredProductFamily: field(client.preferredProductFamily, Boolean(client.preferredProductFamily)),
       preferredPitchMm: field(
         client.preferredPitchMm != null ? Number(client.preferredPitchMm) : null,

@@ -819,6 +819,12 @@ model Client {
   /** Per-client preferred freight override (Z6) — wins over the tier's `preferredFreight`. */
   preferredFreight       String?  @map("preferred_freight")
   /**
+   * This client always wants protective coating on their LED screens. Captured on the client so
+   * estimators see the standing requirement; it does not price anything by itself — the coating is
+   * still chosen per screen from `coating_options`.
+   */
+  requiresProtectiveCoating Boolean @default(false) @map("requires_protective_coating")
+  /**
    * AA2 — CSV of allowed aspect-ratio labels for this client (e.g. "16:9,9:16,6:1"). When non-empty,
    * the config engine only offers configurations whose achieved ratio label is in this set, and a
    * stored screen whose ratio is outside it is flagged (RATIO_NOT_ALLOWED, warning). Empty/null → no

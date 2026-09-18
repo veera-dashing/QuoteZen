@@ -1056,6 +1056,18 @@ interface ComponentRow { componentType: LedComponentType; itemId: string; qty: n
  */
 interface PreferredFreight { value: string | null; source: 'client' | 'tier' | 'system' }
 
+/** The client-level rules the LED form reads from `/rules/client/:id/effective`. */
+interface ClientRules { preferredFreight?: PreferredFreight; requiresProtectiveCoating?: boolean }
+
+/**
+ * Coating is offered as a single PROTECTIVE COATING toggle rather than a picker: it is the only
+ * coating actually quoted (Gold coating exists in the catalogue but is used by no screen). The
+ * checkbox maps to this catalogue row's id, so pricing still flows through `coating_options`.
+ */
+const PROTECTIVE_COATING = 'Protective coating';
+const protectiveCoatingRow = (rows: readonly Opt[] | undefined): Opt | undefined =>
+  rows?.find((r) => (r.name ?? '').trim().toLowerCase() === PROTECTIVE_COATING.toLowerCase());
+
 /**
  * Match a preference word ("Air", "Sea") to a freight option, since the two vocabularies differ:
  * preferences are short words, options are named "Freight (Standard Air)", "Freight (Sea FCL)"…
@@ -1598,11 +1610,15 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   // The client's preferred freight (client's own value, else its tier's). Advisory: it defaults the
   // picker and is shown beside it — it never prices anything.
   const [preferredFreight, setPreferredFreight] = useState<PreferredFreight | null>(null);
+  const [clientWantsCoating, setClientWantsCoating] = useState(false);
   useEffect(() => {
     if (!quote.clientId) { setPreferredFreight(null); return; }
-    api<{ preferredFreight?: PreferredFreight }>(`/rules/client/${quote.clientId}/effective`)
-      .then((r) => setPreferredFreight(r.preferredFreight ?? null))
-      .catch(() => setPreferredFreight(null)); // advisory only — never block the form on it
+    api<ClientRules>(`/rules/client/${quote.clientId}/effective`)
+      .then((r) => {
+        setPreferredFreight(r.preferredFreight ?? null);
+        setClientWantsCoating(!!r.requiresProtectiveCoating);
+      })
+      .catch(() => { setPreferredFreight(null); setClientWantsCoating(false); }); // advisory only
   }, [quote.clientId]);
 
   // Half-finished draft (this browser only). `pendingDraft` is one found on mount and offered for
@@ -1701,6 +1717,17 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   // Default the freight option from the client's preference, once, on a NEW screen. Needs BOTH the
   // catalogs and the preference, which arrive independently — hence its own effect. A preference with
   // no matching option (e.g. "Road") simply defaults nothing; the note below still explains it.
+  // Tick protective coating on a NEW screen when the client always wants it. Once, and never over a
+  // choice already made — the user can untick it for a job that genuinely doesn't need it.
+  const coatingDefaulted = useRef(false);
+  useEffect(() => {
+    if (coatingDefaulted.current || editScreen || !clientWantsCoating) return;
+    const row = protectiveCoatingRow(optionRows.coatingId);
+    if (!row) return;
+    coatingDefaulted.current = true;
+    setSelectedOpts((prev) => (prev.coatingId ? prev : { ...prev, coatingId: String(row.id) }));
+  }, [optionRows, editScreen, clientWantsCoating]);
+
   const freightDefaulted = useRef(false);
   useEffect(() => {
     if (freightDefaulted.current || editScreen || !preferredFreight?.value) return;
@@ -1978,6 +2005,9 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
             if (t.key === 'warrantyId') return [t.key, defaultWarranty(optionRows.warrantyId)?.id ?? ''];
             if (t.key === 'freightOptionId') {
               return [t.key, matchFreightOption(preferredFreight?.value ?? null, optionRows.freightOptionId)?.id ?? ''];
+            }
+            if (t.key === 'coatingId' && clientWantsCoating) {
+              return [t.key, protectiveCoatingRow(optionRows.coatingId)?.id ?? ''];
             }
             return [t.key, ''];
           }),
@@ -3042,6 +3072,29 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         <div className="grid3">
           {/* GOB is its own up-front control in the first section (single source: selectedOpts.gobId). */}
           {LED_OPTION_TABLES.filter((t) => t.key !== 'gobId').map((t) => (
+            t.key === 'coatingId' ? (
+              // Protective coating is a yes/no on the screen, defaulted from the client's standing
+              // requirement. It still writes the catalogue FK, so pricing is unchanged.
+              <div key={t.key}>
+                <label title={`${PROTECTIVE_COATING} — priced per m² from the coating catalogue`}>
+                  Protective coating
+                </label>
+                <input
+                  type="checkbox"
+                  checked={!!selectedOpts.coatingId}
+                  onChange={(e) => {
+                    const row = protectiveCoatingRow(optionRows.coatingId);
+                    setSelectedOpts((p) => ({ ...p, coatingId: e.target.checked && row ? String(row.id) : '' }));
+                  }}
+                  style={{ width: 'auto' }}
+                />
+                {clientWantsCoating && (
+                  <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                    This client always wants protective coating.
+                  </p>
+                )}
+              </div>
+            ) : (
             <div key={t.key}>
               <label>{t.label}</label>
               <SearchSelect
@@ -3063,6 +3116,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
                 </p>
               )}
             </div>
+            )
           ))}
           {/* Install labour hours. The computed estimate is used unless a number is typed here — it
               drives the "Install, labour & freight" line, so it is set beside the install pickers. */}
@@ -3907,15 +3961,36 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
       <div className="grid3">
         {LED_OPTION_TABLES.map((t) => (
           <div key={t.key}>
-            <label>{t.label}</label>
-            <SearchSelect
-              value={selected[t.key]}
-              onChange={(v) => { setSelected((p) => ({ ...p, [t.key]: v })); setSaved(false); }}
-              allowEmpty
-              placeholder={`Select ${t.label.toLowerCase()}…`}
-              options={(optionRows[t.key] ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
-              disabled={!canWrite}
-            />
+            {t.key === 'coatingId' ? (
+              <>
+                <label title={`${PROTECTIVE_COATING} — priced per m² from the coating catalogue`}>
+                  Protective coating
+                </label>
+                <input
+                  type="checkbox"
+                  checked={!!selected.coatingId}
+                  disabled={!canWrite}
+                  onChange={(e) => {
+                    const row = protectiveCoatingRow(optionRows.coatingId);
+                    setSelected((p) => ({ ...p, coatingId: e.target.checked && row ? String(row.id) : '' }));
+                    setSaved(false);
+                  }}
+                  style={{ width: 'auto' }}
+                />
+              </>
+            ) : (
+              <>
+                <label>{t.label}</label>
+                <SearchSelect
+                  value={selected[t.key]}
+                  onChange={(v) => { setSelected((p) => ({ ...p, [t.key]: v })); setSaved(false); }}
+                  allowEmpty
+                  placeholder={`Select ${t.label.toLowerCase()}…`}
+                  options={(optionRows[t.key] ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
+                  disabled={!canWrite}
+                />
+              </>
+            )}
           </div>
         ))}
         {/* Install labour hours — sits with the install pickers, since it drives the same
