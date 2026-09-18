@@ -37,6 +37,7 @@ interface LedScreen {
   rotateCabinets?: boolean; aspectRatioId?: string | null;
   labourHours?: string | number | null;         // hours actually used to price this screen
   labourHoursOverride?: string | number | null; // manual install hours; null = estimated
+  sharedController?: boolean | null;            // one controller drives every unit of this row
   recessDepthMm?: number | null; // AA1 — recess/cavity depth (mm)
   sunExposure?: string | null;   // AA1 — sun exposure at this screen's position
   wallSubstrate?: string | null; // AA1 — what this screen mounts to
@@ -1587,6 +1588,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   const [backCover, setBackCover] = useState(!!editScreen?.backCover);
   // Install labour hours — see the per-screen editor for the 'auto' vs 'manual' reasoning. A NEW
   // screen has no computed figure yet, so the box starts empty and estimates on save.
+  const [sharedController, setSharedController] = useState(!!editScreen?.sharedController);
   const computedHours = editScreen?.labourHours != null ? String(editScreen.labourHours) : '';
   const [hoursMode, setHoursMode] = useState<'auto' | 'manual'>(
     editScreen?.labourHoursOverride != null ? 'manual' : 'auto',
@@ -1960,6 +1962,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         backCover,
         labourHoursOverride:
           hoursMode === 'manual' && labourHoursOverride.trim() !== '' ? Number(labourHoursOverride) : null,
+        sharedController,
         ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
         ...(sunExposure ? { sunExposure } : {}),
         ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
@@ -3064,6 +3067,26 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
           </div>
         )}
 
+        {/* One controller for every unit of this row. Only meaningful at qty > 1, which is why the
+            hint spells out what it will charge. */}
+        <div className="grid3">
+          <div>
+            <label title="Charge the controller once for this row instead of once per screen">
+              Shared controller
+            </label>
+            <input
+              type="checkbox"
+              checked={sharedController}
+              onChange={(e) => setSharedController(e.target.checked)}
+              style={{ width: 'auto' }}
+            />
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+              {sharedController
+                ? 'One controller drives all screens on this row — charged once.'
+                : 'Each screen on this row gets its own controller.'}
+            </p>
+          </div>
+        </div>
         <h4 style={{ margin: '16px 0 4px' }}>Options &amp; services</h4>
         <p className="muted" style={{ marginTop: 0 }}>
           Frame, trim, install, freight, warranty and more — all optional; each is priced with the screen.
@@ -3907,6 +3930,7 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
   // Install labour hours. The box always SHOWS the hours in use, but `hoursMode` decides what is
   // saved: in 'auto' the figure is just being displayed and null is sent (so the screen keeps
   // re-estimating when the panel or frame changes); typing switches it to 'manual'.
+  const [sharedController, setSharedController] = useState(!!screen.sharedController);
   const computedHours = screen.labourHours != null ? String(screen.labourHours) : '';
   const [hoursMode, setHoursMode] = useState<'auto' | 'manual'>(
     screen.labourHoursOverride != null ? 'manual' : 'auto',
@@ -3939,6 +3963,7 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
         backCover,
         labourHoursOverride:
           hoursMode === 'manual' && labourHoursOverride.trim() !== '' ? Number(labourHoursOverride) : null,
+        sharedController,
         frameNote: frameNote.trim() ? frameNote.trim() : null,
         serviceDescriptionSuffix: serviceDescriptionSuffix.trim() ? serviceDescriptionSuffix.trim() : null,
       };
@@ -4028,6 +4053,23 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
       </div>
       <h4 style={{ margin: '14px 0 4px' }}>Housing &amp; descriptions</h4>
       <div className="grid3">
+        <div>
+          <label title="Charge the controller once for this row instead of once per screen">
+            Shared controller
+          </label>
+          <input
+            type="checkbox"
+            checked={sharedController}
+            disabled={!canWrite}
+            onChange={(e) => { setSharedController(e.target.checked); setSaved(false); }}
+            style={{ width: 'auto' }}
+          />
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+            {sharedController
+              ? `One controller for all ${screen.qty} screen(s) on this row.`
+              : 'One controller per screen on this row.'}
+          </p>
+        </div>
         <div>
           <label>Back cover</label>
           <input type="checkbox" checked={backCover} disabled={!canWrite} onChange={(e) => { setBackCover(e.target.checked); setSaved(false); }} style={{ width: 'auto' }} />

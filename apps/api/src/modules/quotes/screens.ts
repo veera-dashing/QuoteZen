@@ -764,7 +764,22 @@ const computeLedScreenPricing = async (
       sell = applyMarkup(cost, config.markups.otherEquipment).toNumber();
       label = `Peripheral — ${row?.name ?? ''}`;
     }
-    lines.push({ label, bucket: 'screen_mediaplayer', qty: c.qty, costAud: round(cost * c.qty), sellAud: round(sell * c.qty) });
+    // Shared controller: ONE sender drives every unit of this screen row. The quote rollup multiplies
+    // a screen's per-unit sell by its qty, so to charge the controller ONCE we divide its per-unit
+    // share by that qty — qty × (price / qty) lands back on a single controller. Only the controller
+    // is shared; mediaplayers and peripherals stay per unit.
+    const screenQty = input.qty ?? 1;
+    const sharedController =
+      !!input.sharedController && c.componentType === 'controller' && screenQty > 1;
+    const shareDivisor = sharedController ? screenQty : 1;
+    const lineLabel = sharedController ? `${label} (shared across ${screenQty} screens)` : label;
+    lines.push({
+      label: lineLabel,
+      bucket: 'screen_mediaplayer',
+      qty: c.qty,
+      costAud: round((cost * c.qty) / shareDivisor),
+      sellAud: round((sell * c.qty) / shareDivisor),
+    });
     compRows.push({
       componentType: c.componentType,
       controllerId: c.controllerId ? BigInt(c.controllerId) : undefined,
@@ -949,6 +964,7 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
         cabinetDepthMm: product?.cabinetDepthMm ?? null,
         labourHours: labourHours ? labourHours.toString() : null,
         labourHoursOverride: input.labourHoursOverride != null ? String(input.labourHoursOverride) : null,
+        sharedController: !!input.sharedController,
         freightKg: freightKg !== null ? freightKg.toString() : null,
         priceScreenMediaplayer: totals.screenMediaplayerSell.toString(),
         priceFrameTrim: totals.frameTrimSell.toString(),
@@ -1224,6 +1240,7 @@ export const updateLedScreen = async (
     warrantyId: opt(input.warrantyId, num(screen.warrantyId) ?? null),
     serviceHoursId: opt(input.serviceHoursId, num(screen.serviceHoursId) ?? null),
     accessEquipmentId: opt(input.accessEquipmentId, num(screen.accessEquipmentId) ?? null),
+    sharedController: input.sharedController === undefined ? screen.sharedController : !!input.sharedController,
     // The stored OVERRIDE (not the computed labourHours) is what carries forward on a re-edit.
     labourHoursOverride: opt(
       input.labourHoursOverride,
@@ -1269,6 +1286,7 @@ export const updateLedScreen = async (
         cabinetDepthMm: product?.cabinetDepthMm ?? null,
         labourHours: labourHours ? labourHours.toString() : null,
         labourHoursOverride: input.labourHoursOverride != null ? String(input.labourHoursOverride) : null,
+        sharedController: !!input.sharedController,
         freightKg: freightKg !== null ? freightKg.toString() : null,
         priceScreenMediaplayer: totals.screenMediaplayerSell.toString(),
         priceFrameTrim: totals.frameTrimSell.toString(),
@@ -1381,6 +1399,7 @@ export const updateLedScreenFull = async (
         cabinetDepthMm: product?.cabinetDepthMm ?? null,
         labourHours: labourHours ? labourHours.toString() : null,
         labourHoursOverride: input.labourHoursOverride != null ? String(input.labourHoursOverride) : null,
+        sharedController: !!input.sharedController,
         freightKg: freightKg !== null ? freightKg.toString() : null,
         priceScreenMediaplayer: totals.screenMediaplayerSell.toString(),
         priceFrameTrim: totals.frameTrimSell.toString(),

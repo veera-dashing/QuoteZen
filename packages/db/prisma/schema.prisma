@@ -1109,6 +1109,11 @@ model QuoteLedScreen {
       Kept separate from `labourHours` so re-editing a screen never mistakes a previous estimate
       for a deliberate override. */
   labourHoursOverride Decimal? @map("labour_hours_override") @db.Decimal(8, 2)
+  /**
+   * One controller drives ALL units of this screen row (multiple screens of the same type sharing a
+   * sender). The controller is then charged ONCE for the row instead of once per unit.
+   */
+  sharedController    Boolean  @default(false) @map("shared_controller")
   // per-screen PI fields
   spareModulesPct     Decimal? @map("spare_modules_pct") @db.Decimal(6, 2)
   spareHubCard        Int?     @map("spare_hub_card")
