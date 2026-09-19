@@ -4290,8 +4290,10 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
   const [discDraft, setDiscDraft] = useState<Record<string, string>>({});
   const [modeBusy, setModeBusy] = useState(false);
   const [bkOpen, setBkOpen] = useState<Set<string>>(new Set());
-  const toggleBk = (key: string) =>
+  const toggleBk = (key: string) => {
+    if (!price) void loadPrice();
     setBkOpen((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  };
 
   const loadPrice = useCallback(async () => {
     try {
@@ -4308,8 +4310,9 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
     }
   }, [quote.id]);
 
-  // Reload the breakdown whenever the parent refetches the quote (add/edit/qty/delete/discount).
-  useEffect(() => { void loadPrice(); }, [loadPrice, quote]);
+  // Reload the breakdown whenever screens or totals change on the quote (add/edit/qty/delete/discount).
+  const screensKey = `${quote.ledScreens.length}:${quote.ledScreens.map((s) => `${s.id}:${s.priceTotal}:${s.qty}`).join(',')}|${quote.lcdScreens.length}:${quote.lcdScreens.map((s) => `${s.id}:${s.priceTotal}`).join(',')}`;
+  useEffect(() => { void loadPrice(); }, [loadPrice, screensKey, quote.lockVersion, quote.grandTotal]);
 
   const sectionFor = (type: 'led' | 'lcd', id: string): PriceSection | null =>
     price?.sections.find((s) => s.type === type && s.screenId === id) ?? null;
@@ -4629,6 +4632,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
 }
 
 function LicenceStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
+  const canWrite = getRole() !== 'viewer';
   const [screenType, setScreenType] = useState('LED');
   const [tier, setTier] = useState('low');
   const [qty, setQty] = useState('1');
@@ -4636,6 +4640,7 @@ function LicenceStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
   const [busy, setBusy] = useState(false);
 
   const add = async () => {
+    if (!canWrite) return;
     setBusy(true);
     try {
       await api(`/quotes/${quote.id}/licences`, {
@@ -4648,42 +4653,66 @@ function LicenceStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
     }
   };
 
+  const remove = async (licenceId: string) => {
+    if (!canWrite) return;
+    setBusy(true);
+    try {
+      await api(`/quotes/${quote.id}/licences/${licenceId}`, { method: 'DELETE' });
+      await onChange();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div>
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Add SeenCMP licence</h3>
-        <div className="grid3">
-          <div>
-            <label>Screen type</label>
-            <SearchSelect
-              value={screenType}
-              onChange={setScreenType}
-              options={[{ value: 'LED', label: 'LED' }, { value: 'LCD', label: 'LCD' }]}
-            />
+      {canWrite && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Add SeenCMP licence</h3>
+          <div className="grid3">
+            <div>
+              <label>Screen type</label>
+              <SearchSelect
+                value={screenType}
+                onChange={setScreenType}
+                options={[{ value: 'LED', label: 'LED' }, { value: 'LCD', label: 'LCD' }]}
+              />
+            </div>
+            <div>
+              <label>Volume tier</label>
+              <SearchSelect
+                value={tier}
+                onChange={setTier}
+                options={[{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }]}
+              />
+            </div>
+            <div><label>Qty (screens)</label><input type="number" value={qty} onChange={(e) => setQty(e.target.value)} /></div>
+            <div>
+              <label>Interactive</label>
+              <input type="checkbox" checked={interactive} onChange={(e) => setInteractive(e.target.checked)} style={{ width: 'auto' }} />
+            </div>
           </div>
-          <div>
-            <label>Volume tier</label>
-            <SearchSelect
-              value={tier}
-              onChange={setTier}
-              options={[{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }]}
-            />
-          </div>
-          <div><label>Qty (screens)</label><input type="number" value={qty} onChange={(e) => setQty(e.target.value)} /></div>
-          <div>
-            <label>Interactive</label>
-            <input type="checkbox" checked={interactive} onChange={(e) => setInteractive(e.target.checked)} style={{ width: 'auto' }} />
+          <div className="step-actions">
+            <button className="primary" onClick={add} disabled={busy}>+ Add licence</button>
           </div>
         </div>
-        <div className="step-actions">
-          <button className="primary" onClick={add} disabled={busy}>+ Add licence</button>
-        </div>
-      </div>
+      )}
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Licences ({quote.licences.length})</h3>
+        {quote.licences.length === 0 && <p className="muted">No licences added yet.</p>}
         {quote.licences.map((l) => (
-          <div className="list-row" key={l.id}>
+          <div className="list-row" key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>{l.screenType} · {l.tier} · {l.qty} screen(s){l.isInteractive ? ' · interactive' : ''}</span>
+            {canWrite && (
+              <button
+                className="secondary"
+                style={{ padding: '2px 8px', fontSize: 12 }}
+                disabled={busy}
+                onClick={() => remove(l.id)}
+              >
+                Delete
+              </button>
+            )}
           </div>
         ))}
       </div>

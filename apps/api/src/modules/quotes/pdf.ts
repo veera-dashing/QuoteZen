@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit';
 import type { ScreenRatioRow } from '@quotezen/calc';
 import type { QuoteWithChildren } from './repository.js';
 import { DEFAULT_ASSUMPTIONS, DEFAULT_EXCLUSIONS, DEFAULT_TERMS, buildDescriptions, lcdOrderList, sortedRisks } from './outputs.js';
+import { computeLicenceAnnual, type LicenceComponentLike } from './service.js';
 
 const money = (v: { toString(): string } | null | undefined, code: string): string =>
   `${code} ${Number(v ?? 0).toLocaleString('en-AU', { minimumFractionDigits: 2 })}`;
@@ -13,6 +14,7 @@ const money = (v: { toString(): string } | null | undefined, code: string): stri
 export const buildQuotePdf = (
   quote: QuoteWithChildren,
   ratios?: readonly ScreenRatioRow[],
+  licenceRows?: readonly LicenceComponentLike[],
 ): Promise<Buffer> =>
   new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
@@ -73,7 +75,11 @@ export const buildQuotePdf = (
     if (quote.licences.length > 0) {
       heading('Licences & support (annual)');
       for (const l of quote.licences) {
-        line(`${l.screenType} · ${l.tier} · ${l.qty} screen(s)${l.isInteractive ? ' · interactive' : ''}`, '');
+        const annual = computeLicenceAnnual(l, licenceRows);
+        line(
+          `${l.screenType} · ${l.tier} · ${l.qty} screen(s)${l.isInteractive ? ' · interactive' : ''}`,
+          money(annual, code),
+        );
       }
     }
 

@@ -18,7 +18,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\"",
     "db:generate": "pnpm --filter @quotezen/db generate",
-    "db:migrate": "pnpm --filter @quotezen/db migrate",
+    "db:migrate": "pnpm --filter @quotezen/db migrate:deploy",
     "db:seed": "pnpm --filter @quotezen/db seed"
   },
   "devDependencies": {

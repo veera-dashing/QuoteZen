@@ -38,6 +38,7 @@ import {
   getOverrides,
   getQuote,
   getQuotes,
+  listLicenceComponents,
   priceQuote,
   recomputePreview,
   recomputeQuote,
@@ -62,6 +63,7 @@ import {
   addLcdScreen,
   addLedScreen,
   addLicence,
+  deleteLicence,
   configureForQuote,
   optionsForQuote,
   lcdOptionsForQuote,
@@ -279,8 +281,12 @@ export const quoteRoutes = async (
   app.get('/quotes/:id/export.pdf', auth, async (request, reply) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
-    const [quote, ratios] = await Promise.all([getQuote(id), loadRatios()]);
-    const pdf = await buildQuotePdf(quote, ratios);
+    const [quote, ratios, licenceRows] = await Promise.all([
+      getQuote(id),
+      loadRatios(),
+      listLicenceComponents(),
+    ]);
+    const pdf = await buildQuotePdf(quote, ratios, licenceRows);
     return reply
       .header('content-type', 'application/pdf')
       .header('content-disposition', `attachment; filename="quote-${quote.jobReference}.pdf"`)
@@ -499,6 +505,14 @@ export const quoteRoutes = async (
     const input = parse(quoteLicenceSchema, request.body);
     const licence = await addLicence(userId(request), id, input);
     return reply.code(201).send(licence);
+  });
+
+  app.delete('/quotes/:id/licences/:licenceId', write, async (request, reply) => {
+    const { id } = parse(idParam, request.params);
+    const { licenceId } = parse(z.object({ licenceId: z.coerce.bigint() }), request.params);
+    await assertOwnership(id, actor(request));
+    await deleteLicence(userId(request), id, licenceId);
+    return reply.code(204).send();
   });
 
   // ── Per-job documents + deterministic re-run (P1-19e) ──

@@ -1004,6 +1004,7 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
     return created;
   });
 
+  await recomputeQuote(userId, quoteId);
   return screen;
 };
 
@@ -1020,6 +1021,8 @@ export const deleteLedScreen = async (userId: bigint, quoteId: bigint, screenId:
       entityId: screenId,
     });
   });
+
+  await recomputeQuote(userId, quoteId);
 };
 
 /**
@@ -1781,7 +1784,7 @@ export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdSc
   const { resolved, priceScreenMediaplayer, priceBracketShroud, priceServices, priceTotal } =
     await computeLcdScreenPricing(input, Number(quote.location?.hourlyUplift ?? 0));
 
-  return prisma.$transaction(async (tx) => {
+  const screen = await prisma.$transaction(async (tx) => {
     const maxOrder = await tx.quoteLcdScreen.aggregate({ where: { quoteId }, _max: { sortOrder: true } });
     const screen = await tx.quoteLcdScreen.create({
       data: {
@@ -1836,6 +1839,9 @@ export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdSc
     });
     return screen;
   });
+
+  await recomputeQuote(userId, quoteId);
+  return screen;
 };
 
 /** Generic licence line. */
@@ -1845,7 +1851,7 @@ export const addLicence = async (
   input: { licenceComponentId?: number; screenType: 'LCD' | 'LED'; tier: 'low' | 'high'; qty: number; isInteractive: boolean },
 ) => {
   await getQuote(quoteId);
-  return prisma.$transaction(async (tx) => {
+  const licence = await prisma.$transaction(async (tx) => {
     const licence = await tx.quoteLicence.create({
       data: {
         quoteId,
@@ -1859,6 +1865,18 @@ export const addLicence = async (
     await recordAudit(tx, { quoteId, userId, action: 'create', entityTable: 'quote_licences', entityId: licence.id });
     return licence;
   });
+  await recomputeQuote(userId, quoteId);
+  return licence;
+};
+
+export const deleteLicence = async (userId: bigint, quoteId: bigint, licenceId: bigint) => {
+  const licence = await prisma.quoteLicence.findFirst({ where: { id: licenceId, quoteId } });
+  if (!licence) throw notFound('licence', licenceId.toString());
+  await prisma.$transaction(async (tx) => {
+    await tx.quoteLicence.delete({ where: { id: licenceId } });
+    await recordAudit(tx, { quoteId, userId, action: 'delete', entityTable: 'quote_licences', entityId: licenceId });
+  });
+  await recomputeQuote(userId, quoteId);
 };
 
 export { dec };

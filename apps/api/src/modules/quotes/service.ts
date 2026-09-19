@@ -1,6 +1,6 @@
 import { prisma } from '@quotezen/db';
 import type { Prisma } from '@quotezen/db';
-import { aggregateQuote, type QuoteLineContribution } from '@quotezen/calc';
+import { aggregateQuote, annualLicence, type LicenceRates, type QuoteLineContribution } from '@quotezen/calc';
 import { d, marginOf, round, sum } from '@quotezen/shared';
 import type { CreateQuoteInput, UpdateQuoteInput } from '@quotezen/shared';
 import type { DiscountMode, DiscountScope, QuoteStatus } from '@quotezen/shared';
@@ -806,24 +806,94 @@ export interface OverrideSummary {
   createdAt: string;
 }
 
+export interface LicenceComponentLike {
+  component: string;
+  tier: string;
+  screenType: string;
+  value: { toString(): string } | number | string;
+}
+
+export const listLicenceComponents = () => prisma.licenceComponent.findMany();
+
+export const resolveLicenceRates = (
+  rows: readonly LicenceComponentLike[] | undefined,
+  tier: string,
+  screenType: string,
+): LicenceRates => {
+  const find = (name: string, fallback: number) => {
+    if (!rows || rows.length === 0) return fallback;
+    const match = rows.find(
+      (r) =>
+        r.component.toLowerCase() === name.toLowerCase() &&
+        r.tier.toLowerCase() === tier.toLowerCase() &&
+        r.screenType.toLowerCase() === screenType.toLowerCase(),
+    );
+    if (!match) {
+      const partialMatch = rows.find(
+        (r) =>
+          r.component.toLowerCase() === name.toLowerCase() &&
+          r.tier.toLowerCase() === tier.toLowerCase(),
+      );
+      if (partialMatch) return Number(partialMatch.value);
+      return fallback;
+    }
+    return Number(match.value);
+  };
+
+  const isHigh = tier.toLowerCase() === 'high';
+  return {
+    siteFee: find('Site Fee', isHigh ? 165 : 270),
+    perScreen: find('Licence Per Screen', isHigh ? 95 : 125),
+    interactiveUplift: find('Interactive Licence Per Screen Uplift', 100),
+  };
+};
+
+export const computeLicenceAnnual = (
+  l: {
+    licenceComponentId?: bigint | null;
+    licenceComponent?: { value: { toString(): string } | null } | null;
+    screenType: string;
+    tier: string;
+    qty: number;
+    isInteractive: boolean;
+  },
+  licenceRows?: readonly LicenceComponentLike[],
+): Decimal => {
+  if (l.licenceComponentId && l.licenceComponent?.value) {
+    return d(dec(l.licenceComponent.value)).times(l.qty);
+  }
+  const rates = resolveLicenceRates(licenceRows, l.tier, l.screenType);
+  return annualLicence({
+    screenCount: l.qty,
+    interactiveCount: l.isInteractive ? l.qty : 0,
+    rates,
+  });
+};
+
 /**
  * Fully itemised price view (P1-16.8): recompute totals, then return every stored line grouped by
  * screen, with raw cost masked for non-admin actors. Deterministic for a given persisted state.
  */
 export const priceQuote = async (actor: Actor, id: bigint) => {
-  await recomputeQuote(actor.id, id);
-  const quote = await getQuote(id);
+  const quote = await recomputeQuote(actor.id, id);
   const showCost = isAdmin(actor);
+  const [overridesList, licenceRows, defaultDiscount, marginFloor, walkAwayMargin] = await Promise.all([
+    listOverrides(id),
+    prisma.licenceComponent.findMany(),
+    getDefaultDiscountPct(),
+    showCost ? getMinGrossMargin() : Promise.resolve(null),
+    showCost ? getWalkAwayMargin() : Promise.resolve(null),
+  ]);
   // Active overrides (post-prune) drive the per-line flag + the overrides summary (P1-17.2/.3).
-  const activeOverrides = await pruneOrphanOverrides(quote, await listOverrides(id));
+  const activeOverrides = await pruneOrphanOverrides(quote, overridesList);
   const ovMap = overrideMap(activeOverrides);
   // U3/U5 — effective client discount (quote override → client → system default) + discounted margin.
   // V2 — mode-adjusted: in `item_only` mode with per-line discounts present the quote/client discount
   // is suppressed (pct 0), so the surfaced discount matches what actually applied to the totals.
-  const discount = resolveModedDiscount(quote, await getDefaultDiscountPct());
+  const discount = resolveModedDiscount(quote, defaultDiscount);
   // Authoritative, scope-aware discount amount (one-off vs recurring) from the shared rollup, so the
   // surfaced concession matches whichever base the discount was applied to (U5).
-  const discountAmount = computeQuoteTotals(quote, ovMap, await getDefaultDiscountPct()).discount.amount;
+  const discountAmount = computeQuoteTotals(quote, ovMap, defaultDiscount, licenceRows).discount.amount;
 
   const sections: PriceSection[] = [];
   for (const s of quote.ledScreens) {
@@ -901,7 +971,7 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
       tier: l.tier,
       qty: l.qty,
       isInteractive: l.isInteractive,
-      annual: dec(l.licenceComponent?.value),
+      annual: computeLicenceAnnual(l, licenceRows).toString(),
     })),
     // U3/U5 — effective discount; `scope` decides the base: `one_off` discounts the upfront sell
     // (equipment + services, after markup), `recurring` discounts the renewal total. `amount` is the
@@ -926,8 +996,8 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
       margin: showCost ? computeMargin(quote, ovMap, discount.pct, discount.scope).margin.toString() : null,
       // Z3 — the surfaced "floor" is now the minimum gross margin (the 28% gate the UI enforces first);
       // the walk-away floor is the harder director-only tier below it.
-      marginFloor: showCost ? await getMinGrossMargin() : null,
-      walkAwayMargin: showCost ? await getWalkAwayMargin() : null,
+      marginFloor,
+      walkAwayMargin,
     },
   };
 };
@@ -958,6 +1028,7 @@ export const computeQuoteTotals = (
   quote: QuoteWithChildren,
   overrides: Map<string, OverrideRow>,
   defaultDiscountPct = 0,
+  licenceRows?: readonly LicenceComponentLike[],
 ): QuoteTotalsResult => {
   const lines: QuoteLineContribution[] = [];
 
@@ -994,7 +1065,8 @@ export const computeQuoteTotals = (
     lines.push({ kind: 'services', extendedSell: Number(dec(sw.softwareActivity.sell)) * Number(sw.qty) });
   }
   for (const l of quote.licences) {
-    lines.push({ kind: 'recurring', extendedSell: Number(dec(l.licenceComponent?.value)) * l.qty });
+    const annual = computeLicenceAnnual(l, licenceRows);
+    lines.push({ kind: 'recurring', extendedSell: annual });
   }
   for (const mu of quote.musicItems) {
     lines.push({ kind: 'recurring', extendedSell: Number(dec(mu.musicService.sell)) * mu.qty });
@@ -1043,8 +1115,11 @@ export const computeQuoteTotals = (
 export const recomputePreview = async (id: bigint) => {
   const quote = await getQuote(id);
   const overrides = overrideMap(await pruneOrphanOverrides(quote, await listOverrides(id)));
-  const defaultDiscount = await getDefaultDiscountPct();
-  const recomputed = computeQuoteTotals(quote, overrides, defaultDiscount).grandTotal;
+  const [defaultDiscount, licenceRows] = await Promise.all([
+    getDefaultDiscountPct(),
+    prisma.licenceComponent.findMany(),
+  ]);
+  const recomputed = computeQuoteTotals(quote, overrides, defaultDiscount, licenceRows).grandTotal;
   const current = dec(quote.grandTotal);
   return { current, recomputed, differs: Number(current) !== Number(recomputed) };
 };
@@ -1060,9 +1135,23 @@ export const recomputeQuote = async (userId: bigint, id: bigint) => {
   const quote = await getQuote(id);
   // Pinned overrides (P1-17): a screen's effective sell is its override value (if active) else the
   // computed price; everything downstream (equipment, grand total) recomputes from the pinned value.
-  const overrides = overrideMap(await pruneOrphanOverrides(quote, await listOverrides(id)));
-  const defaultDiscount = await getDefaultDiscountPct();
-  const totals = computeQuoteTotals(quote, overrides, defaultDiscount);
+  const [overridesList, defaultDiscount, licenceRows] = await Promise.all([
+    listOverrides(id),
+    getDefaultDiscountPct(),
+    prisma.licenceComponent.findMany(),
+  ]);
+  const overrides = overrideMap(await pruneOrphanOverrides(quote, overridesList));
+  const totals = computeQuoteTotals(quote, overrides, defaultDiscount, licenceRows);
+
+  const unchanged =
+    d(dec(quote.totalEquipment)).equals(d(totals.equipment)) &&
+    d(dec(quote.totalServices)).equals(d(totals.services)) &&
+    d(dec(quote.totalRecurring)).equals(d(totals.recurring)) &&
+    d(dec(quote.grandTotal)).equals(d(totals.grandTotal));
+
+  if (unchanged) {
+    return quote;
+  }
 
   return prisma.$transaction(async (tx) => {
     const updated = await tx.quote.update({
