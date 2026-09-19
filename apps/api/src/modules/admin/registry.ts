@@ -132,7 +132,7 @@ export const TABLES: TableDef[] = [
       f('priority', 'int'),
       // AA2 — component compatibility group (matched against controller/frame groups in validation).
       // Phase 1: Explicit transparency and curved capability flags.
-      f('isTransparent', 'boolean'), f('supportsCurved', 'boolean'),
+      f('isTransparent', 'boolean'), f('isCob', 'boolean'), f('supportsCurved', 'boolean'),
       f('upgradeOptions', 'text'), f('mechanicalOptions', 'text'), DEPRECATED,
     ],
     listFields: ['vendor', 'model', 'priority', 'pixelPitchH', 'brightnessNits', 'isTransparent', 'supportsCurved', 'compatibilityGroup', 'costPerSqmUsd', 'cabinetType', 'deprecated'],

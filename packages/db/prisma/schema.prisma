@@ -358,6 +358,13 @@ model LedProduct {
   /** Phase 1: Explicit transparency and curved / flexible capability flags. */
   isTransparent    Boolean  @default(false) @map("is_transparent")
   supportsCurved   Boolean  @default(false) @map("supports_curved")
+  /**
+   * Chip-on-Board construction: the LED dice are bonded to the board and flood-coated in resin, so
+   * the panel face is already sealed. A COB panel therefore needs no separate protective coating —
+   * the wizard hides that option for these products. Set explicitly rather than parsed out of the
+   * model name, so admins stay in control of it.
+   */
+  isCob            Boolean  @default(false) @map("is_cob")
   deprecated       Boolean  @default(false) @map("deprecated")
 
   commentary LedCommentary[]
