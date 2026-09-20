@@ -122,6 +122,7 @@ const STEPS = ['Details', 'Select Screens', 'Licences', 'Review'] as const;
 export default function QuoteWizard() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
+  const router = useRouter();
   // Unified create + edit: `/quotes/new` renders this same wizard with the Details step in CREATE mode
   // (no separate create page). On first save the Details step navigates to /quotes/:id?step=1.
   const isNew = id === 'new';
@@ -220,8 +221,10 @@ export default function QuoteWizard() {
 
       {!isNew && (
       <div className="step-actions">
-        <button disabled={step === 0} onClick={() => setStep(step - 1)}>
-          ← Back
+        {/* On the first step there is no previous step to go to, but the button shouldn't be a dead
+            end — Back then means "leave this quote", returning to the list. */}
+        <button onClick={() => (step === 0 ? router.push('/quotes') : setStep(step - 1))}>
+          {step === 0 ? '← Back to quotes' : '← Back'}
         </button>
         {step < STEPS.length - 1 && (
           <>
