@@ -141,6 +141,13 @@ export interface ConfigureInput {
   viewingDistanceM?: number;
   /** Phase 1: Guided Selection Tree questionnaire inputs. */
   intake?: LedIntakeInput;
+  /**
+   * Drop the client's allowed-ratios restriction for THIS search only (AA2). The client record still
+   * says what they normally accept; this is the per-job escape hatch for a one-off opening. The
+   * resulting screen still raises the advisory `RATIO_NOT_ALLOWED` finding, so the deviation is
+   * recorded rather than hidden.
+   */
+  ignoreClientRatios?: boolean;
 }
 
 export const configureForQuote = async (
@@ -149,10 +156,13 @@ export const configureForQuote = async (
 ): Promise<ConfigureResult> => {
   const quote = await getQuote(quoteId);
   // AA2 — per-customer allowed aspect ratios (CSV on the client); empty → no ratio restriction.
-  const allowedRatios = (quote.client?.allowedRatios ?? '')
-    .split(',')
-    .map((r) => r.trim())
-    .filter((r) => r.length > 0);
+  // `ignoreClientRatios` waives it for this one search (the per-job override).
+  const allowedRatios = input.ignoreClientRatios
+    ? []
+    : (quote.client?.allowedRatios ?? '')
+        .split(',')
+        .map((r) => r.trim())
+        .filter((r) => r.length > 0);
   const [products, ratios, toleranceBands, outdoorThreshold, leadTimeBuffer] = await Promise.all([
     prisma.ledProduct.findMany({
       // P1-11.4: deprecated LED products are retained for old quotes but excluded from NEW configs.

@@ -26,7 +26,18 @@ interface LedComponent {
   id: string; componentType: string; qty: number;
   controllerId?: string | null; ledPeripheralId?: string | null;
   mediaplayerId?: string | null; peripheralId?: string | null;
+  // The API includes the joined catalogue row for whichever FK is set, so a component can be named
+  // without re-fetching the four component catalogues.
+  controller?: { name?: string | null } | null;
+  ledPeripheral?: { name?: string | null } | null;
+  mediaplayer?: { name?: string | null } | null;
+  peripheral?: { name?: string | null } | null;
 }
+
+/** Human name for a stored component row, from whichever joined catalogue row is present. */
+const ledComponentName = (c: LedComponent): string =>
+  c.controller?.name ?? c.ledPeripheral?.name ?? c.mediaplayer?.name ?? c.peripheral?.name ?? '—';
+
 interface LedScreen {
   id: string; screenName: string | null; qty: number;
   resolutionWpx: number | null; resolutionHpx: number | null; priceTotal: string | null;
@@ -1061,7 +1072,12 @@ interface ComponentRow { componentType: LedComponentType; itemId: string; qty: n
 interface PreferredFreight { value: string | null; source: 'client' | 'tier' | 'system' }
 
 /** The client-level rules the LED form reads from `/rules/client/:id/effective`. */
-interface ClientRules { preferredFreight?: PreferredFreight; requiresProtectiveCoating?: boolean }
+interface ClientRules {
+  preferredFreight?: PreferredFreight;
+  requiresProtectiveCoating?: boolean;
+  /** AA2 — ratio labels this client normally accepts; empty = no restriction. */
+  allowedRatios?: string[];
+}
 
 /**
  * Coating is offered as a single PROTECTIVE COATING toggle rather than a picker: it is the only
@@ -1618,14 +1634,18 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   // picker and is shown beside it — it never prices anything.
   const [preferredFreight, setPreferredFreight] = useState<PreferredFreight | null>(null);
   const [clientWantsCoating, setClientWantsCoating] = useState(false);
+  // AA2 — the client's allowed ratios, and the per-job waiver for them.
+  const [clientAllowedRatios, setClientAllowedRatios] = useState<string[]>([]);
+  const [ignoreClientRatios, setIgnoreClientRatios] = useState(false);
   useEffect(() => {
     if (!quote.clientId) { setPreferredFreight(null); return; }
     api<ClientRules>(`/rules/client/${quote.clientId}/effective`)
       .then((r) => {
         setPreferredFreight(r.preferredFreight ?? null);
         setClientWantsCoating(!!r.requiresProtectiveCoating);
+        setClientAllowedRatios(r.allowedRatios ?? []);
       })
-      .catch(() => { setPreferredFreight(null); setClientWantsCoating(false); }); // advisory only
+      .catch(() => { setPreferredFreight(null); setClientWantsCoating(false); setClientAllowedRatios([]); });
   }, [quote.clientId]);
 
   // Half-finished draft (this browser only). `pendingDraft` is one found on mount and offered for
@@ -1788,6 +1808,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     desiredWidthMm: Number(w),
     desiredHeightMm: Number(h),
     allowRotation: rotate,
+    ignoreClientRatios,
     intake,
     environment: intake.environment ? intake.environment.toLowerCase() : environment ? environment : undefined,
     ...(Number(viewingDistanceM) > 0 ? { viewingDistanceM: Number(viewingDistanceM) } : {}),
@@ -1860,6 +1881,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
             desiredWidthMm: Number(w),
             desiredHeightMm: Number(h),
             allowRotation: rotate,
+            ignoreClientRatios,
           }),
         },
       );
@@ -2178,6 +2200,28 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
             <label title="The opening must be flat — no bow or curvature in the mounting surface">Flatness critical</label>
             <input type="checkbox" checked={flatnessRequired} onChange={(e) => setFlatnessRequired(e.target.checked)} style={{ width: 'auto' }} />
           </div>
+          {/* AA2 per-job override. Shown ONLY when the client actually restricts ratios — otherwise
+              it is a control with nothing to switch off. The client record is left untouched: this
+              waives the filter for this search, and the screen still raises the advisory
+              RATIO_NOT_ALLOWED finding so the deviation stays visible on review. */}
+          {clientAllowedRatios.length > 0 && (
+            <div>
+              <label title={`This client normally accepts ${clientAllowedRatios.join(', ')}`}>
+                Override client ratios
+              </label>
+              <input
+                type="checkbox"
+                checked={ignoreClientRatios}
+                onChange={(e) => setIgnoreClientRatios(e.target.checked)}
+                style={{ width: 'auto' }}
+              />
+              <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                {ignoreClientRatios
+                  ? `Showing all ratios for this job — client standard is ${clientAllowedRatios.join(', ')}.`
+                  : `Limited to the client's ratios: ${clientAllowedRatios.join(', ')}.`}
+              </p>
+            </div>
+          )}
         </div>
         <p className="muted" style={{ marginTop: 4 }}>
           Pick orientation + an aspect ratio and one dimension auto-fills the other (still editable).
@@ -3401,15 +3445,15 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
 
   useEffect(() => {
     api<{ rows: Opt[] }>('/admin/display-catalog?take=500&activeOnly=true').then((r) => setCatalog(r.rows));
-    api<{ rows: Opt[] }>('/admin/service-hours?take=200').then((r) => setServiceHours(r.rows));
-    api<{ rows: Opt[] }>('/admin/warranties?take=200').then((r) => {
+    api<{ rows: Opt[] }>('/admin/service-hours?take=200&activeOnly=true').then((r) => setServiceHours(r.rows));
+    api<{ rows: Opt[] }>('/admin/warranties?take=200&activeOnly=true').then((r) => {
       setWarranties(r.rows);
       // Same default as the LED form: a NEW screen gets the 3-year warranty; editing keeps its own.
       if (editScreen) return;
       const std = defaultWarranty(r.rows);
       if (std) setWarrantyId((prev) => prev || String(std.id));
     });
-    api<{ rows: Opt[] }>('/admin/install-methods?take=200').then((r) => setInstallMethods(r.rows));
+    api<{ rows: Opt[] }>('/admin/install-methods?take=200&activeOnly=true').then((r) => setInstallMethods(r.rows));
   }, []);
 
   const catFor = (def: LcdSectionDef): Opt[] =>
@@ -4073,6 +4117,30 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
           </p>
         </div>
       </div>
+      {/* Components are read-only here: this panel PATCHes options only — `updateLedScreenSchema`
+          carries no `components`, and re-pricing them is the full-edit path's job. Without this the
+          controller attached to a screen was invisible from the panel people actually open. */}
+      {(screen.components?.length ?? 0) > 0 && (
+        <>
+          <h4 style={{ margin: '14px 0 4px' }}>Components</h4>
+          <div>
+            {(screen.components ?? []).map((c) => {
+              const def = LED_COMPONENT_TABLES.find((t) => t.componentType === c.componentType);
+              return (
+                <div className="list-row" key={c.id}>
+                  <span>
+                    <span className="pill" style={{ marginRight: 6 }}>{def?.label ?? c.componentType}</span>
+                    {ledComponentName(c)} <span className="muted">× {c.qty}</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="muted" style={{ margin: '4px 0 10px', fontSize: 12 }}>
+            Add or remove components with <b>✎ Edit</b> on the screen row.
+          </p>
+        </>
+      )}
       <h4 style={{ margin: '14px 0 4px' }}>Housing &amp; descriptions</h4>
       <div className="grid3">
         <div>

@@ -100,6 +100,8 @@ const configureSchema = z.object({
   environment: z.enum(['indoor', 'outdoor']).optional(),
   viewingDistanceM: z.coerce.number().positive().optional(),
   intake: ledIntakeSchema.optional(),
+  /** AA2 per-job override: ignore the client's allowed-ratios restriction for this search. */
+  ignoreClientRatios: z.boolean().optional(),
 });
 
 // AA3b: LCD Good/Better/Best — optional target size + category filter (all optional → catalogue-wide).

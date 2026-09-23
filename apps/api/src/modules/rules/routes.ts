@@ -81,6 +81,8 @@ export const ruleRoutes = async (app: FastifyInstance): Promise<void> => {
         client.preferredPitchMm != null,
       ),
       excludedComponents: excluded,
+      /** AA2 — the ratio labels this client normally accepts (empty = no restriction). */
+      allowedRatios: (client.allowedRatios ?? '').split(',').map((r) => r.trim()).filter((r) => r.length > 0),
       // Z6: the rule-bearing tier block (null when the client has no tier / an unknown tier name).
       tier: tier
         ? {
