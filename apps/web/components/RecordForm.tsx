@@ -100,6 +100,10 @@ export default function RecordForm({ table, initial, onClose, onSave, mode }: Pr
               <input
                 type={f.type === 'int' || f.type === 'decimal' ? 'number' : f.type === 'date' ? 'date' : 'text'}
                 step={f.type === 'decimal' ? 'any' : undefined}
+                // Registry bounds (fraction fields such as margin/discount) — the server rejects
+                // out-of-range values regardless; these just surface it before submitting.
+                min={f.min}
+                max={f.lessThan !== undefined ? f.lessThan : undefined}
                 value={String(values[f.name] ?? '')}
                 onChange={(e) => set(f.name, e.target.value)}
               />

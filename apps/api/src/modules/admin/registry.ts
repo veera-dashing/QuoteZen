@@ -14,6 +14,10 @@ export interface FieldDef {
   required?: boolean;
   /** Allowed values for `enum` fields. */
   options?: string[];
+  /** Inclusive lower bound for `int` / `decimal` fields. */
+  min?: number;
+  /** EXCLUSIVE upper bound for `int` / `decimal` fields (a margin must be < 1, never = 1). */
+  lessThan?: number;
 }
 
 export interface TableDef {
@@ -38,6 +42,18 @@ const f = (name: string, type: FieldType = 'string', required = false, options?:
   required,
   options,
 });
+
+/**
+ * A numeric field with an explicit range and label. Used for the FRACTION fields (margin, discount):
+ * they are stored as 0..1, but the label reads like a percentage field, so "50" for 50% is an easy
+ * and costly mistake — an out-of-range margin makes `applyMargin` throw and the quote fail to price.
+ * Bounding them here rejects it at the edit, with a readable message, instead of at pricing time.
+ */
+const fRange = (
+  name: string,
+  label: string,
+  opts: { min?: number; lessThan?: number },
+): FieldDef => ({ name, label, type: 'decimal', required: false, min: opts.min, lessThan: opts.lessThan });
 
 const TIER = ['low', 'high'];
 const SCREEN = ['LCD', 'LED'];
@@ -343,7 +359,8 @@ export const TABLES: TableDef[] = [
     titleField: 'name', searchFields: ['name', 'marginNote', 'preferredProductFamily'],
     fields: [
       f('name', 'string', true), f('tier', 'enum', false, CLIENT_TIER),
-      f('defaultMargin', 'decimal'), f('discountPct', 'decimal'),
+      fRange('defaultMargin', 'Default margin (fraction, e.g. 0.3 = 30%)', { min: 0, lessThan: 1 }),
+      fRange('discountPct', 'Discount (fraction, e.g. 0.05 = 5%)', { min: 0, lessThan: 1 }),
       f('preferredProductFamily'),
       f('preferredPitchMm', 'decimal'), f('excludedComponents'),
       f('allowedRatios'),

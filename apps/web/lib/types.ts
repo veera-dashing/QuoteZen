@@ -7,6 +7,9 @@ export interface FieldDef {
   type: FieldType;
   required?: boolean;
   options?: string[];
+  /** Numeric bounds from the admin registry (fraction fields such as margin/discount). */
+  min?: number;
+  lessThan?: number;
 }
 
 export interface TableDef {
