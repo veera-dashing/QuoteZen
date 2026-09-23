@@ -979,6 +979,12 @@ interface ConfigOption {
   productId: string;
   model: string;
   rotated: boolean;
+  /** Controller chosen by pixel count (see selectController); null = no single unit covers it. */
+  suggestedControllerId?: string | null;
+  /** How many controllers this build needs (1 for a normal fit). */
+  controllerCount?: number;
+  /** Explanation when there is no clean single-controller fit. */
+  controllerNote?: string | null;
   widthMm: number;
   heightMm: number;
   cabinetsWide: number;
@@ -2073,12 +2079,29 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   // Selecting a Configure / Good-Better-Best option sets the product + rotation and collapses the
   // selection accordion to its summary — it does NOT add the screen yet. Width/height stay the
   // entered opening; the merged details form below then attaches to this product before finalising.
-  const selectProduct = (chosenProductId: string, rotated: boolean) => {
+  /**
+   * Choosing a build also pre-fills its controller, sized by pixel count server-side. The estimator
+   * can change or remove it afterwards like any other component — this is a default, not a lock.
+   * Any controller already on the form is REPLACED, since it was sized for the previous build.
+   */
+  const selectProduct = (chosenProductId: string, rotated: boolean, opt?: ConfigOption) => {
     setProductId(chosenProductId);
     setRotate(rotated);
     setErr(null);
     setAccordionOpen(false);
+    setControllerNote(opt?.controllerNote ?? null);
+    if (!opt) return;
+    setComponents((prev) => {
+      const withoutController = prev.filter((c) => c.componentType !== 'controller');
+      if (!opt.suggestedControllerId) return withoutController; // over-capacity → note explains
+      return [
+        { componentType: 'controller' as LedComponentType, itemId: String(opt.suggestedControllerId), qty: Math.max(1, opt.controllerCount ?? 1) },
+        ...withoutController,
+      ];
+    });
   };
+  // Surfaced next to the Components list when the pixel count has no clean single-controller fit.
+  const [controllerNote, setControllerNote] = useState<string | null>(null);
 
   // The selected product's model name, for the collapsed accordion summary.
   const selectedModel = products.find((p) => p.id === productId)?.model ?? '';
@@ -2816,7 +2839,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
                       )}
                     </div>
                     <div style={{ display: 'flex', gap: 6, margin: '8px 0' }}>
-                      <button className="primary" onClick={() => selectProduct(t.productId, t.rotated)} disabled={busy} style={{ flex: 1 }}>
+                      <button className="primary" onClick={() => selectProduct(t.productId, t.rotated, t)} disabled={busy} style={{ flex: 1 }}>
                         Select this option
                       </button>
                       <button className="ghost" onClick={() => setPreview(t)} type="button">
@@ -3010,7 +3033,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
                         </div>
                       </td>
                       <td className="actions" style={{ whiteSpace: 'nowrap', textAlign: 'left', paddingLeft: 4 }}>
-                        <button className="primary" onClick={() => selectProduct(o.productId, o.rotated)} disabled={busy} style={{ marginRight: 4 }}>
+                        <button className="primary" onClick={() => selectProduct(o.productId, o.rotated, o)} disabled={busy} style={{ marginRight: 4 }}>
                           Select
                         </button>
                         <button className="ghost" onClick={() => setPreview(o)} type="button">
@@ -3073,7 +3096,18 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         <h4 style={{ margin: '16px 0 4px' }}>Components</h4>
         <p className="muted" style={{ marginTop: 0 }}>
           Attach controllers, mediaplayers and peripherals — add as many as needed; each is priced with the screen.
+          The controller is chosen automatically from the build's pixel count when you select a product; change or
+          remove it here if you need something else.
         </p>
+        {/* Over-capacity builds get no automatic pick — say why, and what is needed instead. */}
+        {controllerNote && (
+          <p
+            className="muted"
+            style={{ marginTop: 0, padding: '6px 10px', borderRadius: 6, border: '1px solid #f59e0b', background: 'rgba(245,158,11,0.10)', color: '#f59e0b' }}
+          >
+            ⚠ {controllerNote}
+          </p>
+        )}
         <div className="grid3">
           <div>
             <label>Type</label>

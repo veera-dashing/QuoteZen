@@ -17,6 +17,7 @@ import {
   markupLine,
   packagingCost,
   receiverCardCost,
+  selectController,
   selectLcdTiers,
   selectTiers,
   sparesCost,
@@ -43,6 +44,17 @@ const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toS
  */
 /** A config option annotated with its size-tolerance band (U2). */
 export type ConfigOptionWithBand = ConfigOption & {
+  /**
+   * The controller this build needs, chosen from the catalogue by pixel count (the smallest unit
+   * whose capacity covers the screen). Advisory: the wizard pre-fills it on Select and the estimator
+   * can change or remove it. Null when no single controller covers the screen — `controllerCount`
+   * then says how many of the largest are needed, and `controllerNote` explains.
+   */
+  suggestedControllerId: string | null;
+  /** How many controllers this build needs (1 for a normal single-controller fit). */
+  controllerCount: number;
+  /** Set when there is no clean single-controller fit — surfaced to the user verbatim. */
+  controllerNote: string | null;
   /** Smallest band (%) whose |sizeDeltaPct| ≤ band; 0 for an exact fit. Always within an allowed band. */
   toleranceBand: number;
   /** Always true on returned options — out-of-band candidates are excluded from the result. */
@@ -163,7 +175,9 @@ export const configureForQuote = async (
         .split(',')
         .map((r) => r.trim())
         .filter((r) => r.length > 0);
-  const [products, ratios, toleranceBands, outdoorThreshold, leadTimeBuffer] = await Promise.all([
+  const [controllers, products, ratios, toleranceBands, outdoorThreshold, leadTimeBuffer] = await Promise.all([
+    // Auto-select the controller by pixel count (the workbook behaviour): loaded once per search.
+    prisma.controller.findMany({ where: { deprecated: false } }),
     prisma.ledProduct.findMany({
       // P1-11.4: deprecated LED products are retained for old quotes but excluded from NEW configs.
       where: { deprecated: false, minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchH: { not: null } },
@@ -238,6 +252,11 @@ export const configureForQuote = async (
     treeConstraints,
   });
 
+  // The pure selector takes a minimal spec; map the catalogue rows once rather than per option.
+  const controllerSpecs = controllers
+    .filter((c) => c.maxPixels != null)
+    .map((c) => ({ id: c.id.toString(), name: c.name, maxPixels: Number(c.maxPixels), cost: Number(c.price) }));
+
   // U2: annotate with tolerance band; drop options beyond the largest band (noting how many).
   const within: ConfigOptionWithBand[] = [];
   let excluded = 0;
@@ -249,7 +268,21 @@ export const configureForQuote = async (
     }
     // Z3 — the quoted lead time = manufacturer lead time + the admin-set buffer (null stays null).
     const buffered = applyLeadTimeBuffer(o, leadTimeBuffer);
-    within.push({ ...buffered, toleranceBand: band, withinTolerance: true, confidence: configConfidence(buffered) });
+    // Controller auto-selection: the smallest catalogue unit whose capacity covers this build's
+    // pixels. Pure + deterministic (packages/calc), so the same option always yields the same pick.
+    const pick = selectController(
+      buffered.resolutionWpx * buffered.resolutionHpx,
+      controllerSpecs,
+    );
+    within.push({
+      ...buffered,
+      suggestedControllerId: pick.controller ? String(pick.controller.id) : null,
+      controllerCount: pick.multiControllerCount,
+      controllerNote: pick.reason,
+      toleranceBand: band,
+      withinTolerance: true,
+      confidence: configConfidence(buffered),
+    });
   }
   const reasons = [...ranked.reasons];
   if (excluded > 0) {
