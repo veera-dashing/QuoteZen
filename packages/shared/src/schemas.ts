@@ -195,8 +195,10 @@ export const ledScreenSchema = z.object({
   screenName: z.string().max(120).optional(),
   ledProductId: idSchema.optional(),
   qty: qtySchema,
-  desiredWidthMm: z.coerce.number().int().positive().optional(),
-  desiredHeightMm: z.coerce.number().int().positive().optional(),
+  // Openings are NOT whole millimetres: real cabinets can be 337.5mm, so a requested size may be
+  // fractional too. Integers still pass — this only widens what is accepted.
+  desiredWidthMm: z.coerce.number().positive().optional(),
+  desiredHeightMm: z.coerce.number().positive().optional(),
   rotateCabinets: z.boolean().default(false),
   /** AA1 — recess/cavity depth in mm (site-prep detail; descriptive, not priced). */
   recessDepthMm: z.coerce.number().int().nonnegative().optional(),

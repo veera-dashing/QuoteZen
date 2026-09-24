@@ -72,9 +72,12 @@ export const buildDescriptions = (
       type: 'led',
       description: describeLedScreen({
         productModel: s.ledProduct?.model ?? s.screenName,
-        widthMm: s.desiredWidthMm,
-        heightMm: s.desiredHeightMm,
-        ratioLabel: ratioFor(s.desiredWidthMm, s.desiredHeightMm),
+        widthMm: s.desiredWidthMm != null ? Number(s.desiredWidthMm) : null,
+        heightMm: s.desiredHeightMm != null ? Number(s.desiredHeightMm) : null,
+        ratioLabel: ratioFor(
+          s.desiredWidthMm != null ? Number(s.desiredWidthMm) : null,
+          s.desiredHeightMm != null ? Number(s.desiredHeightMm) : null,
+        ),
         pixelPitchMm: s.ledProduct?.pixelPitchH ? Number(s.ledProduct.pixelPitchH) : null,
         resolutionWpx: s.resolutionWpx,
         resolutionHpx: s.resolutionHpx,

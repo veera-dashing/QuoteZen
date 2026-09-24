@@ -69,8 +69,8 @@ const seedQuoteWithScreen = async (productId: string) => {
     select: { minCabinetWMm: true, minCabinetHMm: true },
   });
   // Use 2×3 cabinet fit for the product's actual cabinet size to guarantee a valid non-zero area.
-  const w = (prod?.minCabinetWMm ?? 320) * 2;
-  const h = (prod?.minCabinetHMm ?? 320) * 3;
+  const w = Number(prod?.minCabinetWMm ?? 320) * 2;
+  const h = Number(prod?.minCabinetHMm ?? 320) * 3;
 
   const created = await app.inject({
     method: 'POST',

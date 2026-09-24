@@ -108,10 +108,11 @@ export const evaluateAnomalies = async (quote: QuoteWithChildren): Promise<Anoma
   if (cabinetRule) {
     for (const s of quote.ledScreens) {
       const p = s.ledProduct;
-      const cabW = p?.minCabinetWMm ?? null;
-      const cabH = p?.minCabinetHMm ?? null;
-      const w = s.desiredWidthMm ?? null;
-      const h = s.desiredHeightMm ?? null;
+      // Dimensions are DECIMAL in the DB (cabinets are not whole mm) — convert for the rule maths.
+      const cabW = p?.minCabinetWMm != null ? Number(p.minCabinetWMm) : null;
+      const cabH = p?.minCabinetHMm != null ? Number(p.minCabinetHMm) : null;
+      const w = s.desiredWidthMm != null ? Number(s.desiredWidthMm) : null;
+      const h = s.desiredHeightMm != null ? Number(s.desiredHeightMm) : null;
       if (p == null || cabW == null || cabH == null || cabW <= 0 || cabH <= 0 || w == null || h == null) {
         continue; // insufficient data → skip (defensive)
       }

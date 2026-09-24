@@ -1175,16 +1175,28 @@ interface LedScreenDraft {
 }
 
 // T3: human "Size" indicator for a config — under/exact/over with the signed % delta vs the opening.
-function sizeLabel(o: Pick<ConfigOption, 'sizeMode' | 'sizeDeltaPct'>): string {
+function sizeLabel(o: Pick<ConfigOption, 'sizeMode' | 'sizeDeltaPct' | 'deltaWidthMm' | 'deltaHeightMm'>): string {
   const pct = Number(o.sizeDeltaPct);
-  if (o.sizeMode === 'exact') return 'exact';
+  if (o.sizeMode === 'exact') {
+    // `sizeMode` compares AREA, so a rotated build can match the opening's area while being a very
+    // different shape (1350×1800 has the same area as 1200×2025). Calling that "exact" is misleading
+    // for a recess or fixed joinery, where the dimensions are what must fit — so only a build that
+    // matches on BOTH axes earns "exact"; the rest are labelled for what they actually are.
+    const fitsBothAxes = (o.deltaWidthMm ?? 0) === 0 && (o.deltaHeightMm ?? 0) === 0;
+    return fitsBothAxes ? 'exact' : 'exact area';
+  }
   const sign = pct > 0 ? '+' : '';
   return `${sign}${pct}% ${o.sizeMode}`;
 }
 
 // U2: human "Tolerance" indicator — how far the panel sits from the opening, as a ±% band.
-function toleranceLabel(o: Pick<ConfigOption, 'sizeMode' | 'toleranceBand'>): string {
-  if (o.sizeMode === 'exact' || o.toleranceBand === 0) return 'exact';
+function toleranceLabel(
+  o: Pick<ConfigOption, 'sizeMode' | 'toleranceBand' | 'deltaWidthMm' | 'deltaHeightMm'>,
+): string {
+  if (o.sizeMode === 'exact' || o.toleranceBand === 0) {
+    // Same distinction as sizeLabel: area-equal is not the same as dimensionally exact.
+    return (o.deltaWidthMm ?? 0) === 0 && (o.deltaHeightMm ?? 0) === 0 ? 'exact' : 'exact area';
+  }
   return `±${o.toleranceBand}%`;
 }
 
@@ -2187,11 +2199,13 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
           <div><label>Screen name</label><input value={name} onChange={(e) => setName(e.target.value)} /></div>
           <div>
             <label style={Number(w) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Width (mm) *</label>
-            <input type="number" value={w} onChange={(e) => recalcDim('w', e.target.value)} />
+            {/* step="any": real cabinets are not whole millimetres (337.5mm), so an opening may be
+                fractional too. Without this the browser rejects decimals on a number input. */}
+            <input type="number" step="any" min={0} value={w} onChange={(e) => recalcDim('w', e.target.value)} />
           </div>
           <div>
             <label style={Number(h) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Height (mm) *</label>
-            <input type="number" value={h} onChange={(e) => recalcDim('h', e.target.value)} />
+            <input type="number" step="any" min={0} value={h} onChange={(e) => recalcDim('h', e.target.value)} />
           </div>
           <div>
             <label>Orientation</label>

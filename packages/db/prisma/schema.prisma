@@ -324,10 +324,12 @@ model LedProduct {
   manufacturerId   BigInt?  @map("manufacturer_id")
   model            String
   serviceCategory  String?  @map("service_category")
-  moduleWMm        Int?     @map("module_w_mm")
-  moduleHMm        Int?     @map("module_h_mm")
-  minCabinetWMm    Int?     @map("min_cabinet_w_mm")
-  minCabinetHMm    Int?     @map("min_cabinet_h_mm")
+  /** Module/cabinet sizes are DECIMAL: real panels are not whole millimetres (e.g. a 337.5mm
+      cabinet). Rounding them drifts by the cabinet count — 6 high was reported 3mm too tall. */
+  moduleWMm        Decimal? @map("module_w_mm") @db.Decimal(10, 2)
+  moduleHMm        Decimal? @map("module_h_mm") @db.Decimal(10, 2)
+  minCabinetWMm    Decimal? @map("min_cabinet_w_mm") @db.Decimal(10, 2)
+  minCabinetHMm    Decimal? @map("min_cabinet_h_mm") @db.Decimal(10, 2)
   cabinetDepthMm   Int?     @map("cabinet_depth_mm")
   cabinetType      String?  @map("cabinet_type")
   pixelPitchH      Decimal? @map("pixel_pitch_h") @db.Decimal(6, 3)
@@ -1049,8 +1051,9 @@ model QuoteLedScreen {
   screenName          String?  @map("screen_name")
   ledProductId        BigInt?  @map("led_product_id")
   qty                 Int      @default(1)
-  desiredWidthMm      Int?     @map("desired_width_mm")
-  desiredHeightMm     Int?     @map("desired_height_mm")
+  /** The requested opening. DECIMAL so an opening can be stated to sub-millimetre precision. */
+  desiredWidthMm      Decimal? @map("desired_width_mm") @db.Decimal(10, 2)
+  desiredHeightMm     Decimal? @map("desired_height_mm") @db.Decimal(10, 2)
   rotateCabinets      Boolean  @default(false) @map("rotate_cabinets")
   // LED-1 input fields (S0): orientation/aspect drive UI auto-calc; back_cover may later feed pricing.
   orientation         String?  @map("orientation")

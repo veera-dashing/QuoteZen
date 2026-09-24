@@ -57,8 +57,9 @@ const achievedRatioLabel = (
   screen: QuoteWithChildren['ledScreens'][number],
   ratios: ScreenRatioRow[],
 ): string | null => {
-  const w = screen.resolutionWpx ?? screen.desiredWidthMm ?? null;
-  const h = screen.resolutionHpx ?? screen.desiredHeightMm ?? null;
+  // Dimensions are DECIMAL in the DB; the ratio lookup takes plain numbers.
+  const w = screen.resolutionWpx ?? (screen.desiredWidthMm != null ? Number(screen.desiredWidthMm) : null);
+  const h = screen.resolutionHpx ?? (screen.desiredHeightMm != null ? Number(screen.desiredHeightMm) : null);
   if (w == null || h == null || h <= 0) return null;
   return resolveScreenRatio(w, h, ratios);
 };
@@ -92,8 +93,8 @@ const ledScreenToInput = (
     totalPixels: screen.totalPixels != null ? Number(screen.totalPixels) : null,
     controllerSelected,
     controllerMaxPixels,
-    widthMm: screen.desiredWidthMm ?? null,
-    heightMm: screen.desiredHeightMm ?? null,
+    widthMm: screen.desiredWidthMm != null ? Number(screen.desiredWidthMm) : null,
+    heightMm: screen.desiredHeightMm != null ? Number(screen.desiredHeightMm) : null,
     // Environment / orientation / outdoor deps are not captured per-screen in this prototype, so
     // those rules naturally fall to cannot_evaluate / non-applicable — never a false error.
     // ── AA2 ──

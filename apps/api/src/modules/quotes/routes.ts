@@ -93,8 +93,8 @@ const revParam = z.object({ id: z.coerce.bigint(), rev: z.coerce.number().int().
 const diffQuery = z.object({ a: z.coerce.number().int().positive(), b: z.coerce.number().int().positive() });
 
 const configureSchema = z.object({
-  desiredWidthMm: z.coerce.number().int().positive(),
-  desiredHeightMm: z.coerce.number().int().positive(),
+  desiredWidthMm: z.coerce.number().positive(),
+  desiredHeightMm: z.coerce.number().positive(),
   allowRotation: z.boolean().optional(),
   // W0: optional environment + viewing-distance filters (absent → unchanged behaviour).
   environment: z.enum(['indoor', 'outdoor']).optional(),
