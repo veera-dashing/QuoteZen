@@ -47,11 +47,38 @@ async function load(
 async function main(): Promise<void> {
   console.warn('Importing catalogs from data/catalog.json…');
 
-  await load('ledProducts', prisma.ledProduct, data.ledProducts ?? [], (r) => {
-    const out: Row = { ...r };
-    for (const f of LED_INT_FIELDS) out[f] = int(r[f]);
-    return out;
-  });
+  // LED products: create if empty, or backfill cabinet dimensions if already loaded
+  const ledRows = data.ledProducts ?? [];
+  const ledCount = await prisma.ledProduct.count();
+  if (ledCount === 0 || RECREATE) {
+    if (RECREATE) await prisma.ledProduct.deleteMany({});
+    const payload = ledRows.map((r) => {
+      const out: Row = { ...r };
+      for (const f of LED_INT_FIELDS) out[f] = int(r[f]);
+      return out;
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { count: inserted } = await prisma.ledProduct.createMany({ data: payload as any, skipDuplicates: true });
+    console.warn(`  ledProducts: inserted ${inserted}`);
+  } else {
+    console.warn(`  ledProducts: updating ${ledCount} existing rows with standard cabinet dimensions…`);
+    let updated = 0;
+    for (const r of ledRows) {
+      const model = r.model as string;
+      const vendor = (r.vendor as string | undefined) ?? null;
+      const res = await prisma.ledProduct.updateMany({
+        where: { model, ...(vendor ? { vendor } : {}) },
+        data: {
+          minCabinetWMm: r.minCabinetWMm != null ? Number(r.minCabinetWMm) : null,
+          minCabinetHMm: r.minCabinetHMm != null ? Number(r.minCabinetHMm) : null,
+          cabinetWMm: r.cabinetWMm != null ? Number(r.cabinetWMm) : null,
+          cabinetHMm: r.cabinetHMm != null ? Number(r.cabinetHMm) : null,
+        },
+      });
+      updated += res.count;
+    }
+    console.warn(`  ledProducts: updated ${updated} rows with standard cabinet dimensions.`);
+  }
   await load('displayCatalog', prisma.displayCatalog, data.displayCatalog ?? []);
   await load('manufacturedProducts', prisma.manufacturedProduct, data.manufacturedProducts ?? [], (r) => ({
     ...r,

@@ -330,6 +330,10 @@ model LedProduct {
   moduleHMm        Decimal? @map("module_h_mm") @db.Decimal(10, 2)
   minCabinetWMm    Decimal? @map("min_cabinet_w_mm") @db.Decimal(10, 2)
   minCabinetHMm    Decimal? @map("min_cabinet_h_mm") @db.Decimal(10, 2)
+  /** Standard / largest cabinet dimensions (cols E & F in sheet). Used for installer handling & labour hours,
+      while minCabinetWMm/HMm handles active dimension snapping. */
+  cabinetWMm       Decimal? @map("cabinet_w_mm") @db.Decimal(10, 2)
+  cabinetHMm       Decimal? @map("cabinet_h_mm") @db.Decimal(10, 2)
   cabinetDepthMm   Int?     @map("cabinet_depth_mm")
   cabinetType      String?  @map("cabinet_type")
   pixelPitchH      Decimal? @map("pixel_pitch_h") @db.Decimal(6, 3)

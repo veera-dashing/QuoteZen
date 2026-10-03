@@ -894,8 +894,14 @@ const computeLedScreenPricing = async (
     // override rows (the default) this is `null` → the existing freight path is used, byte-for-byte.
     const freightOverride = await resolveFreightOverride(quote.location?.id ?? null, product?.manufacturerId ?? null);
 
-    const cabinetsW = spec.cabinetsWide;
-    const cabinetsH = spec.cabinetsHigh;
+    // Use standard cabinet dimensions (cols E & F) if available, falling back to minCabinetWMm/HMm.
+    // If rotateCabinets is true, cabinet width and height swap units (as in Excel: C14 = IF(C13="Y", F5, E5)).
+    const standardCabW = Number(product?.cabinetWMm ?? product?.minCabinetWMm ?? 0);
+    const standardCabH = Number(product?.cabinetHMm ?? product?.minCabinetHMm ?? 0);
+    const effCabW = input.rotateCabinets ? standardCabH : standardCabW;
+    const effCabH = input.rotateCabinets ? standardCabW : standardCabH;
+    const cabinetsW = effCabW > 0 ? Math.ceil(spec.widthMm / effCabW) : spec.cabinetsWide;
+    const cabinetsH = effCabH > 0 ? Math.ceil(spec.heightMm / effCabH) : spec.cabinetsHigh;
     const baseHours = installMethod?.defaultHours ? Number(installMethod.defaultHours) : 4;
     const isIT = product?.model?.startsWith('IT') || false;
 
@@ -905,8 +911,8 @@ const computeLedScreenPricing = async (
       areaSqm: area,
       cabinetsW,
       cabinetsH,
-      cabinetWMm: spec.cabinetWidthMm,
-      cabinetHMm: spec.cabinetHeightMm,
+      cabinetWMm: effCabW,
+      cabinetHMm: effCabH,
       isITProduct: isIT,
       baseHours,
       frameInstallHours: frame ? Number(frame.installHours) : 0,

@@ -137,7 +137,8 @@ export const TABLES: TableDef[] = [
       // manufacturerId is the normalised manufacturer FK (U0). The generic CRUD has no dedicated
       // `ref` field type, so it is exposed as an int FK (manufacturers.id).
       f('vendor'), f('manufacturerId', 'int'), f('model', 'string', true), f('serviceCategory'), f('moduleWMm', 'decimal'),
-      f('moduleHMm', 'decimal'), f('minCabinetWMm', 'decimal'), f('minCabinetHMm', 'decimal'), f('cabinetDepthMm', 'int'),
+      f('moduleHMm', 'decimal'), f('minCabinetWMm', 'decimal'), f('minCabinetHMm', 'decimal'),
+      f('cabinetWMm', 'decimal'), f('cabinetHMm', 'decimal'), f('cabinetDepthMm', 'int'),
       f('cabinetType'), f('pixelPitchH', 'decimal'), f('pixelPitchV', 'decimal'), f('brightnessNits', 'int'),
       // W0: indoor/outdoor suitability (nullable enum). Null → config falls back to a brightness heuristic.
       f('environment', 'enum', false, ['indoor', 'outdoor']),

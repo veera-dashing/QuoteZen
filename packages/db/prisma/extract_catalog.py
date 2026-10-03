@@ -48,6 +48,8 @@ def main(path):
             "moduleHMm": num(ws.cell(r, 11).value),
             "minCabinetWMm": num(ws.cell(r, 12).value),
             "minCabinetHMm": num(ws.cell(r, 13).value),
+            "cabinetWMm": num(ws.cell(r, 5).value),
+            "cabinetHMm": num(ws.cell(r, 6).value),
             "cabinetDepthMm": num(ws.cell(r, 14).value),
             "powerMaxW": num(ws.cell(r, 15).value),
             "powerAvgW": num(ws.cell(r, 16).value),

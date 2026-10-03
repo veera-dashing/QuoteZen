@@ -98,4 +98,19 @@ describe('estimateInstallHours', () => {
     // base 4 + Math.round(max(4, 2.15)/2)*2 = 4 + 4 = 8
     expect(estimateInstallHours({ areaSqm: 2.15 })).toBe(8);
   });
+
+  it('standard cabinet 960x960mm computes 14 hrs (4 base + 8 size + 2 frame), avoiding module inflation', () => {
+    // 1120x1920mm screen with 960x960 cabinets (2x2) and ivisual low frame (2 hrs)
+    expect(
+      estimateInstallHours({
+        areaSqm: 2.1504,
+        cabinetsW: 2,
+        cabinetsH: 2,
+        cabinetWMm: 960,
+        cabinetHMm: 960,
+        frameInstallHours: 2,
+      }),
+    ).toBe(14);
+  });
 });
+
