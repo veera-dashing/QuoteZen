@@ -16,6 +16,7 @@ import {
   ledSupply,
   markupLine,
   packagingCost,
+  priceSectionsAtMargin,
   receiverCardCost,
   selectController,
   selectLcdTiers,
@@ -27,7 +28,7 @@ import {
   type PricedLine,
   type TreeConstraints,
 } from '@quotezen/calc';
-import { applyMargin, applyMarkup, round } from '@quotezen/shared';
+import { applyMargin, round } from '@quotezen/shared';
 import type { LcdScreenInput, LedIntakeInput, LedScreenInput, UpdateLedScreenInput } from '@quotezen/shared';
 import { AppError, notFound } from '../../errors.js';
 import { recordAudit } from '../../services/audit.js';
@@ -790,12 +791,12 @@ const computeLedScreenPricing = async (
     if (c.controllerId) {
       const row = await prisma.controller.findUnique({ where: { id: BigInt(c.controllerId) } });
       cost = Number(row?.price ?? 0);
-      sell = applyMarkup(cost, config.markups.controller).toNumber();
+      sell = applyMargin(cost, ledMargin).toNumber();
       label = `Controller — ${row?.name ?? ''}`;
     } else if (c.ledPeripheralId) {
       const row = await prisma.ledPeripheral.findUnique({ where: { id: BigInt(c.ledPeripheralId) } });
       cost = Number(row?.price ?? 0);
-      sell = applyMarkup(cost, config.markups.led).toNumber();
+      sell = applyMargin(cost, ledMargin).toNumber();
       label = `LED peripheral — ${row?.name ?? ''}`;
     } else if (c.mediaplayerId) {
       const row = await prisma.mediaplayer.findUnique({ where: { id: BigInt(c.mediaplayerId) } });
@@ -806,7 +807,7 @@ const computeLedScreenPricing = async (
     } else if (c.peripheralId) {
       const row = await prisma.peripheral.findUnique({ where: { id: BigInt(c.peripheralId) } });
       cost = Number(row?.cost ?? 0);
-      sell = applyMarkup(cost, config.markups.otherEquipment).toNumber();
+      sell = applyMargin(cost, ledMargin).toNumber();
       label = `Peripheral — ${row?.name ?? ''}`;
     }
     // Shared controller: ONE sender drives every unit of this screen row. The quote rollup multiplies
@@ -947,11 +948,14 @@ const computeLedScreenPricing = async (
     lines.push(fixedLine(installLabel, 'services', install.costAud, install.sellAud));
   }
 
-  const totals = composeScreenTotals(lines);
+  // The workbook quotes each section (supply, frame & trim, install) at the LED margin on its total
+  // cost, rounded to $10 — not the per-line markups above, which are only its reference rows.
+  const pricedLines = priceSectionsAtMargin(lines, ledMargin);
+  const totals = composeScreenTotals(pricedLines);
   // priceTotal is the per-unit screen price; the quote rollup multiplies by qty (P1-14.2).
   const unitSell = round(totals.totalSell);
 
-  return { spec, lines, compRows, labourHours, freightKg, totals, unitSell, product };
+  return { spec, lines: pricedLines, compRows, labourHours, freightKg, totals, unitSell, product };
 };
 
 export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedScreenInput) => {

@@ -31,4 +31,4 @@ pnpm test                       # all packages
 pnpm --filter @quotezen/calc test
 ```
 
-See [`CLAUDE.md`](./CLAUDE.md) for architecture, the 58-table data model, and conventions.
+See [`CLAUDE.md`](./CLAUDE.md) for architecture, the 69-table data model, and conventions.

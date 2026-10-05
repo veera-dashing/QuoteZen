@@ -20,7 +20,7 @@ The original workbook `2026-XXX Quote Base V1.3` contains 14 key sheets (`Refere
 ```
 
 * **Ingestion Script (`extract_catalog.py`):** Parses the workbook sheets and outputs structured catalog records to `prisma/data/catalog.json`.
-* **Database Seeder (`import-catalogs.ts` & `seed.ts`):** Populates ~850 catalog records into a fully relational PostgreSQL schema (58 tables).
+* **Database Seeder (`import-catalogs.ts` & `seed.ts`):** Populates ~850 catalog records into a fully relational PostgreSQL schema (69 tables).
 
 ### 1.2 Architecture of the 58 Relational Tables
 The database model is structured into three clear functional layers (no unstructured JSON blobs for core pricing):

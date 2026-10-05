@@ -16,7 +16,7 @@ quotezen/
 │  ├─ api/        Fastify REST API (JWT auth, quote CRUD, audit, recompute)
 │  └─ web/        Next.js 16 (App Router) — the quote wizard
 ├─ packages/
-│  ├─ db/         Prisma schema (58 tables) + migrations + xlsx seed
+│  ├─ db/         Prisma schema (69 tables) + migrations + xlsx seed
 │  ├─ calc/       pure pricing engine (replicates Excel formulas) — heavily unit-tested
 │  └─ shared/     shared TS types + Zod schemas + money helpers
 ```
@@ -71,7 +71,7 @@ Each workspace has its own CLAUDE.md with folder-specific conventions and histor
 | `apps/api/` | [CLAUDE.md](apps/api/CLAUDE.md) | Fastify layering, RBAC, guardrails, test patterns, DB corruption fix, RDS migration workflow, full block history |
 | `apps/web/` | [CLAUDE.md](apps/web/CLAUDE.md) | Next.js App Router, wizard steps, SearchSelect, ThemeToggle, role-aware UI, dashboard |
 | `packages/calc/` | [CLAUDE.md](packages/calc/CLAUDE.md) | Pure pricing functions, workbook constants, PricingConfig, test approach |
-| `packages/db/` | [CLAUDE.md](packages/db/CLAUDE.md) | 58-table schema, modelling decisions, RDS migration workflow, seed, settings |
+| `packages/db/` | [CLAUDE.md](packages/db/CLAUDE.md) | 69-table schema, modelling decisions, RDS migration workflow, seed, settings |
 | `packages/shared/` | [CLAUDE.md](packages/shared/CLAUDE.md) | Money helpers (Decimal.js), Zod schemas, enums |
 
 ## Current status
