@@ -17,6 +17,18 @@ const configSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('12h'),
   /** Per-job document storage (P1-19e). Absolute path; created on boot if missing. */
   UPLOAD_DIR: z.string().min(1).default(DEFAULT_UPLOAD_DIR),
+
+  // ── Phase 2: Zoho CRM + AI extraction. All optional so the app boots without them; the
+  // routes that need them answer 503 `not_configured` instead. Region-specific URLs (IN for the
+  // test org, AU for SEEN) — a config change, not a code change.
+  ZOHO_ACCOUNTS_URL: z.string().url().optional(),
+  ZOHO_API_URL: z.string().url().optional(),
+  ZOHO_CLIENT_ID: z.string().min(1).optional(),
+  ZOHO_CLIENT_SECRET: z.string().min(1).optional(),
+  ZOHO_REFRESH_TOKEN: z.string().min(1).optional(),
+  GEMINI_API_KEY: z.string().min(1).optional(),
+  /** Google retires model names often — keep it a setting. */
+  GEMINI_MODEL: z.string().min(1).default('gemini-3.5-flash-lite'),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

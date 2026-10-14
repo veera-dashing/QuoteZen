@@ -9,7 +9,9 @@ export type ErrorCode =
   | 'not_found'
   | 'conflict'
   | 'validation_error'
-  | 'internal_error';
+  | 'internal_error'
+  | 'upstream_error'
+  | 'not_configured';
 
 const STATUS_BY_CODE: Record<ErrorCode, number> = {
   bad_request: 400,
@@ -19,6 +21,10 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   not_found: 404,
   conflict: 409,
   internal_error: 500,
+  /** An external service (Zoho, Gemini) failed or returned something unusable. */
+  upstream_error: 502,
+  /** A Phase 2 integration is called but its env settings are missing. */
+  not_configured: 503,
 };
 
 export class AppError extends Error {
