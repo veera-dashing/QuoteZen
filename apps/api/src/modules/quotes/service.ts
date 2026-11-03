@@ -180,7 +180,19 @@ export const resolveModedDiscount = (quote: QuoteWithChildren, defaultDiscountPc
   return resolved;
 };
 
-export const createQuote = async (userId: bigint, input: CreateQuoteInput, actorRole?: UserRole) => {
+/** Phase 2: where an automatically created quote came from (null/absent for manual quotes). */
+export interface QuoteOrigin {
+  zohoDealId: string;
+  /** The AI's proposed intake values, as returned — kept for estimator review. */
+  aiIntake: unknown;
+}
+
+export const createQuote = async (
+  userId: bigint,
+  input: CreateQuoteInput,
+  actorRole?: UserRole,
+  origin?: QuoteOrigin,
+) => {
   if (await findQuoteByJobRef(input.jobReference)) {
     throw conflict(`Job reference "${input.jobReference}" already exists`);
   }
@@ -224,6 +236,9 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput, actor
         clientMustHaves: input.clientMustHaves ?? null,
         needsSolutionsEngineer: input.needsSolutionsEngineer ?? null,
         accountExec: input.accountExec ?? null,
+        zohoDealId: origin?.zohoDealId ?? null,
+        // Prisma's Json input type; the value is plain JSON from the AI response.
+        aiIntake: origin ? (JSON.parse(JSON.stringify(origin.aiIntake)) as object) : undefined,
         createdById: userId,
         viewers: input.viewerUserIds?.length
           ? { create: input.viewerUserIds.map((uid) => ({ userId: BigInt(uid) })) }
@@ -242,6 +257,7 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput, actor
           ? [{ field: 'viewers', oldValue: null, newValue: input.viewerUserIds.join(',') }]
           : []),
         ...(capOverride ? [{ field: 'discount_guardrail', oldValue: null, newValue: capOverride }] : []),
+        ...(origin ? [{ field: 'zoho_deal_id', oldValue: null, newValue: origin.zohoDealId }] : []),
       ],
     });
     return quote;

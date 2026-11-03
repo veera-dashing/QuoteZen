@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { unlink } from 'node:fs/promises';
+import { unlink, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { MultipartFile } from '@fastify/multipart';
@@ -119,9 +119,40 @@ export const saveDocument = async (
   // TODO(AV): run a malware scan on `destPath` here before committing the row; quarantine + reject
   // on a positive result. Deferred in the prototype.
 
-  const sizeBytes = file.file.bytesRead;
+  return recordDocument(actor, quoteId, originalName, storedName, mimeType, file.file.bytesRead);
+};
 
-  return prisma.$transaction(async (tx) => {
+/**
+ * Persist a document held in memory (e.g. a customer file pulled from Zoho, Phase 2) — same
+ * validation, storage and audited row as an upload.
+ */
+export const saveDocumentBuffer = async (
+  actor: Actor,
+  quoteId: bigint,
+  fileName: string,
+  mimeType: string,
+  data: Buffer,
+  uploadDir: string,
+): Promise<DocumentDto> => {
+  const originalName = sanitizeName(fileName);
+  if (!isAllowed(mimeType, originalName)) {
+    throw new AppError('bad_request', `File type not allowed: ${mimeType} (${extname(originalName) || 'no ext'})`);
+  }
+  const storedName = `${randomUUID()}${extname(originalName).toLowerCase()}`;
+  await writeFile(join(uploadDir, storedName), data);
+  return recordDocument(actor, quoteId, originalName, storedName, mimeType, data.length);
+};
+
+/** Create + audit the document row for a file already written to the upload dir. */
+const recordDocument = async (
+  actor: Actor,
+  quoteId: bigint,
+  originalName: string,
+  storedName: string,
+  mimeType: string,
+  sizeBytes: number,
+): Promise<DocumentDto> =>
+  prisma.$transaction(async (tx) => {
     const prev = await tx.quoteDocument.findFirst({
       where: { quoteId, originalName },
       orderBy: { version: 'desc' },
@@ -150,7 +181,6 @@ export const saveDocument = async (
     });
     return toDto(created);
   });
-};
 
 /** List a quote's documents, newest first. Metadata only (no bytes). */
 export const listDocuments = async (quoteId: bigint): Promise<DocumentDto[]> => {

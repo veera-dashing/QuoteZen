@@ -953,6 +953,11 @@ model Quote {
   // Intake form v2 — quote-level fields from the intake questionnaire V0.2.
   /** Account exec / owner for the quote (free text). */
   accountExec           String?     @map("account_exec")
+  // Phase 2 — Zoho intake + AI extraction. Both null for manually created quotes.
+  /** Zoho CRM deal this quote was created from. Unique: one deal → one quote (re-runs add versions). */
+  zohoDealId            String?     @unique @map("zoho_deal_id")
+  /** The AI's proposed intake values as returned (+ model, source files) — kept for estimator review. */
+  aiIntake              Json?       @map("ai_intake")
   /** Soft-delete / archive timestamp (P1-05.1); null = active. The row is never hard-deleted. */
   archivedAt            DateTime?   @map("archived_at")
   estimatedCost         Decimal?    @map("estimated_cost") @db.Decimal(12, 2)
