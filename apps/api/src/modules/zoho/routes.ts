@@ -5,6 +5,8 @@ import { parse } from '../../lib/validate.js';
 import { listDeals, zohoSettings } from './client.js';
 import { createDraftFromDeal, readDeal } from './intake.js';
 import { assertWebhookSecret, enqueueDeal, recentIntakeEvents } from './webhook.js';
+import { sendQuotePdfToZoho } from './quote-pdf.js';
+import { assertOwnership } from '../quotes/service.js';
 
 /**
  * Phase 2 intake: Zoho deal → attachments → AI-proposed quote-form values (P1-19b + P2-02),
@@ -63,6 +65,15 @@ export const zohoRoutes = async (app: FastifyInstance, opts: { config: AppConfig
 
   /** What the webhook did recently (newest first) — to check a stage change was picked up. */
   app.get('/zoho/webhook/events', { preHandler: [staff] }, async () => recentIntakeEvents());
+
+  /** (Re)send a Zoho-linked quote's PDF to its deal — e.g. after a failed automatic send. */
+  const quoteParam = z.object({ id: z.coerce.bigint() });
+  app.post('/zoho/quotes/:id/send-pdf', { preHandler: [staff] }, async (request) => {
+    const { id } = parse(quoteParam, request.params);
+    const actor = { id: BigInt(request.user.id), role: request.user.role };
+    await assertOwnership(id, actor);
+    return sendQuotePdfToZoho(config, actor, id);
+  });
 
   /** Create the draft quote from the deal (409 if this deal already has one). */
   app.post('/zoho/deals/:dealId/draft-quote', { preHandler: [staff] }, async (request, reply) => {

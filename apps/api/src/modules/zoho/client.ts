@@ -97,7 +97,7 @@ export const listDeals = async (s: ZohoSettings): Promise<ZohoDeal[]> =>
   (await zohoJson<{ data: ZohoDeal[] }>(s, `/Deals?fields=${DEAL_FIELDS}&per_page=50`))?.data ?? [];
 
 /** Zoho search-criteria value escaping: `(`, `)` and `,` are syntax, so they are backslash-escaped. */
-export const criteriaValue = (value: string): string => value.replace(/[(),\]/g, (c) => `\${c}`);
+export const criteriaValue = (value: string): string => value.replace(/[(),\\]/g, (c) => `\\${c}`);
 
 /** Deals currently in the given stage (first 200 — polling looks at a short, recent queue). */
 export const listDealsInStage = async (
@@ -126,6 +126,35 @@ export const listDealAttachments = async (s: ZohoSettings, dealId: string): Prom
       `/Deals/${encodeURIComponent(dealId)}/Attachments?fields=id,File_Name,Size`,
     )
   )?.data ?? [];
+
+/** Upload a file to a deal's Attachments (multipart field `file`); returns Zoho's attachment id. */
+export const uploadDealAttachment = async (
+  s: ZohoSettings,
+  dealId: string,
+  fileName: string,
+  mimeType: string,
+  data: Buffer,
+): Promise<string> => {
+  const url = `${s.apiUrl}/crm/v8/Deals/${encodeURIComponent(dealId)}/Attachments`;
+  const send = async (token: string) => {
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array(data)], { type: mimeType }), fileName);
+    return fetch(url, { method: 'POST', headers: { Authorization: `Zoho-oauthtoken ${token}` }, body: form });
+  };
+  let res = await send(await accessToken(s));
+  if (res.status === 401) res = await send(await accessToken(s, true));
+  const json = (await res.json().catch(() => null)) as {
+    data?: { code?: string; message?: string; details?: { id?: string } }[];
+    code?: string;
+    message?: string;
+  } | null;
+  const row = json?.data?.[0];
+  if (!res.ok || row?.code !== 'SUCCESS' || !row.details?.id) {
+    const code = row?.code ?? json?.code ?? `HTTP ${res.status}`;
+    throw new AppError('upstream_error', `Zoho attachment upload failed: ${code} ${row?.message ?? json?.message ?? ''}`.trim());
+  }
+  return row.details.id;
+};
 
 export const downloadDealAttachment = async (
   s: ZohoSettings,

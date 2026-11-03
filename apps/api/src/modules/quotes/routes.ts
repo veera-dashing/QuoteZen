@@ -88,6 +88,7 @@ import {
   rollbackToVersion,
 } from './versioning.js';
 import { deleteDocument, getDocumentFile, listDocuments, saveDocument } from './documents.js';
+import { afterStatusChange } from '../zoho/quote-pdf.js';
 
 const revParam = z.object({ id: z.coerce.bigint(), rev: z.coerce.number().int().positive() });
 const diffQuery = z.object({ a: z.coerce.number().int().positive(), b: z.coerce.number().int().positive() });
@@ -179,7 +180,10 @@ export const quoteRoutes = async (
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
     const { status, reason } = parse(changeStatusSchema, request.body);
-    return changeStatus(actor(request), id, status, reason);
+    const quote = await changeStatus(actor(request), id, status, reason);
+    // Phase 2: an approved Zoho-originated quote → its PDF goes to the deal (background, non-blocking).
+    afterStatusChange(opts.config, actor(request), id, quote.status, request.log);
+    return quote;
   });
 
   // ── Two-stage Review & Approval (T1 / BR-001) ──
@@ -189,6 +193,8 @@ export const quoteRoutes = async (
     await assertOwnership(id, actor(request));
     const { stage, decision, comment } = parse(recordReviewSchema, request.body);
     const quote = await recordReview(actor(request), id, stage, decision, comment);
+    // An approved commercial review moves the quote to `approved` — same Zoho PDF hand-off as above.
+    afterStatusChange(opts.config, actor(request), id, quote.status, request.log);
     return reply.code(201).send(quote);
   });
 
