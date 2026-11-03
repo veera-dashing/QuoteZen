@@ -96,6 +96,22 @@ const DEAL_FIELDS = 'Deal_Name,Stage,Account_Name,Contact_Name,Closing_Date,Desc
 export const listDeals = async (s: ZohoSettings): Promise<ZohoDeal[]> =>
   (await zohoJson<{ data: ZohoDeal[] }>(s, `/Deals?fields=${DEAL_FIELDS}&per_page=50`))?.data ?? [];
 
+/** Zoho search-criteria value escaping: `(`, `)` and `,` are syntax, so they are backslash-escaped. */
+export const criteriaValue = (value: string): string => value.replace(/[(),\]/g, (c) => `\${c}`);
+
+/** Deals currently in the given stage (first 200 — polling looks at a short, recent queue). */
+export const listDealsInStage = async (
+  s: ZohoSettings,
+  stage: string,
+): Promise<(ZohoDeal & { Modified_Time: string | null })[]> =>
+  (
+    await zohoJson<{ data: (ZohoDeal & { Modified_Time: string | null })[] }>(
+      s,
+      `/Deals/search?criteria=${encodeURIComponent(`(Stage:equals:${criteriaValue(stage)})`)}` +
+        `&fields=${DEAL_FIELDS},Modified_Time&per_page=200`,
+    )
+  )?.data ?? [];
+
 export const getDeal = async (s: ZohoSettings, dealId: string): Promise<ZohoDeal> => {
   const deal = (await zohoJson<{ data: ZohoDeal[] }>(s, `/Deals/${encodeURIComponent(dealId)}?fields=${DEAL_FIELDS}`))
     ?.data?.[0];

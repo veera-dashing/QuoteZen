@@ -28,6 +28,14 @@ const configSchema = z.object({
   ZOHO_REFRESH_TOKEN: z.string().min(1).optional(),
   /** Shared secret Zoho sends in the X-QuoteZen-Secret header of the workflow webhook. */
   ZOHO_WEBHOOK_SECRET: z.string().min(16).optional(),
+  /**
+   * Polling fallback for the webhook: every N seconds, find deals in ZOHO_INTAKE_STAGE without a quote
+   * and create their drafts. 0 = off (default). Works without a public URL (local dev) and catches
+   * webhook deliveries that were missed in production.
+   */
+  ZOHO_POLL_INTERVAL_SEC: z.coerce.number().int().min(0).default(0),
+  /** The Zoho deal stage meaning "ready to quote" (SEEN's real stage name goes here). */
+  ZOHO_INTAKE_STAGE: z.string().min(1).default('Ready to Quote'),
   /** User the webhook-created draft quotes are attributed to (createdBy + audit trail). */
   ZOHO_INTAKE_USER_EMAIL: z.string().email().default('admin@quotezen.local'),
   GEMINI_API_KEY: z.string().min(1).optional(),

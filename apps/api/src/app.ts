@@ -17,6 +17,7 @@ import { catalogRoutes } from './modules/catalog/routes.js';
 import { healthRoutes } from './modules/health/routes.js';
 import { quoteRoutes } from './modules/quotes/routes.js';
 import { ruleRoutes } from './modules/rules/routes.js';
+import { registerZohoPoller } from './modules/zoho/poller.js';
 import { zohoRoutes } from './modules/zoho/routes.js';
 
 export const buildApp = async (config: AppConfig): Promise<FastifyInstance> => {
@@ -87,6 +88,7 @@ export const buildApp = async (config: AppConfig): Promise<FastifyInstance> => {
   await app.register(userRoutes);
   await app.register(ruleRoutes);
   await app.register(zohoRoutes, { config }); // Phase 2: Zoho intake + AI extraction
+  registerZohoPoller(app, config); // Phase 2: webhook fallback (off unless ZOHO_POLL_INTERVAL_SEC > 0)
 
   return app;
 };
