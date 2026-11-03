@@ -26,6 +26,10 @@ const configSchema = z.object({
   ZOHO_CLIENT_ID: z.string().min(1).optional(),
   ZOHO_CLIENT_SECRET: z.string().min(1).optional(),
   ZOHO_REFRESH_TOKEN: z.string().min(1).optional(),
+  /** Shared secret Zoho sends in the X-QuoteZen-Secret header of the workflow webhook. */
+  ZOHO_WEBHOOK_SECRET: z.string().min(16).optional(),
+  /** User the webhook-created draft quotes are attributed to (createdBy + audit trail). */
+  ZOHO_INTAKE_USER_EMAIL: z.string().email().default('admin@quotezen.local'),
   GEMINI_API_KEY: z.string().min(1).optional(),
   /** Google retires model names often — keep it a setting. */
   GEMINI_MODEL: z.string().min(1).default('gemini-3.5-flash-lite'),

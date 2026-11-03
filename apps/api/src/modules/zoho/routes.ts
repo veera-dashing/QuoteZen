@@ -4,6 +4,7 @@ import type { AppConfig } from '../../config.js';
 import { parse } from '../../lib/validate.js';
 import { listDeals, zohoSettings } from './client.js';
 import { createDraftFromDeal, readDeal } from './intake.js';
+import { assertWebhookSecret, enqueueDeal, recentIntakeEvents } from './webhook.js';
 
 /**
  * Phase 2 intake: Zoho deal → attachments → AI-proposed quote-form values (P1-19b + P2-02),
@@ -46,6 +47,22 @@ export const zohoRoutes = async (app: FastifyInstance, opts: { config: AppConfig
       ai,
     };
   });
+
+  /**
+   * Zoho workflow webhook. No user login (Zoho calls it) — authenticated by the shared secret header
+   * instead. Answers 202 at once; the draft quote is built in the background (see webhook.ts).
+   */
+  const webhookBody = z.object({ dealId: z.string().regex(/^\d+$/), dealName: z.string().optional() });
+  app.post('/zoho/webhook', async (request, reply) => {
+    const secret = request.headers['x-quotezen-secret'];
+    assertWebhookSecret(config, Array.isArray(secret) ? secret[0] : secret);
+    const { dealId, dealName } = parse(webhookBody, request.body);
+    const queued = enqueueDeal(config, dealId, dealName ?? null, request.log);
+    return reply.code(202).send({ accepted: true, dealId, queued });
+  });
+
+  /** What the webhook did recently (newest first) — to check a stage change was picked up. */
+  app.get('/zoho/webhook/events', { preHandler: [staff] }, async () => recentIntakeEvents());
 
   /** Create the draft quote from the deal (409 if this deal already has one). */
   app.post('/zoho/deals/:dealId/draft-quote', { preHandler: [staff] }, async (request, reply) => {
