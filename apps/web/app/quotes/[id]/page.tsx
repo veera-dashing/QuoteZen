@@ -1101,6 +1101,9 @@ const protectiveCoatingRow = (rows: readonly Opt[] | undefined): Opt | undefined
  * rather than Express Air $30). Returns undefined when nothing matches — e.g. "Road", for which no
  * freight option exists at all — and the caller then defaults nothing.
  */
+/** Freight the workbook assumes when nothing else is chosen (`(LED 1)` C23 "Freight (Standard Air)"). */
+const DEFAULT_FREIGHT_PREFERENCE = 'Standard Air';
+
 const matchFreightOption = (preference: string | null, rows: readonly Opt[] | undefined): Opt | undefined => {
   const want = (preference ?? '').trim().toLowerCase();
   if (!want || !rows?.length) return undefined;
@@ -1655,15 +1658,20 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   // AA2 — the client's allowed ratios, and the per-job waiver for them.
   const [clientAllowedRatios, setClientAllowedRatios] = useState<string[]>([]);
   const [ignoreClientRatios, setIgnoreClientRatios] = useState(false);
+  // True once the client's rules have been fetched (or there is no client) — the freight default
+  // waits for it, so a client who prefers e.g. Sea is never pre-filled with the Standard Air fallback.
+  const [clientRulesLoaded, setClientRulesLoaded] = useState(false);
   useEffect(() => {
-    if (!quote.clientId) { setPreferredFreight(null); return; }
+    if (!quote.clientId) { setPreferredFreight(null); setClientRulesLoaded(true); return; }
+    setClientRulesLoaded(false);
     api<ClientRules>(`/rules/client/${quote.clientId}/effective`)
       .then((r) => {
         setPreferredFreight(r.preferredFreight ?? null);
         setClientWantsCoating(!!r.requiresProtectiveCoating);
         setClientAllowedRatios(r.allowedRatios ?? []);
       })
-      .catch(() => { setPreferredFreight(null); setClientWantsCoating(false); setClientAllowedRatios([]); });
+      .catch(() => { setPreferredFreight(null); setClientWantsCoating(false); setClientAllowedRatios([]); })
+      .finally(() => setClientRulesLoaded(true));
   }, [quote.clientId]);
 
   // Half-finished draft (this browser only). `pendingDraft` is one found on mount and offered for
@@ -1775,12 +1783,14 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
 
   const freightDefaulted = useRef(false);
   useEffect(() => {
-    if (freightDefaulted.current || editScreen || !preferredFreight?.value) return;
-    const match = matchFreightOption(preferredFreight.value, optionRows.freightOptionId);
+    if (freightDefaulted.current || editScreen || !clientRulesLoaded) return;
+    // The client's preference, else the workbook default (Standard Air) — the sheet never prices a
+    // screen without freight, so an empty picker silently dropped ~$1.7k of freight from a quote.
+    const match = matchFreightOption(preferredFreight?.value || DEFAULT_FREIGHT_PREFERENCE, optionRows.freightOptionId);
     if (!match) return;
     freightDefaulted.current = true;
     setSelectedOpts((prev) => (prev.freightOptionId ? prev : { ...prev, freightOptionId: String(match.id) }));
-  }, [optionRows, editScreen, preferredFreight]);
+  }, [optionRows, editScreen, preferredFreight, clientRulesLoaded]);
 
   // Parse "16:9" → { w: 16, h: 9 }; null when unparseable.
   const parseRatio = (label: string | undefined): { w: number; h: number } | null => {
@@ -2055,7 +2065,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
           LED_OPTION_TABLES.map((t) => {
             if (t.key === 'warrantyId') return [t.key, defaultWarranty(optionRows.warrantyId)?.id ?? ''];
             if (t.key === 'freightOptionId') {
-              return [t.key, matchFreightOption(preferredFreight?.value ?? null, optionRows.freightOptionId)?.id ?? ''];
+              return [t.key, matchFreightOption(preferredFreight?.value || DEFAULT_FREIGHT_PREFERENCE, optionRows.freightOptionId)?.id ?? ''];
             }
             if (t.key === 'coatingId' && clientWantsCoating) {
               return [t.key, protectiveCoatingRow(optionRows.coatingId)?.id ?? ''];

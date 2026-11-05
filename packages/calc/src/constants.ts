@@ -34,7 +34,11 @@ export interface FreightConfig {
   assemblyLabour: number;
   /** Reference Data / Settings — On-site Install Labour ($/hr, default 95). */
   installLabour?: number;
-  /** Reference Data / (LED 1) — Standard overhead allowance (AUD, default 475). */
+  /**
+   * (LED 1) rows 304–317 — Standard overhead allowance (AUD, default 595): project management 2 h × $120
+   * = $240, design/prep $80, screen config $80, consumables $30, rubbish $60, warehouse $75, controller
+   * courier $30. (The mediaplayer config $45 is added separately when a mediaplayer is attached.)
+   */
   standardOverheadAud?: number;
   /** F20 — Seafreight origin charges (USD). */
   seaOriginUsd: number;
@@ -78,7 +82,7 @@ export const WORKBOOK_DEFAULTS: PricingConfig = {
   freight: {
     assemblyLabour: 45,
     installLabour: 95,
-    standardOverheadAud: 475,
+    standardOverheadAud: 595,
     seaOriginUsd: 660,
     seaTransitPerCbmUsd: 90,
     seaDestinationAud: 1200,

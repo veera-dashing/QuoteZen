@@ -149,6 +149,42 @@ export const freightWeightKg = (actualKg: number, volumetricModifier = 1): numbe
 };
 
 /**
+ * Shipping weight from the packed-box size — workbook `(LED 1)` rows 250 / 277:
+ *   box W  (cm) = cabinet width / 10 + 10                              (E250)
+ *   box D  (cm) = MAX(⌈cabinets wide⌉ × ⌈cabinets high⌉ × ship depth + 10, 28)   (F250)
+ *   box H  (cm) = MIN(cabinet height, screen height) / 10 + 20         (G250)
+ *   volumetric  = ⌈W × D × H / 5000⌉                                   (I250)
+ *   shipping kg = MAX(volumetric, actual kg × volumetric modifier)     (L250)
+ * `shipDepthCm` is the product's "Ship Depth" column (cm per cabinet, e.g. 8 for WALL-PRO).
+ * e.g. WALL-PRO2.5 1500×2000 on 1000×500 cabinets: 110 × 74 × 70 cm → 114 kg (actual 63 kg × 1.3 = 81.9).
+ */
+export interface ShippingBoxInput {
+  cabinetWMm: number;
+  cabinetHMm: number;
+  cabinetsWide: number;
+  cabinetsHigh: number;
+  screenHeightMm: number;
+  shipDepthCm: number;
+  actualKg: number;
+  volumetricModifier?: number;
+}
+
+export const shippingBoxKg = (input: ShippingBoxInput): number => {
+  const boxW = input.cabinetWMm / 10 + 10;
+  const boxD = Math.max(Math.ceil(input.cabinetsWide) * Math.ceil(input.cabinetsHigh) * input.shipDepthCm + 10, 28);
+  const boxH = Math.min(input.cabinetHMm, input.screenHeightMm) / 10 + 20;
+  const volumetricKg = Math.ceil((boxW * boxD * boxH) / 5000);
+  return Math.max(volumetricKg, freightWeightKg(input.actualKg, input.volumetricModifier ?? 1));
+};
+
+/**
+ * Trim cost (AUD) — workbook `(LED 1)` row 292: width rate × width (m) + height rate × height (m).
+ * e.g. "Trim (Sides Only)" ($0 / $60 per m) on a 1500 × 2000 screen = 60 × 2.0 = $120.
+ */
+export const trimCostAud = (widthRatePerM: number, heightRatePerM: number, widthM: number, heightM: number): number =>
+  round(d(widthRatePerM).times(widthM).plus(d(heightRatePerM).times(heightM))).toNumber();
+
+/**
  * Sea-freight cost for a shipment (AUD), from `Reference Data` constants:
  * `(originUsd + transitPerCbmUsd × cbm) / usdRate + destinationAud`, times the sea multiple.
  */
