@@ -10,6 +10,8 @@ import {
   evaluateSelectionTree,
   fixedLine,
   freightWeightKg,
+  shippingBoxKg,
+  trimCostAud,
   highResUplift,
   ledInstall,
   ledSpec,
@@ -19,6 +21,7 @@ import {
   priceSectionsAtMargin,
   receiverCardCost,
   selectController,
+  controllerPortsNeeded,
   selectLcdTiers,
   selectTiers,
   sparesCost,
@@ -258,7 +261,14 @@ export const configureForQuote = async (
   // The pure selector takes a minimal spec; map the catalogue rows once rather than per option.
   const controllerSpecs = controllers
     .filter((c) => c.maxPixels != null)
-    .map((c) => ({ id: c.id.toString(), name: c.name, maxPixels: Number(c.maxPixels), cost: Number(c.price) }));
+    .map((c) => ({
+      id: c.id.toString(),
+      name: c.name,
+      maxPixels: Number(c.maxPixels),
+      cost: Number(c.price),
+      maxPorts: c.maxPorts,
+      type: c.type,
+    }));
 
   // U2: annotate with tolerance band; drop options beyond the largest band (noting how many).
   const within: ConfigOptionWithBand[] = [];
@@ -271,12 +281,15 @@ export const configureForQuote = async (
     }
     // Z3 — the quoted lead time = manufacturer lead time + the admin-set buffer (null stays null).
     const buffered = applyLeadTimeBuffer(o, leadTimeBuffer);
-    // Controller auto-selection: the smallest catalogue unit whose capacity covers this build's
-    // pixels. Pure + deterministic (packages/calc), so the same option always yields the same pick.
-    const pick = selectController(
-      buffered.resolutionWpx * buffered.resolutionHpx,
-      controllerSpecs,
-    );
+    // Controller auto-selection, as the workbook does it (`(LED 1)` B270 / H248): count the ports the
+    // build needs (WALL products: one per metre of width), then take the smallest "Standard" unit
+    // (MCTRL300 → MCTRL700) with enough pixels AND ports; other types only when no Standard fits.
+    // Pure + deterministic (packages/calc), so the same option always yields the same pick.
+    const pixels = buffered.resolutionWpx * buffered.resolutionHpx;
+    const pick = selectController(pixels, controllerSpecs, {
+      portsNeeded: controllerPortsNeeded({ model: buffered.model, widthMm: buffered.widthMm, pixels }),
+      preferType: 'Standard',
+    });
     within.push({
       ...buffered,
       suggestedControllerId: pick.controller ? String(pick.controller.id) : null,
@@ -843,8 +856,23 @@ const computeLedScreenPricing = async (
   if (input.frameId) {
     const frame = await prisma.frame.findUnique({ where: { id: BigInt(input.frameId) } });
     if (frame) {
-      const cost = Number(frame.price) + Number(frame.backcoverCost);
+      // Workbook `(LED 1)` rows 290–291: the frame is always charged, its back cover only when
+      // "Back Cover" = Yes (H291 = IF(C26="Yes",1,0)).
+      const cost = Number(frame.price) + (input.backCover ? Number(frame.backcoverCost) : 0);
       lines.push(markupLine(`Frame — ${frame.name}`, 'frame_trim', cost, config.markups.metalwork));
+    }
+  }
+  // Trim (workbook row 292): width rate × width (m) + height rate × height (m), on the built size.
+  // e.g. "Trim (Sides Only)" = $0/m × width + $60/m × height. Metalwork markup, like the frame.
+  if (input.trimId) {
+    const trim = await prisma.trimOption.findUnique({ where: { id: BigInt(input.trimId) } });
+    const widthM = (spec?.widthMm ?? input.desiredWidthMm ?? 0) / 1000;
+    const heightM = (spec?.heightMm ?? input.desiredHeightMm ?? 0) / 1000;
+    if (trim) {
+      const trimCost = trimCostAud(Number(trim.widthMultiplier), Number(trim.heightMultiplier), widthM, heightM);
+      if (trimCost > 0) {
+        lines.push(markupLine(`Trim — ${trim.name}`, 'frame_trim', trimCost, config.markups.metalwork));
+      }
     }
   }
   // GOB line (metalwork markup): cost was computed above in the supply block (Fix A). Push it here so
@@ -872,10 +900,33 @@ const computeLedScreenPricing = async (
       input.freightOptionId ? prisma.freightOption.findUnique({ where: { id: BigInt(input.freightOptionId) } }) : null,
       input.installMethodId ? prisma.installMethod.findUnique({ where: { id: BigInt(input.installMethodId) } }) : null,
     ]);
+    // Use standard cabinet dimensions (cols E & F) if available, falling back to minCabinetWMm/HMm.
+    // If rotateCabinets is true, cabinet width and height swap units (as in Excel: C14 = IF(C13="Y", F5, E5)).
+    const standardCabW = Number(product?.cabinetWMm ?? product?.minCabinetWMm ?? 0);
+    const standardCabH = Number(product?.cabinetHMm ?? product?.minCabinetHMm ?? 0);
+    const effCabW = input.rotateCabinets ? standardCabH : standardCabW;
+    const effCabH = input.rotateCabinets ? standardCabW : standardCabH;
+    const cabinetsW = effCabW > 0 ? Math.ceil(spec.widthMm / effCabW) : spec.cabinetsWide;
+    const cabinetsH = effCabH > 0 ? Math.ceil(spec.heightMm / effCabH) : spec.cabinetsHigh;
+
     if (product?.kgPerSqm) {
       const vol = Number(product.volumetricModifier ?? 1);
       const actualKg = area * Number(product.kgPerSqm);
-      freightKg = round(freightWeightKg(actualKg, vol)).toNumber(); // MAX(volumetric, actual)
+      const shipDepthCm = Number(product.shipDepthMm ?? 0); // the workbook's "Ship Depth" column (cm/cabinet)
+      freightKg =
+        shipDepthCm > 0 && effCabW > 0 && effCabH > 0
+          ? // Workbook packed-box volumetric weight vs actual × modifier, whichever is greater.
+            shippingBoxKg({
+              cabinetWMm: effCabW,
+              cabinetHMm: effCabH,
+              cabinetsWide: cabinetsW,
+              cabinetsHigh: cabinetsH,
+              screenHeightMm: spec.heightMm,
+              shipDepthCm,
+              actualKg,
+              volumetricModifier: vol,
+            })
+          : round(freightWeightKg(actualKg, vol)).toNumber(); // no ship depth → MAX(volumetric, actual)
     }
     // Freight hard-stop (P1-16.9): if a freight option was explicitly selected it MUST carry a rate —
     // a missing/zero rate is a misconfiguration, not a free shipment. Name the option and stop rather
@@ -895,14 +946,6 @@ const computeLedScreenPricing = async (
     // override rows (the default) this is `null` → the existing freight path is used, byte-for-byte.
     const freightOverride = await resolveFreightOverride(quote.location?.id ?? null, product?.manufacturerId ?? null);
 
-    // Use standard cabinet dimensions (cols E & F) if available, falling back to minCabinetWMm/HMm.
-    // If rotateCabinets is true, cabinet width and height swap units (as in Excel: C14 = IF(C13="Y", F5, E5)).
-    const standardCabW = Number(product?.cabinetWMm ?? product?.minCabinetWMm ?? 0);
-    const standardCabH = Number(product?.cabinetHMm ?? product?.minCabinetHMm ?? 0);
-    const effCabW = input.rotateCabinets ? standardCabH : standardCabW;
-    const effCabH = input.rotateCabinets ? standardCabW : standardCabH;
-    const cabinetsW = effCabW > 0 ? Math.ceil(spec.widthMm / effCabW) : spec.cabinetsWide;
-    const cabinetsH = effCabH > 0 ? Math.ceil(spec.heightMm / effCabH) : spec.cabinetsHigh;
     const baseHours = installMethod?.defaultHours ? Number(installMethod.defaultHours) : 4;
     const isIT = product?.model?.startsWith('IT') || false;
 
@@ -922,9 +965,10 @@ const computeLedScreenPricing = async (
     labourHours = input.labourHoursOverride ?? estimatedHours;
 
     const hasMediaplayer = compRows.some((c) => c.componentType === 'mediaplayer');
-    // Standard overhead: default 475 ($120 PM, $80 design/prep, $80 screen config, $30 consumables, $60 rubbish, $75 warehouse, $30 controller courier)
-    // + $45 if mediaplayer configured
-    const baseOverhead = config.freight.standardOverheadAud ?? 475;
+    // Standard overhead: default 595 ($240 PM = 2 h × $120, $80 design/prep, $80 screen config, $30 consumables,
+    // $60 rubbish, $75 warehouse, $30 controller courier) + $45 if mediaplayer configured.
+    // Admin-overridable via the `standard_overhead` setting.
+    const baseOverhead = config.freight.standardOverheadAud ?? 595;
     const overheadCostAud = baseOverhead + (hasMediaplayer ? 45 : 0);
 
     const install = ledInstall(
