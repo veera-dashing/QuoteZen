@@ -1,6 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { controllerPortsNeeded, selectController, type ControllerSpec } from './controller.js';
 import { freightWeightKg, shippingBoxKg, trimCostAud } from './led.js';
+import { WORKBOOK_DEFAULTS } from './constants.js';
+import {
+  estimateInstallHours,
+  installHoursBreakdown,
+  MEDIAPLAYER_CONFIG_COST_AUD,
+  STANDARD_OVERHEAD_ITEMS,
+} from './install.js';
+
+describe('install itemisation — (LED 1) rows 304–327', () => {
+  it('the itemised standard overhead totals the default (595) and includes PM 2 h', () => {
+    const total = STANDARD_OVERHEAD_ITEMS.reduce((s, i) => s + i.costAud, 0);
+    expect(total).toBe(WORKBOOK_DEFAULTS.freight.standardOverheadAud);
+    expect(STANDARD_OVERHEAD_ITEMS.find((i) => /project management/i.test(i.label))?.costAud).toBe(240);
+    expect(MEDIAPLAYER_CONFIG_COST_AUD).toBe(45);
+  });
+
+  it('Superdry 1500 × 2000 on 1000 × 500 cabinets: 4 base + 8 size + 4 frame = 16 h', () => {
+    const opts = { areaSqm: 3, cabinetsW: 2, cabinetsH: 4, cabinetWMm: 1000, cabinetHMm: 500, baseHours: 4, frameInstallHours: 4 };
+    expect(installHoursBreakdown(opts)).toEqual({ base: 4, size: 8, frame: 4, hanging: 0, total: 16 });
+    expect(estimateInstallHours(opts)).toBe(16); // the total is unchanged by the breakdown
+  });
+});
 
 /**
  * Parity with the Quote Base V1.6 workbook, using the Superdry (Werribee) job:

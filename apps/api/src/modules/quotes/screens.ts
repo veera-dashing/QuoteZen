@@ -6,7 +6,9 @@ import {
   configureScreen,
   DEFAULT_OUTDOOR_BRIGHTNESS_NITS,
   deriveAutoAnswers,
-  estimateInstallHours,
+  installHoursBreakdown,
+  STANDARD_OVERHEAD_ITEMS,
+  MEDIAPLAYER_CONFIG_COST_AUD,
   evaluateSelectionTree,
   fixedLine,
   freightWeightKg,
@@ -31,7 +33,7 @@ import {
   type PricedLine,
   type TreeConstraints,
 } from '@quotezen/calc';
-import { applyMargin, round } from '@quotezen/shared';
+import { applyMargin, d, mul, round } from '@quotezen/shared';
 import type { LcdScreenInput, LedIntakeInput, LedScreenInput, UpdateLedScreenInput } from '@quotezen/shared';
 import { AppError, notFound } from '../../errors.js';
 import { recordAudit } from '../../services/audit.js';
@@ -643,6 +645,13 @@ const resolveFreightOverride = async (
   return { ratePerScreenAud: Number(best.ratePerScreenAud), note: best.note, locationId: best.locationId };
 };
 
+/**
+ * A $0 placeholder row, so a screen's cost breakdown lists every row the workbook's `(LED 1)` costing
+ * block has (packaging, GOB, back cover, access equipment…) even when it doesn't apply. Zero lines
+ * add nothing to any section, so totals and the quoted price are unaffected.
+ */
+const zeroLine = (label: string, bucket: PricedLine['bucket']): PricedLine => fixedLine(label, bucket, 0, 0);
+
 interface LedScreenPricing {
   spec: ReturnType<typeof ledSpec> | null;
   lines: PricedLine[];
@@ -750,39 +759,41 @@ const computeLedScreenPricing = async (
         costAud: spares.costAud,
         sellAud: spares.sellAud,
       });
-      // Packaging + receiver cards (config-driven; only added when configured > 0).
+      // Packaging + receiver cards (config-driven). Shown even at $0, like the sheet's rows 259 / 261.
       const packaging = packagingCost(supply.costAud, config);
-      if (packaging.costAud.greaterThan(0)) {
-        lines.push({ label: 'Packaging', bucket: 'screen_mediaplayer', qty: 1, costAud: packaging.costAud, sellAud: packaging.sellAud });
-      }
+      lines.push({ label: 'Packaging', bucket: 'screen_mediaplayer', qty: 1, costAud: packaging.costAud, sellAud: packaging.sellAud });
       const receivers = receiverCardCost(spec.cabinetCount, config);
-      if (receivers.costAud.greaterThan(0)) {
-        lines.push({ label: 'Receiver cards', bucket: 'screen_mediaplayer', qty: 1, costAud: receivers.costAud, sellAud: receivers.sellAud });
-      }
+      lines.push({ label: 'Receiver cards', bucket: 'screen_mediaplayer', qty: 1, costAud: receivers.costAud, sellAud: receivers.sellAud });
       // AA4 — high-resolution supply upgrade: a fractional uplift on the supply cost, from the
-      // `high_res_uplift_pct` setting (0 by default → no line, so this is a strict no-op until an
-      // admin sets a rate). Only added when the screen opted in AND the rate is > 0.
+      // `high_res_uplift_pct` setting (0 by default). Only priced when the screen opted in AND the
+      // rate is > 0; otherwise a "(not selected)" $0 row, so the sheet's full row list is visible.
+      let hiresAdded = false;
       if (input.highResolution) {
         const upliftPct = await settingNum('high_res_uplift_pct', 0);
         if (upliftPct > 0) {
           const hires = highResUplift(supply.costAud, upliftPct, config);
           if (hires.costAud.greaterThan(0)) {
             lines.push({ label: 'High-resolution upgrade', bucket: 'screen_mediaplayer', qty: 1, costAud: hires.costAud, sellAud: hires.sellAud });
+            hiresAdded = true;
           }
         }
       }
+      if (!hiresAdded) lines.push(zeroLine('High-resolution upgrade (not selected)', 'screen_mediaplayer'));
     }
     // AA4 — protective / gold coating: priced by screen area (cost/sqm × area), sold at the LED
-    // markup. Uses the same area the supply calc uses (spec.areaSqm). 0-cost coating → no line.
+    // markup. Uses the same area the supply calc uses (spec.areaSqm). None / 0-cost → a "(none)" $0 row.
+    let coatingAdded = false;
     if (input.coatingId) {
       const coating = await prisma.coatingOption.findUnique({ where: { id: BigInt(input.coatingId) } });
       if (coating && Number(coating.costPerSqm) > 0) {
         const c = coatingCost(spec.areaSqm, Number(coating.costPerSqm), config);
         if (c.costAud.greaterThan(0)) {
           lines.push({ label: `Coating — ${coating.name}`, bucket: 'screen_mediaplayer', qty: 1, costAud: c.costAud, sellAud: c.sellAud });
+          coatingAdded = true;
         }
       }
     }
+    if (!coatingAdded) lines.push(zeroLine('Coating (none)', 'screen_mediaplayer'));
   }
 
   // Components from their catalogs, with per-category markup/margin.
@@ -850,20 +861,30 @@ const computeLedScreenPricing = async (
       unitSellSnapshot: String(round(sell)),
     });
   }
+  // The sheet always lists a controller and a mediaplayer row (rows 270 / 273); show "(none)" at $0.
+  if (!compRows.some((c) => c.componentType === 'controller')) lines.push(zeroLine('Controller (none)', 'screen_mediaplayer'));
+  if (!compRows.some((c) => c.componentType === 'mediaplayer')) lines.push(zeroLine('Mediaplayer (none)', 'screen_mediaplayer'));
 
   // Frame (metalwork markup). GOB is now computed before spares (Fix A) but its line is pushed here,
-  // alongside the frame, to keep the frame_trim bucket together in the output.
-  if (input.frameId) {
-    const frame = await prisma.frame.findUnique({ where: { id: BigInt(input.frameId) } });
-    if (frame) {
-      // Workbook `(LED 1)` rows 290–291: the frame is always charged, its back cover only when
-      // "Back Cover" = Yes (H291 = IF(C26="Yes",1,0)).
-      const cost = Number(frame.price) + (input.backCover ? Number(frame.backcoverCost) : 0);
-      lines.push(markupLine(`Frame — ${frame.name}`, 'frame_trim', cost, config.markups.metalwork));
-    }
+  // alongside the frame, to keep the frame_trim bucket together in the output. Every row of the
+  // sheet's frame block (rows 290–292 + GOB) is listed — "(none)" / $0 when it doesn't apply.
+  const frameRow = input.frameId ? await prisma.frame.findUnique({ where: { id: BigInt(input.frameId) } }) : null;
+  if (frameRow) {
+    // Workbook `(LED 1)` rows 290–291: the frame is always charged, its back cover only when
+    // "Back Cover" = Yes (H291 = IF(C26="Yes",1,0)) — each on its own line, as in the sheet.
+    lines.push(markupLine(`Frame — ${frameRow.name}`, 'frame_trim', Number(frameRow.price), config.markups.metalwork));
+  } else {
+    lines.push(zeroLine('Frame (none)', 'frame_trim'));
   }
+  const backCoverCost = frameRow && input.backCover ? Number(frameRow.backcoverCost) : 0;
+  lines.push(
+    backCoverCost > 0
+      ? markupLine('Back cover', 'frame_trim', backCoverCost, config.markups.metalwork)
+      : zeroLine(input.backCover ? 'Back cover (none for this frame)' : 'Back cover (not selected)', 'frame_trim'),
+  );
   // Trim (workbook row 292): width rate × width (m) + height rate × height (m), on the built size.
   // e.g. "Trim (Sides Only)" = $0/m × width + $60/m × height. Metalwork markup, like the frame.
+  let trimAdded = false;
   if (input.trimId) {
     const trim = await prisma.trimOption.findUnique({ where: { id: BigInt(input.trimId) } });
     const widthM = (spec?.widthMm ?? input.desiredWidthMm ?? 0) / 1000;
@@ -872,20 +893,25 @@ const computeLedScreenPricing = async (
       const trimCost = trimCostAud(Number(trim.widthMultiplier), Number(trim.heightMultiplier), widthM, heightM);
       if (trimCost > 0) {
         lines.push(markupLine(`Trim — ${trim.name}`, 'frame_trim', trimCost, config.markups.metalwork));
+        trimAdded = true;
       }
     }
   }
+  if (!trimAdded) lines.push(zeroLine('Trim (none)', 'frame_trim'));
   // GOB line (metalwork markup): cost was computed above in the supply block (Fix A). Push it here so
-  // the frame_trim bucket stays contiguous. gobCostAud is 0 when no GOB was selected.
+  // the frame_trim bucket stays contiguous. No GOB → a "(none)" $0 row (the sheet's row 266).
+  let gobAdded = false;
   if (input.gobId && spec) {
     const gob = await prisma.gobOption.findUnique({ where: { id: BigInt(input.gobId) } });
     if (gob) {
       const gobLineCost = Number(gob.price) * spec.areaSqm.toNumber();
       if (gobLineCost > 0) {
         lines.push(markupLine(`GOB — ${gob.name}`, 'frame_trim', gobLineCost, config.markups.metalwork));
+        gobAdded = true;
       }
     }
   }
+  if (!gobAdded) lines.push(zeroLine('GOB (none)', 'frame_trim'));
 
   // Install / labour + freight (services bucket).
   let labourHours = 0;
@@ -951,7 +977,7 @@ const computeLedScreenPricing = async (
 
     // A user-set figure REPLACES the estimate outright (it is the installer's own number, not an
     // adjustment to ours). Null/absent → derive it as before.
-    const estimatedHours = estimateInstallHours({
+    const hours = installHoursBreakdown({
       areaSqm: area,
       cabinetsW,
       cabinetsH,
@@ -962,20 +988,22 @@ const computeLedScreenPricing = async (
       frameInstallHours: frame ? Number(frame.installHours) : 0,
       hanging: hangingBar ? Number(hangingBar.widthMultiplier) > 0 : false,
     });
-    labourHours = input.labourHoursOverride ?? estimatedHours;
+    labourHours = input.labourHoursOverride ?? hours.total;
 
     const hasMediaplayer = compRows.some((c) => c.componentType === 'mediaplayer');
     // Standard overhead: default 595 ($240 PM = 2 h × $120, $80 design/prep, $80 screen config, $30 consumables,
     // $60 rubbish, $75 warehouse, $30 controller courier) + $45 if mediaplayer configured.
     // Admin-overridable via the `standard_overhead` setting.
     const baseOverhead = config.freight.standardOverheadAud ?? 595;
-    const overheadCostAud = baseOverhead + (hasMediaplayer ? 45 : 0);
+    const overheadCostAud = baseOverhead + (hasMediaplayer ? MEDIAPLAYER_CONFIG_COST_AUD : 0);
 
+    const labourRate = config.freight.installLabour ?? 95;
+    const hourlyUplift = quote.location ? Number(quote.location.hourlyUplift) : 0;
     const install = ledInstall(
       {
         labourHours,
-        labourRate: config.freight.installLabour ?? 95,
-        locationHourlyUplift: quote.location ? Number(quote.location.hourlyUplift) : 0,
+        labourRate,
+        locationHourlyUplift: hourlyUplift,
         overheadCostAud,
         accessEquipmentDayRate: access ? Number(access.dayRate) : 0,
         // The override (flat per-screen) replaces the weight-based freight inside the marked-up total.
@@ -985,11 +1013,55 @@ const computeLedScreenPricing = async (
       },
       config,
     );
-    // Label the services line so the override is visible in the itemised price + BOM cost lines.
-    const installLabel = freightOverride
-      ? `Install, labour & freight (Freight override — ${freightOverride.note ?? quote.location?.name ?? 'per screen'})`
-      : 'Install, labour & freight';
-    lines.push(fixedLine(installLabel, 'services', install.costAud, install.sellAud));
+
+    // Itemise the install section the way `(LED 1)` lists it (rows 304–327) instead of one combined
+    // line. Every item stays in the services bucket, so the section's cost — and therefore its quoted
+    // price (cost at the LED margin, rounded to $10) — is exactly `install.costAud`, unchanged.
+    const svc: Array<{ label: string; cost: number }> = [];
+    // Every row of the sheet's install block is listed, at $0 when it doesn't apply (like the sheet).
+    const add = (label: string, cost: number) => {
+      svc.push({ label, cost: round(cost).toNumber() });
+    };
+    // Standard overhead, as the sheet's rows. An admin `standard_overhead` setting that differs from
+    // the itemised default is shown as its own adjustment so the lines still total the overhead
+    // (only when there IS a difference — it is not a workbook row).
+    for (const item of STANDARD_OVERHEAD_ITEMS) add(item.label, item.costAud);
+    const itemisedDefault = STANDARD_OVERHEAD_ITEMS.reduce((s, i) => s + i.costAud, 0);
+    if (baseOverhead !== itemisedDefault) add('Standard overhead adjustment (setting)', baseOverhead - itemisedDefault);
+    add(hasMediaplayer ? 'Mediaplayer configuration' : 'Mediaplayer configuration (no mediaplayer)', hasMediaplayer ? MEDIAPLAYER_CONFIG_COST_AUD : 0);
+    // Freight: the flat override replaces the weight-based freight + local delivery.
+    if (freightOverride) {
+      add(`Freight override — ${freightOverride.note ?? quote.location?.name ?? 'per screen'}`, freightOverride.ratePerScreenAud);
+    } else if (intlFreightAud > 0 && freightOpt) {
+      add(`${freightOpt.name} (${freightKg} kg × $${Number(freightOpt.rate)})`, intlFreightAud);
+      add('Local delivery', localFreightAud);
+    } else {
+      add('Freight (none selected)', 0);
+      add('Local delivery', 0);
+    }
+    add(access ? `Access equipment — ${access.name}` : 'Access equipment (none)', access ? Number(access.dayRate) : 0);
+    // Installer labour (rows 323–327). A manual override replaces the estimate as a single line.
+    if (input.labourHoursOverride != null) {
+      add(`Install labour (${labourHours} h × $${labourRate}, set manually)`, labourHours * labourRate);
+    } else {
+      add(`Install base cost (${hours.base} h × $${labourRate})`, hours.base * labourRate);
+      add(`Install size-driven hours (${hours.size} h × $${labourRate})`, hours.size * labourRate);
+      add(`Frame install (${hours.frame} h × $${labourRate})`, hours.frame * labourRate);
+      add(`Hanging install uplift (${hours.hanging} h × $${labourRate})`, hours.hanging * labourRate);
+    }
+    add(`Location hourly uplift (${labourHours} h × $${hourlyUplift})`, labourHours * hourlyUplift);
+    add(engineering ? `Engineering — ${engineering.name}` : 'Engineering (none)', engineering ? Number(engineering.price) : 0);
+
+    // Safety net: the itemised lines must total the install cost to the cent. Any rounding residual
+    // lands on the largest line (normally none — each item is a whole-cent amount).
+    if (svc.length === 0) svc.push({ label: 'Install', cost: 0 });
+    const residual = install.costAud.minus(svc.reduce((s, l) => s + l.cost, 0));
+    if (!residual.isZero()) {
+      const biggest = svc.reduce((b, l, i) => (l.cost > svc[b]!.cost ? i : b), 0);
+      svc[biggest]!.cost = round(d(svc[biggest]!.cost).plus(residual)).toNumber();
+    }
+    // Sells here are reference values only — priceSectionsAtMargin below re-prices the section.
+    for (const l of svc) lines.push(fixedLine(l.label, 'services', l.cost, round(mul(l.cost, config.markups.service))));
   }
 
   // The workbook quotes each section (supply, frame & trim, install) at the LED margin on its total
