@@ -120,6 +120,8 @@ interface Quote {
   discountScope?: 'one_off' | 'recurring' | null; // U5 — upfront vs every renewal
   discountMode?: 'stack' | 'item_only' | null; // V2 — item+quote discount vs per-item only
   totalEquipment: string; totalServices: string; totalRecurring: string; grandTotal: string;
+  /** Bumped by every save on the quote (incl. a screen re-edit whose price didn't change). */
+  updatedAt?: string;
   currency?: { code: string } | null;
   ledScreens: LedScreen[]; lcdScreens: LcdScreen[]; licences: Licence[];
   viewers?: Array<{ user: { id: string; name: string; email: string } }>;
@@ -4424,9 +4426,17 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
     setBkOpen((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
   };
 
+  // A re-price round-trip can take several seconds; meanwhile the totals card shows the quote's saved
+  // totals (+ "Updating…") rather than an empty "Loading price…". The sequence number drops a slower,
+  // older response that lands after a newer one (rapid edits fire overlapping re-prices).
+  const [priceBusy, setPriceBusy] = useState(false);
+  const priceSeq = useRef(0);
   const loadPrice = useCallback(async () => {
+    const seq = ++priceSeq.current;
+    setPriceBusy(true);
     try {
       const p = await api<PriceResult>(`/quotes/${quote.id}/price`, { method: 'POST' });
+      if (seq !== priceSeq.current) return; // a newer re-price superseded this one
       setPrice(p);
       const seed: Record<string, string> = {};
       for (const sec of p.sections) for (const l of sec.lines) {
@@ -4435,13 +4445,18 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
       setDiscDraft(seed);
       setPriceErr(null);
     } catch (e) {
+      if (seq !== priceSeq.current) return;
       setPriceErr(e instanceof Error ? e.message : 'Pricing failed');
+    } finally {
+      if (seq === priceSeq.current) setPriceBusy(false);
     }
   }, [quote.id]);
 
   // Reload the breakdown whenever screens or totals change on the quote (add/edit/qty/delete/discount).
   const screensKey = `${quote.ledScreens.length}:${quote.ledScreens.map((s) => `${s.id}:${s.priceTotal}:${s.qty}`).join(',')}|${quote.lcdScreens.length}:${quote.lcdScreens.map((s) => `${s.id}:${s.priceTotal}`).join(',')}`;
-  useEffect(() => { void loadPrice(); }, [loadPrice, screensKey, quote.lockVersion, quote.grandTotal]);
+  // `updatedAt` catches saves that leave every screen total unchanged (e.g. re-pricing a screen to the
+  // same figure but new itemised lines) — those used to leave a stale breakdown until "Refresh".
+  useEffect(() => { void loadPrice(); }, [loadPrice, screensKey, quote.lockVersion, quote.grandTotal, quote.updatedAt]);
 
   const sectionFor = (type: 'led' | 'lcd', id: string): PriceSection | null =>
     price?.sections.find((s) => s.type === type && s.screenId === id) ?? null;
@@ -4686,12 +4701,15 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
         <div className="card">
           <div className="topbar">
             <h3 style={{ margin: 0 }}>Quote totals</h3>
-            <button className="ghost" onClick={() => void loadPrice()}>↻ Refresh</button>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              {priceBusy && <span className="muted" aria-live="polite">Updating…</span>}
+              <button className="ghost" onClick={() => void loadPrice()} disabled={priceBusy}>↻ Refresh</button>
+            </span>
           </div>
           {priceErr && <div className="error" style={{ marginTop: 8 }}>{priceErr}</div>}
-          {!price && !priceErr && <p className="muted">Loading price…</p>}
-          {price && (
-            <>
+          {/* The whole card renders at once: until the first re-price returns, the totals are the ones
+              already saved on the quote and the margin tiles show "…" (margin needs the live re-price). */}
+          <>
               {canWrite ? (
                 <div style={{ margin: '4px 0 12px' }}>
                   <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Discount mode</label>
@@ -4708,9 +4726,9 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
               ) : (
                 <p className="muted" style={{ marginTop: 4 }}>Read-only role — discounts and mode are view-only.</p>
               )}
-              {!price.costVisible && <p className="muted">Cost hidden for your role.</p>}
+              {price && !price.costVisible && <p className="muted">Cost hidden for your role.</p>}
 
-              {price.licences.length > 0 && (
+              {price && price.licences.length > 0 && (
                 <div style={{ marginBottom: 12 }}>
                   <b>Licences</b>
                   <div className="table-wrap" style={{ marginTop: 6 }}>
@@ -4730,17 +4748,25 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
               )}
 
               <div className="totals">
-                <div className="stat"><div className="label">Equipment</div><div className="value">{cur} {Number(price.totals.equipment).toLocaleString()}</div></div>
-                <div className="stat"><div className="label">Services</div><div className="value">{cur} {Number(price.totals.services).toLocaleString()}</div></div>
-                <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(price.totals.recurring).toLocaleString()}</div></div>
-                {price.discount && price.discount.pct > 0 && (
+                <div className="stat"><div className="label">Equipment</div><div className="value">{cur} {Number(price?.totals.equipment ?? quote.totalEquipment).toLocaleString()}</div></div>
+                <div className="stat"><div className="label">Services</div><div className="value">{cur} {Number(price?.totals.services ?? quote.totalServices).toLocaleString()}</div></div>
+                <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(price?.totals.recurring ?? quote.totalRecurring).toLocaleString()}</div></div>
+                {price?.discount && price.discount.pct > 0 && (
                   <div className="stat">
                     <div className="label">Discount ({(price.discount.pct * 100).toFixed(price.discount.pct * 100 % 1 ? 1 : 0)}% · {price.discount.scope === 'recurring' ? 'per renewal' : 'one-off'})</div>
                     <div className="value" style={{ color: 'var(--danger, #dc2626)' }}>− {cur} {Number(price.discount.amount).toLocaleString()}</div>
                   </div>
                 )}
-                <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(price.totals.grandTotal).toLocaleString()}</div></div>
-                {price.totals.margin != null && (() => {
+                <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(price?.totals.grandTotal ?? quote.grandTotal).toLocaleString()}</div></div>
+                {/* Margin is only returned to roles that may see cost (admin); before the first re-price
+                    the tiles are shown as placeholders for those roles so the card doesn't jump. */}
+                {!price && getRole() === 'admin' && (
+                  <>
+                    <div className="stat"><div className="label">Margin</div><div className="value muted">…</div></div>
+                    <div className="stat"><div className="label">Margin floor</div><div className="value muted">…</div></div>
+                  </>
+                )}
+                {price && price.totals.margin != null && (() => {
                   const margin = Number(price.totals.margin);
                   const floor = price.totals.marginFloor;
                   const below = floor != null && margin < floor;
@@ -4752,8 +4778,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
                   );
                 })()}
               </div>
-            </>
-          )}
+          </>
         </div>
       )}
     </div>
