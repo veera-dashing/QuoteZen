@@ -95,7 +95,23 @@ export interface EstimateInstallHoursOpts {
  * cabinet hours (Excel formula: MROUND(MAX(cabW * cabH * largeCabinet, 4) * areaDiscount * sides, 2)),
  * frame install hours, and a hanging uplift. Mirrors the workbook's model faithfully.
  */
-export const estimateInstallHours = (opts: EstimateInstallHoursOpts): number => {
+export const estimateInstallHours = (opts: EstimateInstallHoursOpts): number =>
+  installHoursBreakdown(opts).total;
+
+/** The parts of {@link estimateInstallHours} — `(LED 1)` rows 323–326 — so each can be itemised. */
+export interface InstallHoursBreakdown {
+  /** Install base hours (row 323, default 4 or the install method's hours). */
+  base: number;
+  /** Size-driven cabinet hours (row 324). */
+  size: number;
+  /** Frame install hours (row 325). */
+  frame: number;
+  /** Hanging uplift hours (row 326). */
+  hanging: number;
+  total: number;
+}
+
+export const installHoursBreakdown = (opts: EstimateInstallHoursOpts): InstallHoursBreakdown => {
   const base = opts.baseHours ?? 4;
   const frame = opts.frameInstallHours ?? 0;
   const hanging = opts.hanging ? 4 : 0;
@@ -122,7 +138,25 @@ export const estimateInstallHours = (opts: EstimateInstallHoursOpts): number => 
     sizeHours = Math.round(raw / 2) * 2;
   }
 
-  return base + sizeHours + frame + hanging;
+  return { base, size: sizeHours, frame, hanging, total: base + sizeHours + frame + hanging };
 };
+
+/**
+ * The standard overhead (`(LED 1)` rows 304–317), itemised as the workbook lists it. Sums to the
+ * default `standardOverheadAud` (595); the API adds an adjustment line when an admin's
+ * `standard_overhead` setting differs, so the itemised lines always total the configured overhead.
+ */
+export const STANDARD_OVERHEAD_ITEMS: ReadonlyArray<{ label: string; costAud: number }> = [
+  { label: 'Consumables', costAud: 30 },
+  { label: 'Rubbish removal', costAud: 60 },
+  { label: 'Warehouse', costAud: 75 },
+  { label: 'Project management (2 h × $120)', costAud: 240 },
+  { label: 'Installation design & site prep', costAud: 80 },
+  { label: 'Screen configuration', costAud: 80 },
+  { label: 'Local freight (mediaplayer/controller)', costAud: 30 },
+];
+
+/** Mediaplayer configuration (row 311) — added to the overhead only when a mediaplayer is attached. */
+export const MEDIAPLAYER_CONFIG_COST_AUD = 45;
 
 export const ZERO_INSTALL: InstallResult = { labourHours: 0, costAud: ZERO, sellAud: ZERO };
