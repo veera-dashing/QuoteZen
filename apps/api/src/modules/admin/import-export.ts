@@ -46,6 +46,13 @@ interface PreparedRow {
 
 const idColumn = z.coerce.bigint();
 
+/** Import transaction time budget (see the confirm handler): base + per row, capped. */
+export const IMPORT_TX_BASE_MS = 30_000;
+export const IMPORT_TX_PER_ROW_MS = 1_000;
+export const IMPORT_TX_MAX_MS = 600_000;
+/** How long to wait for a free DB connection before starting the import transaction. */
+const IMPORT_TX_MAX_WAIT_MS = 15_000;
+
 /**
  * Parse the request payload into an array of raw string-keyed rows. Accepts either a multipart CSV
  * file (field `file`) or a JSON body `{ rows: [...] }`. Empty CSV cells become `undefined` so they
@@ -228,6 +235,10 @@ export const importExportRoutes = async (app: FastifyInstance): Promise<void> =>
     let created = 0;
     let updated = 0;
     try {
+      // One transaction keeps the import all-or-nothing, but Prisma's default 5 s limit was far too
+      // short against the remote DB (~150+ rows timed out and rolled back). Allow time in proportion to
+      // the file: 30 s + 1 s per row, capped at 10 minutes.
+      const timeout = Math.min(IMPORT_TX_BASE_MS + prepared.length * IMPORT_TX_PER_ROW_MS, IMPORT_TX_MAX_MS);
       await prisma.$transaction(async (tx) => {
         const txDelegate = (tx as Record<string, unknown>)[def.model] as {
           create: (a: unknown) => Promise<unknown>;
@@ -242,7 +253,7 @@ export const importExportRoutes = async (app: FastifyInstance): Promise<void> =>
             created += 1;
           }
         }
-      });
+      }, { maxWait: IMPORT_TX_MAX_WAIT_MS, timeout });
     } catch (err) {
       // A constraint (e.g. duplicate unique key, P2002) rolled the whole transaction back.
       const e = err as { code?: string; meta?: { target?: unknown } };

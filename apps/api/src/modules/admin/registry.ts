@@ -142,12 +142,18 @@ export const TABLES: TableDef[] = [
       f('cabinetType'), f('pixelPitchH', 'decimal'), f('pixelPitchV', 'decimal'), f('brightnessNits', 'int'),
       // W0: indoor/outdoor suitability (nullable enum). Null → config falls back to a brightness heuristic.
       f('environment', 'enum', false, ['indoor', 'outdoor']),
-      f('powerMaxW', 'int'), f('powerAvgW', 'int'), f('kgPerSqm', 'decimal'), f('costPerSqmUsd', 'decimal'),
+      f('powerMaxW', 'int'), f('powerAvgW', 'int'), f('kgPerSqm', 'decimal'),
+      // Workbook "Ship Depth" column (cm per cabinet, despite the name) — drives the packed-box freight
+      // weight. Exposed so it can be maintained/imported like the other catalogue columns.
+      f('shipDepthMm', 'int'),
+      f('costPerSqmUsd', 'decimal'),
       f('modulePrice', 'decimal'), f('volumetricModifier', 'decimal'), f('includesReceivers', 'boolean'),
       f('gobIncluded', 'boolean'), f('packIncluded', 'boolean'), f('serviceAccess'),
       // Per-model recommendation priority (lower = preferred) — secondary ranking key in the config engine.
       f('priority', 'int'),
       // AA2 — component compatibility group (matched against controller/frame groups in validation).
+      // It was listed in listFields but missing here, so it could be neither edited nor imported.
+      f('compatibilityGroup'),
       // Phase 1: Explicit transparency and curved capability flags.
       f('isTransparent', 'boolean'), f('isCob', 'boolean'), f('supportsCurved', 'boolean'),
       f('upgradeOptions', 'text'), f('mechanicalOptions', 'text'), DEPRECATED,
@@ -163,7 +169,9 @@ export const TABLES: TableDef[] = [
   {
     resource: 'controllers', model: 'controller', label: 'Controllers', group: 'LED',
     titleField: 'name', searchFields: ['name', 'type'],
-    fields: [f('name', 'string', true), f('type'), f('maxPorts', 'int'), f('maxWidth', 'int'), f('price', 'decimal', true), f('compatibilityGroup'), DEPRECATED],
+    // maxPixels (single-unit pixel capacity) drives controller auto-selection — a controller without it is
+    // never auto-picked, so it must be settable here and via import.
+    fields: [f('name', 'string', true), f('type'), f('maxPorts', 'int'), f('maxPixels', 'int'), f('maxWidth', 'int'), f('price', 'decimal', true), f('compatibilityGroup'), DEPRECATED],
     listFields: ['name', 'type', 'maxPorts', 'price', 'compatibilityGroup', 'deprecated'],
   },
   {

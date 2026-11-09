@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '@quotezen/db';
 import { buildApp } from '../../app.js';
 import { loadConfig } from '../../config.js';
+import { csvBoolean } from './routes.js';
 
 /**
  * Bulk import/export (P1-06.4 / P1-06.5) exercised through the `clients` table (cheap, no FK
@@ -102,6 +103,69 @@ describe('import preview (dry-run, never writes)', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().willCreate).toBe(1);
+  });
+});
+
+/** POST a CSV string as a multipart upload (what the admin "Import CSV" button sends). */
+const uploadCsv = (url: string, csv: string) => {
+  const boundary = '----qzcsv';
+  const body =
+    `--${boundary}\r\n` +
+    'Content-Disposition: form-data; name="file"; filename="import.csv"\r\n' +
+    'Content-Type: text/csv\r\n\r\n' +
+    `${csv}\r\n--${boundary}--\r\n`;
+  return app.inject({
+    method: 'POST',
+    url,
+    headers: { ...auth(), 'content-type': `multipart/form-data; boundary=${boundary}` },
+    payload: body,
+  });
+};
+
+describe('boolean columns from CSV', () => {
+  it('csvBoolean accepts true/false, yes/no, y/n, 1/0 (any case) and rejects anything else', () => {
+    for (const v of ['true', 'TRUE', ' yes ', 'Y', '1', true, 1]) expect(csvBoolean.parse(v)).toBe(true);
+    for (const v of ['false', 'False', 'no', 'N', '0', false, 0]) expect(csvBoolean.parse(v)).toBe(false);
+    for (const v of ['maybe', '2', 'truthy']) expect(csvBoolean.safeParse(v).success).toBe(false);
+  });
+
+  it('a CSV with true/false text imports and stores real booleans', async () => {
+    const yes = tag('bool-yes');
+    const no = tag('bool-no');
+    const csv = `name,requiresProtectiveCoating\n${yes},true\n${no},no\n`;
+    const preview = await uploadCsv('/admin/clients/import/preview', csv);
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json()).toMatchObject({ valid: 2, invalid: 0, willCreate: 2 });
+
+    const confirm = await uploadCsv('/admin/clients/import', csv);
+    expect(confirm.statusCode).toBe(200);
+    expect((await prisma.client.findFirst({ where: { name: yes } }))?.requiresProtectiveCoating).toBe(true);
+    expect((await prisma.client.findFirst({ where: { name: no } }))?.requiresProtectiveCoating).toBe(false);
+  });
+});
+
+describe('export → re-import round trip (the documented price-update workflow)', () => {
+  // An exported file, re-uploaded unchanged, must validate cleanly — before the boolean fix every row of
+  // led-products and display-catalog was rejected. Preview only: nothing is written.
+  for (const resource of ['led-products', 'display-catalog', 'controllers']) {
+    it(`${resource}: an unchanged export previews with no invalid rows`, async () => {
+      const exported = await app.inject({ method: 'GET', url: `/admin/${resource}/export`, headers: auth() });
+      expect(exported.statusCode).toBe(200);
+      const preview = await uploadCsv(`/admin/${resource}/import/preview`, exported.body);
+      expect(preview.statusCode).toBe(200);
+      const report = preview.json() as { total: number; invalid: number; willUpdate: number; errors: unknown[] };
+      expect(report.errors).toEqual([]);
+      expect(report.invalid).toBe(0);
+      expect(report.willUpdate).toBe(report.total);
+    });
+  }
+
+  it('the export carries the columns that were missing (ship depth, compatibility group, controller pixels)', async () => {
+    const header = (body: string) => body.split('\n')[0]?.trim().split(',') ?? [];
+    const led = await app.inject({ method: 'GET', url: '/admin/led-products/export', headers: auth() });
+    expect(header(led.body)).toEqual(expect.arrayContaining(['shipDepthMm', 'compatibilityGroup']));
+    const ctl = await app.inject({ method: 'GET', url: '/admin/controllers/export', headers: auth() });
+    expect(header(ctl.body)).toContain('maxPixels');
   });
 });
 

@@ -16,6 +16,25 @@ const hasDeprecated = (def: TableDef): boolean => def.fields.some((field) => fie
 const isForeignKeyError = (err: unknown): boolean =>
   typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2003';
 
+/**
+ * Boolean that also accepts the text a CSV cell carries. A CSV upload has no types — an exported
+ * `true` comes back as the string "true" — so a plain z.boolean() rejected every row of a re-imported
+ * export. Accepts true/false, yes/no, y/n, 1/0 (any case); real booleans pass through; anything else
+ * is left as-is so it still fails validation with a clear message.
+ */
+const BOOL_TRUE = new Set(['true', 'yes', 'y', '1']);
+const BOOL_FALSE = new Set(['false', 'no', 'n', '0']);
+export const csvBoolean = z.preprocess((v) => {
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (BOOL_TRUE.has(s)) return true;
+    if (BOOL_FALSE.has(s)) return false;
+  }
+  if (v === 1) return true;
+  if (v === 0) return false;
+  return v;
+}, z.boolean());
+
 /** Zod validator for one field. */
 export const fieldSchema = (field: FieldDef): z.ZodTypeAny => {
   switch (field.type) {
@@ -33,7 +52,7 @@ export const fieldSchema = (field: FieldDef): z.ZodTypeAny => {
       return n;
     }
     case 'boolean':
-      return z.boolean();
+      return csvBoolean;
     case 'date':
       return z.coerce.date();
     case 'enum':
