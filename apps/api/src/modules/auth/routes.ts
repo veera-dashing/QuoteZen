@@ -23,7 +23,8 @@ export const authRoutes = async (app: FastifyInstance): Promise<void> => {
   app.post('/auth/login', async (request) => {
     const { email, password } = parse(loginSchema, request.body);
 
-    const user = await prisma.user.findUnique({ where: { email }, include: { role: true } });
+    // Emails are stored lower-case (admin user management normalises them), so match case-insensitively.
+    const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() }, include: { role: true } });
     if (!user || !user.isActive) throw unauthorized();
 
     const ok = await bcrypt.compare(password, user.passwordHash);
