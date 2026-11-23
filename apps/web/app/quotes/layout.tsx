@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { clearToken, getRole, getToken, type Role } from '@/lib/api';
 import ThemeToggle from '@/components/ThemeToggle';
 import Logo from '@/components/Logo';
+import ChangePasswordButton from '@/components/ChangePasswordDialog';
 
 export default function QuotesLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -37,6 +38,7 @@ export default function QuotesLayout({ children }: { children: ReactNode }) {
           <Link href="/quotes">Quotes</Link>
           {canSeeReference && <Link href="/admin">Reference data</Link>}
           <ThemeToggle />
+          <ChangePasswordButton />
           <button
             className="ghost"
             onClick={() => {
