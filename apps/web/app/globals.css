@@ -78,6 +78,10 @@ label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px
 .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 16px 10px; overflow-y: auto; height: 100vh; position: sticky; top: 0; }
 .brand { font-weight: 700; font-size: 16px; padding: 6px 10px 14px; display: flex; align-items: center; gap: 8px; }
 .brand small { color: var(--muted); font-weight: 400; }
+/* Seen wordmark. Artwork is solid black on transparency; the dark palette is the app default,
+   so invert by default and restore the original ink under the light palette. */
+.brand-logo { height: 22px; width: auto; display: block; flex: none; filter: invert(1); }
+[data-theme='light'] .brand-logo { filter: none; }
 .nav-group { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 14px 10px 4px; }
 .nav-item { display: flex; justify-content: space-between; padding: 6px 10px; border-radius: 6px; color: var(--text); cursor: pointer; }
 .nav-item:hover { background: var(--surface-2); }
@@ -131,9 +135,20 @@ td.actions { text-align: right; }
 .step { padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; font-size: 13px; }
 .step.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .step.done { border-color: var(--ok); color: var(--ok); }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
-.totals { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+/* minmax(0, 1fr) rather than 1fr: a bare 1fr is minmax(auto, 1fr), so a track refuses to shrink
+   below its content and unbreakable items (nowrap badges, long model names) push the row past the
+   container. minmax(0, …) caps the track; min-width: 0 lets the item itself shrink and wrap. */
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.grid2 > *, .grid3 > *, .totals > * { min-width: 0; }
+/* Good/Better/Best tier cards: always three across so the options compare side by side.
+   minmax(0, 1fr) + min-width: 0 let the cards shrink and wrap their text rather than overflow.
+   Below ~900px viewport there isn't room for three, so stack them instead of squeezing to shreds. */
+.tier-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
+.tier-grid > * { min-width: 0; }
+.tier-grid .card { padding: 12px; }
+@media (max-width: 900px) { .tier-grid { grid-template-columns: 1fr; } }
 .totals .stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
 .totals .stat .label { color: var(--muted); font-size: 12px; }
 .totals .stat .value { font-size: 22px; font-variant-numeric: tabular-nums; margin-top: 4px; }
@@ -164,6 +179,12 @@ td.actions { text-align: right; }
 .ss-opt:hover { background: var(--surface-2); }
 .ss-opt.sel { background: var(--accent); color: var(--on-accent); }
 .ss-empty { padding: 8px 10px; color: var(--muted); font-size: 13px; }
+/* Pinned "create new" row at the foot of a picker (opt-in via SearchSelect's onCreate). */
+.ss-create {
+  padding: 8px 10px; cursor: pointer; font-size: 13px;
+  color: var(--accent); border-top: 1px solid var(--border); background: var(--surface);
+}
+.ss-create:hover { background: var(--surface-2); }
 
 /* Fixed floating side-tab that restores the hidden quote-summary panel.
    position: fixed keeps it out of flow so the left step column reclaims the full width;

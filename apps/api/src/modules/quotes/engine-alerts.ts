@@ -33,8 +33,8 @@ const numSetting = async (key: string, fallback: number): Promise<number> => {
 const screenAreaSqm = (
   screen: QuoteWithChildren['ledScreens'][number],
 ): number | null => {
-  const w = screen.desiredWidthMm ?? null;
-  const h = screen.desiredHeightMm ?? null;
+  const w = screen.desiredWidthMm != null ? Number(screen.desiredWidthMm) : null;
+  const h = screen.desiredHeightMm != null ? Number(screen.desiredHeightMm) : null;
   if (w == null || h == null || w <= 0 || h <= 0) return null;
   return (w / 1000) * (h / 1000);
 };
@@ -105,8 +105,8 @@ const evaluateUnusualPrice = async (quote: QuoteWithChildren): Promise<AnomalyFi
   const byClient = new Map<string, number[]>();
   for (const r of priorScreens) {
     const perSqm = historyPricePerSqm({
-      desiredWidthMm: r.desiredWidthMm,
-      desiredHeightMm: r.desiredHeightMm,
+      desiredWidthMm: r.desiredWidthMm != null ? Number(r.desiredWidthMm) : null,
+      desiredHeightMm: r.desiredHeightMm != null ? Number(r.desiredHeightMm) : null,
       priceTotal: r.priceTotal,
     });
     if (perSqm == null) continue;

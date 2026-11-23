@@ -19,10 +19,19 @@ const isForeignKeyError = (err: unknown): boolean =>
 /** Zod validator for one field. */
 export const fieldSchema = (field: FieldDef): z.ZodTypeAny => {
   switch (field.type) {
-    case 'int':
-      return z.coerce.number().int();
-    case 'decimal':
-      return z.coerce.number();
+    case 'int': {
+      let n = z.coerce.number().int();
+      if (field.min !== undefined) n = n.min(field.min);
+      if (field.lessThan !== undefined) n = n.lt(field.lessThan);
+      return n;
+    }
+    case 'decimal': {
+      // Range-bounded where the registry says so — see `fRange` (fraction fields such as margin).
+      let n = z.coerce.number();
+      if (field.min !== undefined) n = n.min(field.min);
+      if (field.lessThan !== undefined) n = n.lt(field.lessThan);
+      return n;
+    }
     case 'boolean':
       return z.boolean();
     case 'date':

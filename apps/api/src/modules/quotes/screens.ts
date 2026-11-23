@@ -5,16 +5,25 @@ import {
   configConfidence,
   configureScreen,
   DEFAULT_OUTDOOR_BRIGHTNESS_NITS,
-  estimateInstallHours,
+  deriveAutoAnswers,
+  installHoursBreakdown,
+  STANDARD_OVERHEAD_ITEMS,
+  MEDIAPLAYER_CONFIG_COST_AUD,
+  evaluateSelectionTree,
   fixedLine,
   freightWeightKg,
+  shippingBoxKg,
+  trimCostAud,
   highResUplift,
   ledInstall,
   ledSpec,
   ledSupply,
   markupLine,
   packagingCost,
+  priceSectionsAtMargin,
   receiverCardCost,
+  selectController,
+  controllerPortsNeeded,
   selectLcdTiers,
   selectTiers,
   sparesCost,
@@ -22,9 +31,10 @@ import {
   type ConfigProduct,
   type LcdCandidate,
   type PricedLine,
+  type TreeConstraints,
 } from '@quotezen/calc';
-import { applyMargin, applyMarkup, round } from '@quotezen/shared';
-import type { LcdScreenInput, LedScreenInput, UpdateLedScreenInput } from '@quotezen/shared';
+import { applyMargin, d, mul, round } from '@quotezen/shared';
+import type { LcdScreenInput, LedIntakeInput, LedScreenInput, UpdateLedScreenInput } from '@quotezen/shared';
 import { AppError, notFound } from '../../errors.js';
 import { recordAudit } from '../../services/audit.js';
 import { loadPricingConfig, loadPricingContext } from '../../lib/pricing-config.js';
@@ -40,6 +50,17 @@ const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toS
  */
 /** A config option annotated with its size-tolerance band (U2). */
 export type ConfigOptionWithBand = ConfigOption & {
+  /**
+   * The controller this build needs, chosen from the catalogue by pixel count (the smallest unit
+   * whose capacity covers the screen). Advisory: the wizard pre-fills it on Select and the estimator
+   * can change or remove it. Null when no single controller covers the screen — `controllerCount`
+   * then says how many of the largest are needed, and `controllerNote` explains.
+   */
+  suggestedControllerId: string | null;
+  /** How many controllers this build needs (1 for a normal single-controller fit). */
+  controllerCount: number;
+  /** Set when there is no clean single-controller fit — surfaced to the user verbatim. */
+  controllerNote: string | null;
   /** Smallest band (%) whose |sizeDeltaPct| ≤ band; 0 for an exact fit. Always within an allowed band. */
   toleranceBand: number;
   /** Always true on returned options — out-of-band candidates are excluded from the result. */
@@ -54,6 +75,12 @@ export interface ConfigureResult {
   reasons: string[];
   /** The size-tolerance bands (%) applied, ascending — sourced from the `size_tolerance_bands` setting. */
   toleranceBands: number[];
+  /** Phase 1: Selection Tree evaluated constraints (if intake provided). */
+  treeConstraints?: TreeConstraints;
+  /** Active engineering caveats and warnings (c66-c76). */
+  caveats?: string[];
+  /** Primary recommendation narrative text from the tree evaluator. */
+  primaryRecommendationText?: string;
 }
 
 /**
@@ -121,7 +148,7 @@ const bandFor = (sizeDeltaPct: number, bands: readonly number[]): number | null 
  * each carries its manufacturer name + lead time. Options whose size deviation exceeds the largest
  * admin-configured tolerance band are excluded ("show as options only within the allowed bands").
  */
-/** Inputs to the config engine over a quote's opening (W0 adds optional environment + viewing distance). */
+/** Inputs to the config engine over a quote's opening (W0 adds optional environment + viewing distance; Phase 1 adds intake). */
 export interface ConfigureInput {
   desiredWidthMm: number;
   desiredHeightMm: number;
@@ -130,6 +157,15 @@ export interface ConfigureInput {
   environment?: 'indoor' | 'outdoor';
   /** W0: approximate viewing distance (m); excludes products coarser than ≈1mm-per-metre. */
   viewingDistanceM?: number;
+  /** Phase 1: Guided Selection Tree questionnaire inputs. */
+  intake?: LedIntakeInput;
+  /**
+   * Drop the client's allowed-ratios restriction for THIS search only (AA2). The client record still
+   * says what they normally accept; this is the per-job escape hatch for a one-off opening. The
+   * resulting screen still raises the advisory `RATIO_NOT_ALLOWED` finding, so the deviation is
+   * recorded rather than hidden.
+   */
+  ignoreClientRatios?: boolean;
 }
 
 export const configureForQuote = async (
@@ -138,11 +174,16 @@ export const configureForQuote = async (
 ): Promise<ConfigureResult> => {
   const quote = await getQuote(quoteId);
   // AA2 — per-customer allowed aspect ratios (CSV on the client); empty → no ratio restriction.
-  const allowedRatios = (quote.client?.allowedRatios ?? '')
-    .split(',')
-    .map((r) => r.trim())
-    .filter((r) => r.length > 0);
-  const [products, ratios, toleranceBands, outdoorThreshold, leadTimeBuffer] = await Promise.all([
+  // `ignoreClientRatios` waives it for this one search (the per-job override).
+  const allowedRatios = input.ignoreClientRatios
+    ? []
+    : (quote.client?.allowedRatios ?? '')
+        .split(',')
+        .map((r) => r.trim())
+        .filter((r) => r.length > 0);
+  const [controllers, products, ratios, toleranceBands, outdoorThreshold, leadTimeBuffer] = await Promise.all([
+    // Auto-select the controller by pixel count (the workbook behaviour): loaded once per search.
+    prisma.controller.findMany({ where: { deprecated: false } }),
     prisma.ledProduct.findMany({
       // P1-11.4: deprecated LED products are retained for old quotes but excluded from NEW configs.
       where: { deprecated: false, minCabinetWMm: { not: null }, minCabinetHMm: { not: null }, pixelPitchH: { not: null } },
@@ -157,8 +198,10 @@ export const configureForQuote = async (
     id: p.id.toString(),
     model: p.model,
     vendor: p.vendor,
-    minCabinetWMm: p.minCabinetWMm ?? 0,
-    minCabinetHMm: p.minCabinetHMm ?? 0,
+    // Cabinet sizes are DECIMAL (a real cabinet can be 337.5mm); the pure config engine takes
+    // plain numbers, so convert here rather than letting a Decimal object into the geometry maths.
+    minCabinetWMm: p.minCabinetWMm != null ? Number(p.minCabinetWMm) : 0,
+    minCabinetHMm: p.minCabinetHMm != null ? Number(p.minCabinetHMm) : 0,
     pixelPitchHmm: Number(p.pixelPitchH ?? 0),
     pixelPitchVmm: Number(p.pixelPitchV ?? p.pixelPitchH ?? 0),
     category: p.serviceCategory,
@@ -168,6 +211,10 @@ export const configureForQuote = async (
     environment: p.environment === 'indoor' || p.environment === 'outdoor' ? p.environment : null,
     costPerSqmUsd: p.costPerSqmUsd ? Number(p.costPerSqmUsd) : null,
     kgPerSqm: p.kgPerSqm ? Number(p.kgPerSqm) : null,
+    isTransparent: p.isTransparent,
+    cabinetType: p.cabinetType,
+    supportsCurved: p.supportsCurved,
+    mechanicalOptions: p.mechanicalOptions,
     // U2: manufacturer priority/name/lead-time from the joined relation (high default when unlinked).
     manufacturerPriority: p.manufacturer?.priority ?? null,
     manufacturerName: p.manufacturer?.name ?? null,
@@ -180,18 +227,50 @@ export const configureForQuote = async (
     maxValue: Number(r.maxValue),
     ratioLabel: r.ratioLabel,
   }));
+
+  const treeConstraints = input.intake
+    ? evaluateSelectionTree(
+        deriveAutoAnswers(
+          {
+            widthMm: input.desiredWidthMm,
+            heightMm: input.desiredHeightMm,
+            outdoorLocation: input.intake.outdoorLocation,
+          },
+          input.intake,
+        ),
+        { fixDefects: true },
+      )
+    : undefined;
+
+  const resolvedEnv =
+    input.environment ??
+    (input.intake?.environment ? (input.intake.environment.toLowerCase() as 'indoor' | 'outdoor') : undefined);
+
   const ranked = configureScreen(cfgProducts, {
     desiredWidthMm: input.desiredWidthMm,
     desiredHeightMm: input.desiredHeightMm,
     allowRotation: input.allowRotation ?? true,
     ratios: ratioRows,
     // W0: thread the environment + viewing-distance filters + the outdoor-brightness threshold.
-    environment: input.environment,
+    environment: resolvedEnv,
     viewingDistanceM: input.viewingDistanceM,
     outdoorBrightnessNits: outdoorThreshold,
     // AA2: restrict offered configs to the client's allowed ratios (empty → no restriction).
     allowedRatios,
+    treeConstraints,
   });
+
+  // The pure selector takes a minimal spec; map the catalogue rows once rather than per option.
+  const controllerSpecs = controllers
+    .filter((c) => c.maxPixels != null)
+    .map((c) => ({
+      id: c.id.toString(),
+      name: c.name,
+      maxPixels: Number(c.maxPixels),
+      cost: Number(c.price),
+      maxPorts: c.maxPorts,
+      type: c.type,
+    }));
 
   // U2: annotate with tolerance band; drop options beyond the largest band (noting how many).
   const within: ConfigOptionWithBand[] = [];
@@ -204,14 +283,38 @@ export const configureForQuote = async (
     }
     // Z3 — the quoted lead time = manufacturer lead time + the admin-set buffer (null stays null).
     const buffered = applyLeadTimeBuffer(o, leadTimeBuffer);
-    within.push({ ...buffered, toleranceBand: band, withinTolerance: true, confidence: configConfidence(buffered) });
+    // Controller auto-selection, as the workbook does it (`(LED 1)` B270 / H248): count the ports the
+    // build needs (WALL products: one per metre of width), then take the smallest "Standard" unit
+    // (MCTRL300 → MCTRL700) with enough pixels AND ports; other types only when no Standard fits.
+    // Pure + deterministic (packages/calc), so the same option always yields the same pick.
+    const pixels = buffered.resolutionWpx * buffered.resolutionHpx;
+    const pick = selectController(pixels, controllerSpecs, {
+      portsNeeded: controllerPortsNeeded({ model: buffered.model, widthMm: buffered.widthMm, pixels }),
+      preferType: 'Standard',
+    });
+    within.push({
+      ...buffered,
+      suggestedControllerId: pick.controller ? String(pick.controller.id) : null,
+      controllerCount: pick.multiControllerCount,
+      controllerNote: pick.reason,
+      toleranceBand: band,
+      withinTolerance: true,
+      confidence: configConfidence(buffered),
+    });
   }
   const reasons = [...ranked.reasons];
   if (excluded > 0) {
     const max = toleranceBands[toleranceBands.length - 1]!;
     reasons.push(`${excluded} option(s) excluded for exceeding the largest size-tolerance band (±${max}%).`);
   }
-  return { options: within, reasons, toleranceBands };
+  return {
+    options: within,
+    reasons,
+    toleranceBands,
+    treeConstraints: ranked.treeConstraints,
+    caveats: ranked.caveats,
+    primaryRecommendationText: ranked.primaryRecommendationText,
+  };
 };
 
 /**
@@ -308,7 +411,15 @@ export const optionsForQuote = async (
   quoteId: bigint,
   input: ConfigureInput,
   showCost: boolean,
-): Promise<{ options: TierOption[]; reasons: string[]; distinctProducts: number; commercialHints: CommercialHints }> => {
+): Promise<{
+  options: TierOption[];
+  reasons: string[];
+  distinctProducts: number;
+  commercialHints: CommercialHints;
+  treeConstraints?: unknown;
+  caveats?: string[];
+  primaryRecommendationText?: string;
+}> => {
   const quote = await getQuote(quoteId);
   const commercialHints = commercialHintsOf(quote);
   const ranked = await configureForQuote(quoteId, input);
@@ -345,8 +456,8 @@ export const optionsForQuote = async (
     const spec = ledSpec({
       desiredWidthMm: input.desiredWidthMm,
       desiredHeightMm: input.desiredHeightMm,
-      cabinetWidthMm: product.minCabinetWMm ?? 0,
-      cabinetHeightMm: product.minCabinetHMm ?? 0,
+      cabinetWidthMm: product.minCabinetWMm != null ? Number(product.minCabinetWMm) : 0,
+      cabinetHeightMm: product.minCabinetHMm != null ? Number(product.minCabinetHMm) : 0,
       rotate: o.rotated,
       pixelPitchHmm: Number(product.pixelPitchH),
       pixelPitchVmm: Number(product.pixelPitchV),
@@ -397,7 +508,15 @@ export const optionsForQuote = async (
     };
   });
 
-  return { options, reasons: ranked.reasons, distinctProducts: selection.distinctProducts, commercialHints };
+  return {
+    options,
+    reasons: ranked.reasons,
+    distinctProducts: selection.distinctProducts,
+    commercialHints,
+    treeConstraints: ranked.treeConstraints,
+    caveats: ranked.caveats,
+    primaryRecommendationText: ranked.primaryRecommendationText,
+  };
 };
 
 /**
@@ -526,6 +645,13 @@ const resolveFreightOverride = async (
   return { ratePerScreenAud: Number(best.ratePerScreenAud), note: best.note, locationId: best.locationId };
 };
 
+/**
+ * A $0 placeholder row, so a screen's cost breakdown lists every row the workbook's `(LED 1)` costing
+ * block has (packaging, GOB, back cover, access equipment…) even when it doesn't apply. Zero lines
+ * add nothing to any section, so totals and the quoted price are unaffected.
+ */
+const zeroLine = (label: string, bucket: PricedLine['bucket']): PricedLine => fixedLine(label, bucket, 0, 0);
+
 interface LedScreenPricing {
   spec: ReturnType<typeof ledSpec> | null;
   lines: PricedLine[];
@@ -586,8 +712,8 @@ const computeLedScreenPricing = async (
     spec = ledSpec({
       desiredWidthMm: input.desiredWidthMm,
       desiredHeightMm: input.desiredHeightMm,
-      cabinetWidthMm: product.minCabinetWMm,
-      cabinetHeightMm: product.minCabinetHMm,
+      cabinetWidthMm: Number(product.minCabinetWMm),
+      cabinetHeightMm: Number(product.minCabinetHMm),
       rotate: input.rotateCabinets,
       pixelPitchHmm: Number(product.pixelPitchH),
       pixelPitchVmm: Number(product.pixelPitchV),
@@ -633,39 +759,41 @@ const computeLedScreenPricing = async (
         costAud: spares.costAud,
         sellAud: spares.sellAud,
       });
-      // Packaging + receiver cards (config-driven; only added when configured > 0).
+      // Packaging + receiver cards (config-driven). Shown even at $0, like the sheet's rows 259 / 261.
       const packaging = packagingCost(supply.costAud, config);
-      if (packaging.costAud.greaterThan(0)) {
-        lines.push({ label: 'Packaging', bucket: 'screen_mediaplayer', qty: 1, costAud: packaging.costAud, sellAud: packaging.sellAud });
-      }
+      lines.push({ label: 'Packaging', bucket: 'screen_mediaplayer', qty: 1, costAud: packaging.costAud, sellAud: packaging.sellAud });
       const receivers = receiverCardCost(spec.cabinetCount, config);
-      if (receivers.costAud.greaterThan(0)) {
-        lines.push({ label: 'Receiver cards', bucket: 'screen_mediaplayer', qty: 1, costAud: receivers.costAud, sellAud: receivers.sellAud });
-      }
+      lines.push({ label: 'Receiver cards', bucket: 'screen_mediaplayer', qty: 1, costAud: receivers.costAud, sellAud: receivers.sellAud });
       // AA4 — high-resolution supply upgrade: a fractional uplift on the supply cost, from the
-      // `high_res_uplift_pct` setting (0 by default → no line, so this is a strict no-op until an
-      // admin sets a rate). Only added when the screen opted in AND the rate is > 0.
+      // `high_res_uplift_pct` setting (0 by default). Only priced when the screen opted in AND the
+      // rate is > 0; otherwise a "(not selected)" $0 row, so the sheet's full row list is visible.
+      let hiresAdded = false;
       if (input.highResolution) {
         const upliftPct = await settingNum('high_res_uplift_pct', 0);
         if (upliftPct > 0) {
           const hires = highResUplift(supply.costAud, upliftPct, config);
           if (hires.costAud.greaterThan(0)) {
             lines.push({ label: 'High-resolution upgrade', bucket: 'screen_mediaplayer', qty: 1, costAud: hires.costAud, sellAud: hires.sellAud });
+            hiresAdded = true;
           }
         }
       }
+      if (!hiresAdded) lines.push(zeroLine('High-resolution upgrade (not selected)', 'screen_mediaplayer'));
     }
     // AA4 — protective / gold coating: priced by screen area (cost/sqm × area), sold at the LED
-    // markup. Uses the same area the supply calc uses (spec.areaSqm). 0-cost coating → no line.
+    // markup. Uses the same area the supply calc uses (spec.areaSqm). None / 0-cost → a "(none)" $0 row.
+    let coatingAdded = false;
     if (input.coatingId) {
       const coating = await prisma.coatingOption.findUnique({ where: { id: BigInt(input.coatingId) } });
       if (coating && Number(coating.costPerSqm) > 0) {
         const c = coatingCost(spec.areaSqm, Number(coating.costPerSqm), config);
         if (c.costAud.greaterThan(0)) {
           lines.push({ label: `Coating — ${coating.name}`, bucket: 'screen_mediaplayer', qty: 1, costAud: c.costAud, sellAud: c.sellAud });
+          coatingAdded = true;
         }
       }
     }
+    if (!coatingAdded) lines.push(zeroLine('Coating (none)', 'screen_mediaplayer'));
   }
 
   // Components from their catalogs, with per-category markup/margin.
@@ -687,12 +815,12 @@ const computeLedScreenPricing = async (
     if (c.controllerId) {
       const row = await prisma.controller.findUnique({ where: { id: BigInt(c.controllerId) } });
       cost = Number(row?.price ?? 0);
-      sell = applyMarkup(cost, config.markups.controller).toNumber();
+      sell = applyMargin(cost, ledMargin).toNumber();
       label = `Controller — ${row?.name ?? ''}`;
     } else if (c.ledPeripheralId) {
       const row = await prisma.ledPeripheral.findUnique({ where: { id: BigInt(c.ledPeripheralId) } });
       cost = Number(row?.price ?? 0);
-      sell = applyMarkup(cost, config.markups.led).toNumber();
+      sell = applyMargin(cost, ledMargin).toNumber();
       label = `LED peripheral — ${row?.name ?? ''}`;
     } else if (c.mediaplayerId) {
       const row = await prisma.mediaplayer.findUnique({ where: { id: BigInt(c.mediaplayerId) } });
@@ -703,10 +831,25 @@ const computeLedScreenPricing = async (
     } else if (c.peripheralId) {
       const row = await prisma.peripheral.findUnique({ where: { id: BigInt(c.peripheralId) } });
       cost = Number(row?.cost ?? 0);
-      sell = applyMarkup(cost, config.markups.otherEquipment).toNumber();
+      sell = applyMargin(cost, ledMargin).toNumber();
       label = `Peripheral — ${row?.name ?? ''}`;
     }
-    lines.push({ label, bucket: 'screen_mediaplayer', qty: c.qty, costAud: round(cost * c.qty), sellAud: round(sell * c.qty) });
+    // Shared controller: ONE sender drives every unit of this screen row. The quote rollup multiplies
+    // a screen's per-unit sell by its qty, so to charge the controller ONCE we divide its per-unit
+    // share by that qty — qty × (price / qty) lands back on a single controller. Only the controller
+    // is shared; mediaplayers and peripherals stay per unit.
+    const screenQty = input.qty ?? 1;
+    const sharedController =
+      !!input.sharedController && c.componentType === 'controller' && screenQty > 1;
+    const shareDivisor = sharedController ? screenQty : 1;
+    const lineLabel = sharedController ? `${label} (shared across ${screenQty} screens)` : label;
+    lines.push({
+      label: lineLabel,
+      bucket: 'screen_mediaplayer',
+      qty: c.qty,
+      costAud: round((cost * c.qty) / shareDivisor),
+      sellAud: round((sell * c.qty) / shareDivisor),
+    });
     compRows.push({
       componentType: c.componentType,
       controllerId: c.controllerId ? BigInt(c.controllerId) : undefined,
@@ -718,44 +861,98 @@ const computeLedScreenPricing = async (
       unitSellSnapshot: String(round(sell)),
     });
   }
+  // The sheet always lists a controller and a mediaplayer row (rows 270 / 273); show "(none)" at $0.
+  if (!compRows.some((c) => c.componentType === 'controller')) lines.push(zeroLine('Controller (none)', 'screen_mediaplayer'));
+  if (!compRows.some((c) => c.componentType === 'mediaplayer')) lines.push(zeroLine('Mediaplayer (none)', 'screen_mediaplayer'));
 
   // Frame (metalwork markup). GOB is now computed before spares (Fix A) but its line is pushed here,
-  // alongside the frame, to keep the frame_trim bucket together in the output.
-  if (input.frameId) {
-    const frame = await prisma.frame.findUnique({ where: { id: BigInt(input.frameId) } });
-    if (frame) {
-      const cost = Number(frame.price) + Number(frame.backcoverCost);
-      lines.push(markupLine(`Frame — ${frame.name}`, 'frame_trim', cost, config.markups.metalwork));
+  // alongside the frame, to keep the frame_trim bucket together in the output. Every row of the
+  // sheet's frame block (rows 290–292 + GOB) is listed — "(none)" / $0 when it doesn't apply.
+  const frameRow = input.frameId ? await prisma.frame.findUnique({ where: { id: BigInt(input.frameId) } }) : null;
+  if (frameRow) {
+    // Workbook `(LED 1)` rows 290–291: the frame is always charged, its back cover only when
+    // "Back Cover" = Yes (H291 = IF(C26="Yes",1,0)) — each on its own line, as in the sheet.
+    lines.push(markupLine(`Frame — ${frameRow.name}`, 'frame_trim', Number(frameRow.price), config.markups.metalwork));
+  } else {
+    lines.push(zeroLine('Frame (none)', 'frame_trim'));
+  }
+  const backCoverCost = frameRow && input.backCover ? Number(frameRow.backcoverCost) : 0;
+  lines.push(
+    backCoverCost > 0
+      ? markupLine('Back cover', 'frame_trim', backCoverCost, config.markups.metalwork)
+      : zeroLine(input.backCover ? 'Back cover (none for this frame)' : 'Back cover (not selected)', 'frame_trim'),
+  );
+  // Trim (workbook row 292): width rate × width (m) + height rate × height (m), on the built size.
+  // e.g. "Trim (Sides Only)" = $0/m × width + $60/m × height. Metalwork markup, like the frame.
+  let trimAdded = false;
+  if (input.trimId) {
+    const trim = await prisma.trimOption.findUnique({ where: { id: BigInt(input.trimId) } });
+    const widthM = (spec?.widthMm ?? input.desiredWidthMm ?? 0) / 1000;
+    const heightM = (spec?.heightMm ?? input.desiredHeightMm ?? 0) / 1000;
+    if (trim) {
+      const trimCost = trimCostAud(Number(trim.widthMultiplier), Number(trim.heightMultiplier), widthM, heightM);
+      if (trimCost > 0) {
+        lines.push(markupLine(`Trim — ${trim.name}`, 'frame_trim', trimCost, config.markups.metalwork));
+        trimAdded = true;
+      }
     }
   }
+  if (!trimAdded) lines.push(zeroLine('Trim (none)', 'frame_trim'));
   // GOB line (metalwork markup): cost was computed above in the supply block (Fix A). Push it here so
-  // the frame_trim bucket stays contiguous. gobCostAud is 0 when no GOB was selected.
+  // the frame_trim bucket stays contiguous. No GOB → a "(none)" $0 row (the sheet's row 266).
+  let gobAdded = false;
   if (input.gobId && spec) {
     const gob = await prisma.gobOption.findUnique({ where: { id: BigInt(input.gobId) } });
     if (gob) {
       const gobLineCost = Number(gob.price) * spec.areaSqm.toNumber();
       if (gobLineCost > 0) {
         lines.push(markupLine(`GOB — ${gob.name}`, 'frame_trim', gobLineCost, config.markups.metalwork));
+        gobAdded = true;
       }
     }
   }
+  if (!gobAdded) lines.push(zeroLine('GOB (none)', 'frame_trim'));
 
   // Install / labour + freight (services bucket).
   let labourHours = 0;
   let freightKg: number | null = null;
   if (spec) {
     const area = spec.areaSqm.toNumber();
-    const [frame, hangingBar, access, engineering, freightOpt] = await Promise.all([
+    const [frame, hangingBar, access, engineering, freightOpt, installMethod] = await Promise.all([
       input.frameId ? prisma.frame.findUnique({ where: { id: BigInt(input.frameId) } }) : null,
       input.hangingBarId ? prisma.hangingBarOption.findUnique({ where: { id: BigInt(input.hangingBarId) } }) : null,
       input.accessEquipmentId ? prisma.accessEquipment.findUnique({ where: { id: BigInt(input.accessEquipmentId) } }) : null,
       input.engineeringId ? prisma.engineeringOption.findUnique({ where: { id: BigInt(input.engineeringId) } }) : null,
       input.freightOptionId ? prisma.freightOption.findUnique({ where: { id: BigInt(input.freightOptionId) } }) : null,
+      input.installMethodId ? prisma.installMethod.findUnique({ where: { id: BigInt(input.installMethodId) } }) : null,
     ]);
+    // Use standard cabinet dimensions (cols E & F) if available, falling back to minCabinetWMm/HMm.
+    // If rotateCabinets is true, cabinet width and height swap units (as in Excel: C14 = IF(C13="Y", F5, E5)).
+    const standardCabW = Number(product?.cabinetWMm ?? product?.minCabinetWMm ?? 0);
+    const standardCabH = Number(product?.cabinetHMm ?? product?.minCabinetHMm ?? 0);
+    const effCabW = input.rotateCabinets ? standardCabH : standardCabW;
+    const effCabH = input.rotateCabinets ? standardCabW : standardCabH;
+    const cabinetsW = effCabW > 0 ? Math.ceil(spec.widthMm / effCabW) : spec.cabinetsWide;
+    const cabinetsH = effCabH > 0 ? Math.ceil(spec.heightMm / effCabH) : spec.cabinetsHigh;
+
     if (product?.kgPerSqm) {
       const vol = Number(product.volumetricModifier ?? 1);
       const actualKg = area * Number(product.kgPerSqm);
-      freightKg = round(freightWeightKg(actualKg, vol)).toNumber(); // MAX(volumetric, actual)
+      const shipDepthCm = Number(product.shipDepthMm ?? 0); // the workbook's "Ship Depth" column (cm/cabinet)
+      freightKg =
+        shipDepthCm > 0 && effCabW > 0 && effCabH > 0
+          ? // Workbook packed-box volumetric weight vs actual × modifier, whichever is greater.
+            shippingBoxKg({
+              cabinetWMm: effCabW,
+              cabinetHMm: effCabH,
+              cabinetsWide: cabinetsW,
+              cabinetsHigh: cabinetsH,
+              screenHeightMm: spec.heightMm,
+              shipDepthCm,
+              actualKg,
+              volumetricModifier: vol,
+            })
+          : round(freightWeightKg(actualKg, vol)).toNumber(); // no ship depth → MAX(volumetric, actual)
     }
     // Freight hard-stop (P1-16.9): if a freight option was explicitly selected it MUST carry a rate —
     // a missing/zero rate is a misconfiguration, not a free shipment. Name the option and stop rather
@@ -763,20 +960,51 @@ const computeLedScreenPricing = async (
     if (freightOpt && !(Number(freightOpt.rate) > 0)) {
       throw new AppError('bad_request', `Freight option "${freightOpt.name}" has no rate configured`);
     }
-    const freightCostAud = freightOpt && freightKg ? freightKg * Number(freightOpt.rate) : 0;
+    const intlFreightAud = freightOpt && freightKg ? freightKg * Number(freightOpt.rate) : 0;
+    // Local Delivery Freight: MAX(freightMultiplier * intlFreight, freightMin)
+    const localMultiplier = quote.location ? Number(quote.location.freightMultiplier ?? 0.1) : 0;
+    const localMin = quote.location ? Number(quote.location.freightMin ?? 0) : 0;
+    const localFreightAud = intlFreightAud > 0 && quote.location ? Math.max(intlFreightAud * localMultiplier, localMin) : 0;
+    const freightCostAud = intlFreightAud + localFreightAud;
+
     // AA6b — region/product freight override: if a row matches (quote location, product manufacturer)
     // the freight component becomes a FLAT per-screen rate, replacing the weight-based figure. With no
     // override rows (the default) this is `null` → the existing freight path is used, byte-for-byte.
     const freightOverride = await resolveFreightOverride(quote.location?.id ?? null, product?.manufacturerId ?? null);
-    labourHours = estimateInstallHours({
+
+    const baseHours = installMethod?.defaultHours ? Number(installMethod.defaultHours) : 4;
+    const isIT = product?.model?.startsWith('IT') || false;
+
+    // A user-set figure REPLACES the estimate outright (it is the installer's own number, not an
+    // adjustment to ours). Null/absent → derive it as before.
+    const hours = installHoursBreakdown({
       areaSqm: area,
+      cabinetsW,
+      cabinetsH,
+      cabinetWMm: effCabW,
+      cabinetHMm: effCabH,
+      isITProduct: isIT,
+      baseHours,
       frameInstallHours: frame ? Number(frame.installHours) : 0,
       hanging: hangingBar ? Number(hangingBar.widthMultiplier) > 0 : false,
     });
+    labourHours = input.labourHoursOverride ?? hours.total;
+
+    const hasMediaplayer = compRows.some((c) => c.componentType === 'mediaplayer');
+    // Standard overhead: default 595 ($240 PM = 2 h × $120, $80 design/prep, $80 screen config, $30 consumables,
+    // $60 rubbish, $75 warehouse, $30 controller courier) + $45 if mediaplayer configured.
+    // Admin-overridable via the `standard_overhead` setting.
+    const baseOverhead = config.freight.standardOverheadAud ?? 595;
+    const overheadCostAud = baseOverhead + (hasMediaplayer ? MEDIAPLAYER_CONFIG_COST_AUD : 0);
+
+    const labourRate = config.freight.installLabour ?? 95;
+    const hourlyUplift = quote.location ? Number(quote.location.hourlyUplift) : 0;
     const install = ledInstall(
       {
         labourHours,
-        locationHourlyUplift: quote.location ? Number(quote.location.hourlyUplift) : 0,
+        labourRate,
+        locationHourlyUplift: hourlyUplift,
+        overheadCostAud,
         accessEquipmentDayRate: access ? Number(access.dayRate) : 0,
         // The override (flat per-screen) replaces the weight-based freight inside the marked-up total.
         freightCostAud,
@@ -785,18 +1013,65 @@ const computeLedScreenPricing = async (
       },
       config,
     );
-    // Label the services line so the override is visible in the itemised price + BOM cost lines.
-    const installLabel = freightOverride
-      ? `Install, labour & freight (Freight override — ${freightOverride.note ?? quote.location?.name ?? 'per screen'})`
-      : 'Install, labour & freight';
-    lines.push(fixedLine(installLabel, 'services', install.costAud, install.sellAud));
+
+    // Itemise the install section the way `(LED 1)` lists it (rows 304–327) instead of one combined
+    // line. Every item stays in the services bucket, so the section's cost — and therefore its quoted
+    // price (cost at the LED margin, rounded to $10) — is exactly `install.costAud`, unchanged.
+    const svc: Array<{ label: string; cost: number }> = [];
+    // Every row of the sheet's install block is listed, at $0 when it doesn't apply (like the sheet).
+    const add = (label: string, cost: number) => {
+      svc.push({ label, cost: round(cost).toNumber() });
+    };
+    // Standard overhead, as the sheet's rows. An admin `standard_overhead` setting that differs from
+    // the itemised default is shown as its own adjustment so the lines still total the overhead
+    // (only when there IS a difference — it is not a workbook row).
+    for (const item of STANDARD_OVERHEAD_ITEMS) add(item.label, item.costAud);
+    const itemisedDefault = STANDARD_OVERHEAD_ITEMS.reduce((s, i) => s + i.costAud, 0);
+    if (baseOverhead !== itemisedDefault) add('Standard overhead adjustment (setting)', baseOverhead - itemisedDefault);
+    add(hasMediaplayer ? 'Mediaplayer configuration' : 'Mediaplayer configuration (no mediaplayer)', hasMediaplayer ? MEDIAPLAYER_CONFIG_COST_AUD : 0);
+    // Freight: the flat override replaces the weight-based freight + local delivery.
+    if (freightOverride) {
+      add(`Freight override — ${freightOverride.note ?? quote.location?.name ?? 'per screen'}`, freightOverride.ratePerScreenAud);
+    } else if (intlFreightAud > 0 && freightOpt) {
+      add(`${freightOpt.name} (${freightKg} kg × $${Number(freightOpt.rate)})`, intlFreightAud);
+      add('Local delivery', localFreightAud);
+    } else {
+      add('Freight (none selected)', 0);
+      add('Local delivery', 0);
+    }
+    add(access ? `Access equipment — ${access.name}` : 'Access equipment (none)', access ? Number(access.dayRate) : 0);
+    // Installer labour (rows 323–327). A manual override replaces the estimate as a single line.
+    if (input.labourHoursOverride != null) {
+      add(`Install labour (${labourHours} h × $${labourRate}, set manually)`, labourHours * labourRate);
+    } else {
+      add(`Install base cost (${hours.base} h × $${labourRate})`, hours.base * labourRate);
+      add(`Install size-driven hours (${hours.size} h × $${labourRate})`, hours.size * labourRate);
+      add(`Frame install (${hours.frame} h × $${labourRate})`, hours.frame * labourRate);
+      add(`Hanging install uplift (${hours.hanging} h × $${labourRate})`, hours.hanging * labourRate);
+    }
+    add(`Location hourly uplift (${labourHours} h × $${hourlyUplift})`, labourHours * hourlyUplift);
+    add(engineering ? `Engineering — ${engineering.name}` : 'Engineering (none)', engineering ? Number(engineering.price) : 0);
+
+    // Safety net: the itemised lines must total the install cost to the cent. Any rounding residual
+    // lands on the largest line (normally none — each item is a whole-cent amount).
+    if (svc.length === 0) svc.push({ label: 'Install', cost: 0 });
+    const residual = install.costAud.minus(svc.reduce((s, l) => s + l.cost, 0));
+    if (!residual.isZero()) {
+      const biggest = svc.reduce((b, l, i) => (l.cost > svc[b]!.cost ? i : b), 0);
+      svc[biggest]!.cost = round(d(svc[biggest]!.cost).plus(residual)).toNumber();
+    }
+    // Sells here are reference values only — priceSectionsAtMargin below re-prices the section.
+    for (const l of svc) lines.push(fixedLine(l.label, 'services', l.cost, round(mul(l.cost, config.markups.service))));
   }
 
-  const totals = composeScreenTotals(lines);
+  // The workbook quotes each section (supply, frame & trim, install) at the LED margin on its total
+  // cost, rounded to $10 — not the per-line markups above, which are only its reference rows.
+  const pricedLines = priceSectionsAtMargin(lines, ledMargin);
+  const totals = composeScreenTotals(pricedLines);
   // priceTotal is the per-unit screen price; the quote rollup multiplies by qty (P1-14.2).
   const unitSell = round(totals.totalSell);
 
-  return { spec, lines, compRows, labourHours, freightKg, totals, unitSell, product };
+  return { spec, lines: pricedLines, compRows, labourHours, freightKg, totals, unitSell, product };
 };
 
 export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedScreenInput) => {
@@ -823,6 +1098,12 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
         desiredHeightMm: input.desiredHeightMm ?? null,
         rotateCabinets: input.rotateCabinets,
         recessDepthMm: input.recessDepthMm ?? null,
+        sunExposure: input.sunExposure ?? null,
+        wallSubstrate: input.wallSubstrate ?? null,
+        controllerLocation: input.controllerLocation ?? null,
+        spaceAroundScreenMm: input.spaceAroundScreenMm ?? null,
+        sharedDevicePlayers: input.sharedDevicePlayers ?? null,
+        sharedDeviceScreens: input.sharedDeviceScreens ?? null,
         orientation: input.orientation ?? null,
         aspectRatioId: input.aspectRatioId ? BigInt(input.aspectRatioId) : null,
         backCover: input.backCover,
@@ -844,6 +1125,7 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
         serviceHoursId: input.serviceHoursId ? BigInt(input.serviceHoursId) : null,
         accessEquipmentId: input.accessEquipmentId ? BigInt(input.accessEquipmentId) : null,
         marginOverride: input.marginOverride ?? null,
+        intakeAnswers: input.intakeAnswers ? (input.intakeAnswers as any) : undefined,
         resolutionWpx: spec?.resolutionWpx ?? null,
         resolutionHpx: spec?.resolutionHpx ?? null,
         totalPixels: spec ? BigInt(spec.totalPixels) : null,
@@ -852,6 +1134,8 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
         powerMaxW: spec?.powerMaxW ? Math.round(spec.powerMaxW.toNumber()) : null,
         cabinetDepthMm: product?.cabinetDepthMm ?? null,
         labourHours: labourHours ? labourHours.toString() : null,
+        labourHoursOverride: input.labourHoursOverride != null ? String(input.labourHoursOverride) : null,
+        sharedController: !!input.sharedController,
         freightKg: freightKg !== null ? freightKg.toString() : null,
         priceScreenMediaplayer: totals.screenMediaplayerSell.toString(),
         priceFrameTrim: totals.frameTrimSell.toString(),
@@ -891,6 +1175,7 @@ export const addLedScreen = async (userId: bigint, quoteId: bigint, input: LedSc
     return created;
   });
 
+  await recomputeQuote(userId, quoteId);
   return screen;
 };
 
@@ -907,6 +1192,8 @@ export const deleteLedScreen = async (userId: bigint, quoteId: bigint, screenId:
       entityId: screenId,
     });
   });
+
+  await recomputeQuote(userId, quoteId);
 };
 
 /**
@@ -965,6 +1252,12 @@ export const duplicateLedScreen = async (userId: bigint, quoteId: bigint, screen
         cabinetDepthMm: source.cabinetDepthMm,
         recessSize: source.recessSize,
         recessDepthMm: source.recessDepthMm,
+        sunExposure: source.sunExposure,
+        wallSubstrate: source.wallSubstrate,
+        controllerLocation: source.controllerLocation,
+        spaceAroundScreenMm: source.spaceAroundScreenMm,
+        sharedDevicePlayers: source.sharedDevicePlayers,
+        sharedDeviceScreens: source.sharedDeviceScreens,
         freightKg: source.freightKg,
         labourHours: source.labourHours,
         spareModulesPct: source.spareModulesPct,
@@ -1098,8 +1391,8 @@ export const updateLedScreen = async (
     screenName: screen.screenName ?? undefined,
     ledProductId: num(screen.ledProductId),
     qty: screen.qty,
-    desiredWidthMm: screen.desiredWidthMm ?? undefined,
-    desiredHeightMm: screen.desiredHeightMm ?? undefined,
+    desiredWidthMm: screen.desiredWidthMm != null ? Number(screen.desiredWidthMm) : undefined,
+    desiredHeightMm: screen.desiredHeightMm != null ? Number(screen.desiredHeightMm) : undefined,
     rotateCabinets: screen.rotateCabinets,
     orientation: (screen.orientation as LedScreenInput['orientation']) ?? undefined,
     aspectRatioId: num(screen.aspectRatioId),
@@ -1121,6 +1414,12 @@ export const updateLedScreen = async (
     warrantyId: opt(input.warrantyId, num(screen.warrantyId) ?? null),
     serviceHoursId: opt(input.serviceHoursId, num(screen.serviceHoursId) ?? null),
     accessEquipmentId: opt(input.accessEquipmentId, num(screen.accessEquipmentId) ?? null),
+    sharedController: input.sharedController === undefined ? screen.sharedController : !!input.sharedController,
+    // The stored OVERRIDE (not the computed labourHours) is what carries forward on a re-edit.
+    labourHoursOverride: opt(
+      input.labourHoursOverride,
+      screen.labourHoursOverride != null ? Number(screen.labourHoursOverride) : null,
+    ),
     marginOverride:
       input.marginOverride === undefined
         ? (screen.marginOverride != null ? Number(screen.marginOverride) : undefined)
@@ -1160,6 +1459,8 @@ export const updateLedScreen = async (
         marginOverride: pricingInput.marginOverride ?? null,
         cabinetDepthMm: product?.cabinetDepthMm ?? null,
         labourHours: labourHours ? labourHours.toString() : null,
+        labourHoursOverride: input.labourHoursOverride != null ? String(input.labourHoursOverride) : null,
+        sharedController: !!input.sharedController,
         freightKg: freightKg !== null ? freightKg.toString() : null,
         priceScreenMediaplayer: totals.screenMediaplayerSell.toString(),
         priceFrameTrim: totals.frameTrimSell.toString(),
@@ -1236,6 +1537,12 @@ export const updateLedScreenFull = async (
         desiredHeightMm: input.desiredHeightMm ?? null,
         rotateCabinets: input.rotateCabinets,
         recessDepthMm: input.recessDepthMm ?? null,
+        sunExposure: input.sunExposure ?? null,
+        wallSubstrate: input.wallSubstrate ?? null,
+        controllerLocation: input.controllerLocation ?? null,
+        spaceAroundScreenMm: input.spaceAroundScreenMm ?? null,
+        sharedDevicePlayers: input.sharedDevicePlayers ?? null,
+        sharedDeviceScreens: input.sharedDeviceScreens ?? null,
         orientation: input.orientation ?? null,
         aspectRatioId: input.aspectRatioId ? BigInt(input.aspectRatioId) : null,
         backCover: input.backCover,
@@ -1265,6 +1572,8 @@ export const updateLedScreenFull = async (
         powerMaxW: spec?.powerMaxW ? Math.round(spec.powerMaxW.toNumber()) : null,
         cabinetDepthMm: product?.cabinetDepthMm ?? null,
         labourHours: labourHours ? labourHours.toString() : null,
+        labourHoursOverride: input.labourHoursOverride != null ? String(input.labourHoursOverride) : null,
+        sharedController: !!input.sharedController,
         freightKg: freightKg !== null ? freightKg.toString() : null,
         priceScreenMediaplayer: totals.screenMediaplayerSell.toString(),
         priceFrameTrim: totals.frameTrimSell.toString(),
@@ -1570,6 +1879,12 @@ export const updateLcdScreen = async (
         serviceHoursId: input.serviceHoursId ? BigInt(input.serviceHoursId) : null,
         warrantyId: input.warrantyId ? BigInt(input.warrantyId) : null,
         recessDepthMm: input.recessDepthMm ?? null,
+        sunExposure: input.sunExposure ?? null,
+        wallSubstrate: input.wallSubstrate ?? null,
+        controllerLocation: input.controllerLocation ?? null,
+        spaceAroundScreenMm: input.spaceAroundScreenMm ?? null,
+        sharedDevicePlayers: input.sharedDevicePlayers ?? null,
+        sharedDeviceScreens: input.sharedDeviceScreens ?? null,
         // AA3a — site/requirement fields (descriptive; feed the selection rules, not pricing).
         requiresAndroid: input.requiresAndroid ?? null,
         maxDepthMm: input.maxDepthMm ?? null,
@@ -1640,7 +1955,7 @@ export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdSc
   const { resolved, priceScreenMediaplayer, priceBracketShroud, priceServices, priceTotal } =
     await computeLcdScreenPricing(input, Number(quote.location?.hourlyUplift ?? 0));
 
-  return prisma.$transaction(async (tx) => {
+  const screen = await prisma.$transaction(async (tx) => {
     const maxOrder = await tx.quoteLcdScreen.aggregate({ where: { quoteId }, _max: { sortOrder: true } });
     const screen = await tx.quoteLcdScreen.create({
       data: {
@@ -1653,6 +1968,12 @@ export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdSc
         serviceHoursId: input.serviceHoursId ? BigInt(input.serviceHoursId) : null,
         warrantyId: input.warrantyId ? BigInt(input.warrantyId) : null,
         recessDepthMm: input.recessDepthMm ?? null,
+        sunExposure: input.sunExposure ?? null,
+        wallSubstrate: input.wallSubstrate ?? null,
+        controllerLocation: input.controllerLocation ?? null,
+        spaceAroundScreenMm: input.spaceAroundScreenMm ?? null,
+        sharedDevicePlayers: input.sharedDevicePlayers ?? null,
+        sharedDeviceScreens: input.sharedDeviceScreens ?? null,
         // AA3a — site/requirement fields (descriptive; feed the selection rules, not pricing).
         requiresAndroid: input.requiresAndroid ?? null,
         maxDepthMm: input.maxDepthMm ?? null,
@@ -1689,6 +2010,9 @@ export const addLcdScreen = async (userId: bigint, quoteId: bigint, input: LcdSc
     });
     return screen;
   });
+
+  await recomputeQuote(userId, quoteId);
+  return screen;
 };
 
 /** Generic licence line. */
@@ -1698,7 +2022,7 @@ export const addLicence = async (
   input: { licenceComponentId?: number; screenType: 'LCD' | 'LED'; tier: 'low' | 'high'; qty: number; isInteractive: boolean },
 ) => {
   await getQuote(quoteId);
-  return prisma.$transaction(async (tx) => {
+  const licence = await prisma.$transaction(async (tx) => {
     const licence = await tx.quoteLicence.create({
       data: {
         quoteId,
@@ -1712,6 +2036,18 @@ export const addLicence = async (
     await recordAudit(tx, { quoteId, userId, action: 'create', entityTable: 'quote_licences', entityId: licence.id });
     return licence;
   });
+  await recomputeQuote(userId, quoteId);
+  return licence;
+};
+
+export const deleteLicence = async (userId: bigint, quoteId: bigint, licenceId: bigint) => {
+  const licence = await prisma.quoteLicence.findFirst({ where: { id: licenceId, quoteId } });
+  if (!licence) throw notFound('licence', licenceId.toString());
+  await prisma.$transaction(async (tx) => {
+    await tx.quoteLicence.delete({ where: { id: licenceId } });
+    await recordAudit(tx, { quoteId, userId, action: 'delete', entityTable: 'quote_licences', entityId: licenceId });
+  });
+  await recomputeQuote(userId, quoteId);
 };
 
 export { dec };

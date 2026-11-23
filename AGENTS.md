@@ -19,7 +19,7 @@ quotezen/
 │  ├─ api/        Fastify REST API (JWT auth, quote CRUD, audit, recompute)
 │  └─ web/        Next.js 16 (App Router) — the quote wizard
 ├─ packages/
-│  ├─ db/         Prisma schema (58 tables) + migrations + xlsx seed
+│  ├─ db/         Prisma schema (69 tables) + migrations + xlsx seed
 │  ├─ calc/       pure pricing engine (replicates Excel formulas) — heavily unit-tested
 │  └─ shared/     shared TS types + Zod schemas + money helpers
 ```
@@ -43,7 +43,7 @@ quotezen/
 
 Postgres connection via `DATABASE_URL` (see `.env.example`).
 
-## Data model (58 tables, fully relational — no JSON blobs)
+## Data model (69 tables, fully relational — no JSON blobs)
 
 Three layers. Every lookup is its own table; quote rows carry **real foreign keys** into them.
 
@@ -112,7 +112,7 @@ Each module ships with its tests before the next begins.
 - ✅ **packages/shared** — money helpers (decimal.js), enums, Zod schemas. 9 tests.
 - ✅ **packages/calc** — currency, geometry, LED supply/spec, sea freight, licence tiering,
   priced-line composition, quote aggregation. 27 tests, all traceable to workbook values.
-- ✅ **packages/db** — full 58-table Prisma schema; migration applies cleanly; idempotent seed
+- ✅ **packages/db** — full 69-table Prisma schema; migration applies cleanly; idempotent seed
   loads the reference data (verified live against Postgres 16 in Docker).
 - ✅ **apps/api** — Fastify REST: JWT auth, role guard, ~25 catalog read endpoints, quote CRUD with
   **in-transaction field-level audit logging**, status transitions, recompute (via packages/calc).
@@ -438,7 +438,7 @@ From live feedback: the LED screen suggestion query should be driven not only by
 FIRST part of the LED form and folded into the ranked configuration results. 203 tests green
 (9 shared + 96 calc + 98 api).
 - ✅ **W0 — config filters (backend)** — migration `w0_led_environment` adds `led_products.environment`
-  (indoor/outdoor/both; nullable) + `ENVIRONMENTS` enum + admin registry field; setting
+  (nullable; `'indoor'` | `'outdoor'` — no `'both'` value) + `ENVIRONMENTS` enum + admin registry field; setting
   `outdoor_brightness_nits` (4000) seeded. calc `configureScreen`: `effectiveEnvironment` (product field,
   falling back to brightness ≥ threshold ⇒ outdoor) filters by requested environment; a `viewingDistanceM`
   filter drops products whose pixel pitch exceeds the distance (max pitch ≈ distance in metres); every

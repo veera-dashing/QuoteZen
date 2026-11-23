@@ -61,8 +61,9 @@ beforeAll(async () => {
   });
   if (!product) throw new Error('Expected a clean LED product (pitch ≥ 2.5mm, no existing screens)');
   productId = product.id.toString();
-  cabinetWMm = product.minCabinetWMm!;
-  cabinetHMm = product.minCabinetHMm!;
+  // Cabinet sizes are DECIMAL in the DB (a cabinet can be 337.5mm) — convert for the arithmetic.
+  cabinetWMm = Number(product.minCabinetWMm!);
+  cabinetHMm = Number(product.minCabinetHMm!);
   wMm = cabinetWMm * 3;
   hMm = cabinetHMm * 3;
   areaSqm = (wMm / 1000) * (hMm / 1000);
@@ -193,8 +194,8 @@ describe('AA7 — UNUSUAL_PRICE advisory (warning, never blocks)', () => {
       headers: auth(),
       payload: {
         ledProductId: Number(orphan.id),
-        desiredWidthMm: (orphan.minCabinetWMm ?? 500) * 3,
-        desiredHeightMm: (orphan.minCabinetHMm ?? 500) * 3,
+        desiredWidthMm: Number(orphan.minCabinetWMm ?? 500) * 3,
+        desiredHeightMm: Number(orphan.minCabinetHMm ?? 500) * 3,
         rotateCabinets: false,
       },
     });

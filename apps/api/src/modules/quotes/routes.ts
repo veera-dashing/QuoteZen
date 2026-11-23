@@ -11,6 +11,7 @@ import {
   lineDiscountSchema,
   recordReviewSchema,
   listQuotesQuerySchema,
+  ledIntakeSchema,
   ledScreenSchema,
   quoteLicenceSchema,
   quoteRisksSchema,
@@ -37,6 +38,7 @@ import {
   getOverrides,
   getQuote,
   getQuotes,
+  listLicenceComponents,
   priceQuote,
   recomputePreview,
   recomputeQuote,
@@ -61,6 +63,7 @@ import {
   addLcdScreen,
   addLedScreen,
   addLicence,
+  deleteLicence,
   configureForQuote,
   optionsForQuote,
   lcdOptionsForQuote,
@@ -90,12 +93,15 @@ const revParam = z.object({ id: z.coerce.bigint(), rev: z.coerce.number().int().
 const diffQuery = z.object({ a: z.coerce.number().int().positive(), b: z.coerce.number().int().positive() });
 
 const configureSchema = z.object({
-  desiredWidthMm: z.coerce.number().int().positive(),
-  desiredHeightMm: z.coerce.number().int().positive(),
+  desiredWidthMm: z.coerce.number().positive(),
+  desiredHeightMm: z.coerce.number().positive(),
   allowRotation: z.boolean().optional(),
   // W0: optional environment + viewing-distance filters (absent → unchanged behaviour).
   environment: z.enum(['indoor', 'outdoor']).optional(),
   viewingDistanceM: z.coerce.number().positive().optional(),
+  intake: ledIntakeSchema.optional(),
+  /** AA2 per-job override: ignore the client's allowed-ratios restriction for this search. */
+  ignoreClientRatios: z.boolean().optional(),
 });
 
 // AA3b: LCD Good/Better/Best — optional target size + category filter (all optional → catalogue-wide).
@@ -277,8 +283,12 @@ export const quoteRoutes = async (
   app.get('/quotes/:id/export.pdf', auth, async (request, reply) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
-    const [quote, ratios] = await Promise.all([getQuote(id), loadRatios()]);
-    const pdf = await buildQuotePdf(quote, ratios);
+    const [quote, ratios, licenceRows] = await Promise.all([
+      getQuote(id),
+      loadRatios(),
+      listLicenceComponents(),
+    ]);
+    const pdf = await buildQuotePdf(quote, ratios, licenceRows);
     return reply
       .header('content-type', 'application/pdf')
       .header('content-disposition', `attachment; filename="quote-${quote.jobReference}.pdf"`)
@@ -497,6 +507,14 @@ export const quoteRoutes = async (
     const input = parse(quoteLicenceSchema, request.body);
     const licence = await addLicence(userId(request), id, input);
     return reply.code(201).send(licence);
+  });
+
+  app.delete('/quotes/:id/licences/:licenceId', write, async (request, reply) => {
+    const { id } = parse(idParam, request.params);
+    const { licenceId } = parse(z.object({ licenceId: z.coerce.bigint() }), request.params);
+    await assertOwnership(id, actor(request));
+    await deleteLicence(userId(request), id, licenceId);
+    return reply.code(204).send();
   });
 
   // ── Per-job documents + deterministic re-run (P1-19e) ──

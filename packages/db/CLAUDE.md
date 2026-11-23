@@ -1,6 +1,6 @@
 # QuoteZen DB — `packages/db`
 
-Prisma schema (58 tables), migrations, and the xlsx reference-data seed.
+Prisma schema (69 tables), migrations, and the xlsx reference-data seed.
 
 ## Schema overview
 

@@ -4,14 +4,40 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { api, ApiError, downloadFile, getRole, uploadFile } from '@/lib/api';
 import SearchSelect from '@/components/SearchSelect';
+import RecordForm from '@/components/RecordForm';
+import type { Row, TableDef } from '@/lib/types';
+import type { LedIntakeInput } from '@quotezen/shared';
 
-interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null }
+interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null; years?: number; rate?: string | number | null; isCob?: boolean }
+
+/**
+ * A NEW screen pre-selects the 3-year warranty. This mirrors the `standard_warranty_years` setting
+ * (3) — the cover already baked into a display's catalog cost — so the default is price-neutral:
+ * the LCD warranty line is only raised for years BEYOND the baseline, and LED prices nothing from it.
+ * Matched on `years`, not on the option's name, so renaming the catalog row doesn't break the default.
+ */
+const DEFAULT_WARRANTY_YEARS = 3;
+
+/** The catalog row a new screen should default its warranty to (undefined → leave unset). */
+const defaultWarranty = (rows: readonly Opt[] | undefined): Opt | undefined =>
+  rows?.find((o) => Number(o.years) === DEFAULT_WARRANTY_YEARS);
 // A stored LED component row (as returned on the screen) — carries the componentType + the one FK id.
 interface LedComponent {
   id: string; componentType: string; qty: number;
   controllerId?: string | null; ledPeripheralId?: string | null;
   mediaplayerId?: string | null; peripheralId?: string | null;
+  // The API includes the joined catalogue row for whichever FK is set, so a component can be named
+  // without re-fetching the four component catalogues.
+  controller?: { name?: string | null } | null;
+  ledPeripheral?: { name?: string | null } | null;
+  mediaplayer?: { name?: string | null } | null;
+  peripheral?: { name?: string | null } | null;
 }
+
+/** Human name for a stored component row, from whichever joined catalogue row is present. */
+const ledComponentName = (c: LedComponent): string =>
+  c.controller?.name ?? c.ledPeripheral?.name ?? c.mediaplayer?.name ?? c.peripheral?.name ?? '—';
+
 interface LedScreen {
   id: string; screenName: string | null; qty: number;
   resolutionWpx: number | null; resolutionHpx: number | null; priceTotal: string | null;
@@ -20,10 +46,19 @@ interface LedScreen {
   // Full-edit pre-fill (V4): the panel + geometry inputs finalised at add time.
   ledProductId?: string | null; desiredWidthMm?: number | null; desiredHeightMm?: number | null;
   rotateCabinets?: boolean; aspectRatioId?: string | null;
+  labourHours?: string | number | null;         // hours actually used to price this screen
+  labourHoursOverride?: string | number | null; // manual install hours; null = estimated
+  sharedController?: boolean | null;            // one controller drives every unit of this row
   recessDepthMm?: number | null; // AA1 — recess/cavity depth (mm)
+  sunExposure?: string | null;   // AA1 — sun exposure at this screen's position
+  wallSubstrate?: string | null; // AA1 — what this screen mounts to
+  controllerLocation?: string | null;  // AA1 — where this screen's controller lives
+  spaceAroundScreenMm?: number | null; // space around this screen (mm)
+  sharedDevicePlayers?: number | null; sharedDeviceScreens?: number | null; // AA5 — ratio for this screen
   // The attached LED product (model) + its manufacturer, for the "Manufacturer - Model" row label.
-  ledProduct?: { model: string; manufacturer?: { name: string } | null } | null;
+  ledProduct?: { model: string; isCob?: boolean | null; manufacturer?: { name: string } | null } | null;
   components?: LedComponent[];
+  intakeAnswers?: LedIntakeInput | null;
   // Secondary options/services (Form 2) — raw FK scalars + housing/notes, used to pre-fill the editor.
   gobId?: string | null; frameId?: string | null; trimId?: string | null; hangingBarId?: string | null;
   engineeringId?: string | null; installMethodId?: string | null; freightOptionId?: string | null;
@@ -45,6 +80,11 @@ interface LcdScreen {
   orientation?: string | null; displayId?: string | null;
   installMethodId?: string | null; serviceHoursId?: string | null; warrantyId?: string | null;
   recessDepthMm?: number | null; // AA1 — recess/cavity depth (mm)
+  sunExposure?: string | null;   // AA1 — sun exposure at this screen's position
+  wallSubstrate?: string | null; // AA1 — what this screen mounts to
+  controllerLocation?: string | null;  // AA1 — where this screen's controller lives
+  spaceAroundScreenMm?: number | null; // space around this screen (mm)
+  sharedDevicePlayers?: number | null; sharedDeviceScreens?: number | null; // AA5 — ratio for this screen
   // AA3a — site/requirement fields (selection rules).
   requiresAndroid?: boolean | null; maxDepthMm?: number | null; needsPc?: boolean | null; needsHardDrive?: boolean | null;
   // Intake form v2 — LCD screen-level requirement/preference fields.
@@ -62,11 +102,11 @@ interface Quote {
   // Quote-level PI / commercial fields (U1).
   requestedShippingDate?: string | null; siteAddress?: string | null; projectNotes?: string | null;
   // AA1 — site/context intake fields (one-per-quote site details).
-  endCustomer?: string | null; airsideLandside?: string | null; sunExposure?: string | null;
-  wallSubstrate?: string | null; powerDataAvailable?: string | null; controllerLocation?: string | null;
+  endCustomer?: string | null; airsideLandside?: string | null;
+  powerDataAvailable?: string | null;
   windowFacing?: boolean | null;
   // AA5 — software/hardware dependency intake fields (Group E). Descriptive; no pricing impact.
-  mediaPlayerSupply?: string | null; sharedDevicePlayers?: number | null; sharedDeviceScreens?: number | null;
+  mediaPlayerSupply?: string | null;
   storeSizeSqm?: string | null; customContentCuration?: boolean | null;
   pcRequired?: boolean | null; hardDriveRequired?: boolean | null;
   // AA6a — commercial intake fields (Group F). Descriptive/advisory; no pricing impact.
@@ -74,12 +114,14 @@ interface Quote {
   budgetAud?: string | null; tenureMonths?: number | null;
   clientMustHaves?: string | null; needsSolutionsEngineer?: boolean | null;
   // Intake form v2 — quote-level fields.
-  accountExec?: string | null; spaceAroundScreenMm?: number | null;
+  accountExec?: string | null;
   discountPct?: string | null; // stored as a fraction 0..1
   discountNote?: string | null; // manager justification, required above 5%
   discountScope?: 'one_off' | 'recurring' | null; // U5 — upfront vs every renewal
   discountMode?: 'stack' | 'item_only' | null; // V2 — item+quote discount vs per-item only
   totalEquipment: string; totalServices: string; totalRecurring: string; grandTotal: string;
+  /** Bumped by every save on the quote (incl. a screen re-edit whose price didn't change). */
+  updatedAt?: string;
   currency?: { code: string } | null;
   ledScreens: LedScreen[]; lcdScreens: LcdScreen[]; licences: Licence[];
   viewers?: Array<{ user: { id: string; name: string; email: string } }>;
@@ -93,12 +135,15 @@ const STEPS = ['Details', 'Select Screens', 'Licences', 'Review'] as const;
 export default function QuoteWizard() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
+  const router = useRouter();
   // Unified create + edit: `/quotes/new` renders this same wizard with the Details step in CREATE mode
   // (no separate create page). On first save the Details step navigates to /quotes/:id?step=1.
   const isNew = id === 'new';
   const [quote, setQuote] = useState<Quote | null>(null);
   const [step, setStep] = useState(() => (isNew ? 0 : Number(searchParams.get('step')) || 0));
   const [error, setError] = useState<string | null>(null);
+  // Raised when the user advances past Select Screens without having added any — see NoScreensDialog.
+  const [noScreensPrompt, setNoScreensPrompt] = useState(false);
   // Collapsible Quote-summary panel — remembered across steps/quotes (handy on smaller screens).
   const [summaryOpen, setSummaryOpen] = useState(true);
   useEffect(() => {
@@ -180,17 +225,38 @@ export default function QuoteWizard() {
         </div>
       )}
 
+      {noScreensPrompt && (
+        <NoScreensDialog
+          onCancel={() => setNoScreensPrompt(false)}
+          onContinue={() => { setNoScreensPrompt(false); setStep(step + 1); }}
+        />
+      )}
+
       {!isNew && (
       <div className="step-actions">
-        <button disabled={step === 0} onClick={() => setStep(step - 1)}>
-          ← Back
+        {/* On the first step there is no previous step to go to, but the button shouldn't be a dead
+            end — Back then means "leave this quote", returning to the list. */}
+        <button onClick={() => (step === 0 ? router.push('/quotes') : setStep(step - 1))}>
+          {step === 0 ? '← Back to quotes' : '← Back'}
         </button>
         {step < STEPS.length - 1 && (
           <>
             <button className="ghost" onClick={() => setStep(step + 1)}>
               Skip
             </button>
-            <button className="primary" onClick={() => setStep(step + 1)}>
+            <button
+              className="primary"
+              onClick={() => {
+                // Step 1 is Select Screens. Configuring a screen without pressing "+ Add screen"
+                // saves nothing, and that is easy to miss — confirm before moving on.
+                const screenCount = (quote?.ledScreens.length ?? 0) + (quote?.lcdScreens.length ?? 0);
+                if (step === 1 && screenCount === 0) {
+                  setNoScreensPrompt(true);
+                  return;
+                }
+                setStep(step + 1);
+              }}
+            >
               Next →
             </button>
           </>
@@ -265,14 +331,15 @@ function QuoteSummary({ quote, stepIndex, onHide }: { quote: Quote; stepIndex: n
   const pct = total === 0 ? 0 : Math.round((satisfied / total) * 100);
 
   // Stage-aware emphasis: which section gets the accent border for the current step.
-  //  0 Details → Completeness + Discount · 1 Select Screens → Screens + Stats
-  //  2 Licences → Totals · 3 Review → Totals + Completeness
+  //  0 Details → Completeness · 1 Select Screens → Screens + Stats
+  //  2 Licences → Totals · 3 Review → Totals + Discount
+  // Discount follows its control: it is set in the Review step, against the final figure.
   const emph = (section: 'stats' | 'screens' | 'discount' | 'completeness' | 'totals'): boolean => {
     switch (stepIndex) {
-      case 0: return section === 'completeness' || section === 'discount';
+      case 0: return section === 'completeness';
       case 1: return section === 'screens' || section === 'stats';
       case 2: return section === 'totals';
-      case 3: return section === 'totals' || section === 'completeness';
+      case 3: return section === 'totals' || section === 'discount';
       default: return false;
     }
   };
@@ -420,34 +487,19 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   const [clientId, setClientId] = useState(quote?.clientId ?? '');
   const [locationId, setLocationId] = useState(quote?.locationId ?? '');
   const [currencyCode, setCurrencyCode] = useState(quote?.currency?.code ?? 'AUD');
-  // Project information / commercial (U1). discountPct is stored as a fraction (0..1) but shown as %.
+  // Project information / commercial (U1).
   const [requestedShippingDate, setRequestedShippingDate] = useState(
     quote?.requestedShippingDate ? quote.requestedShippingDate.slice(0, 10) : '',
   );
   const [siteAddress, setSiteAddress] = useState(quote?.siteAddress ?? '');
   const [projectNotes, setProjectNotes] = useState(quote?.projectNotes ?? '');
   // AA1 — site/context intake fields (one-per-quote site details from the intake questionnaire).
-  const [endCustomer, setEndCustomer] = useState(quote?.endCustomer ?? '');
   const [airsideLandside, setAirsideLandside] = useState(quote?.airsideLandside ?? '');
-  const [sunExposure, setSunExposure] = useState(quote?.sunExposure ?? '');
-  const [wallSubstrate, setWallSubstrate] = useState(quote?.wallSubstrate ?? '');
-  const [powerDataAvailable, setPowerDataAvailable] = useState(quote?.powerDataAvailable ?? '');
-  const [controllerLocation, setControllerLocation] = useState(quote?.controllerLocation ?? '');
-  const [windowFacing, setWindowFacing] = useState<boolean>(quote?.windowFacing ?? false);
   // AA5 — software/hardware dependency intake fields (Group E).
   const [mediaPlayerSupply, setMediaPlayerSupply] = useState(quote?.mediaPlayerSupply ?? '');
-  const [sharedDevicePlayers, setSharedDevicePlayers] = useState(
-    quote?.sharedDevicePlayers != null ? String(quote.sharedDevicePlayers) : '',
-  );
-  const [sharedDeviceScreens, setSharedDeviceScreens] = useState(
-    quote?.sharedDeviceScreens != null ? String(quote.sharedDeviceScreens) : '',
-  );
   const [storeSizeSqm, setStoreSizeSqm] = useState(
     quote?.storeSizeSqm != null && quote.storeSizeSqm !== '' ? String(quote.storeSizeSqm) : '',
   );
-  const [customContentCuration, setCustomContentCuration] = useState<boolean>(quote?.customContentCuration ?? false);
-  const [pcRequired, setPcRequired] = useState<boolean>(quote?.pcRequired ?? false);
-  const [hardDriveRequired, setHardDriveRequired] = useState<boolean>(quote?.hardDriveRequired ?? false);
   // AA6a — commercial intake fields (Group F).
   const [priceSensitivity, setPriceSensitivity] = useState(quote?.priceSensitivity ?? '');
   const [budgetAud, setBudgetAud] = useState(
@@ -460,39 +512,27 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   const [needsSolutionsEngineer, setNeedsSolutionsEngineer] = useState<boolean>(quote?.needsSolutionsEngineer ?? false);
   // Intake form v2 — account exec and space around screen.
   const [accountExec, setAccountExec] = useState(quote?.accountExec ?? '');
-  const [spaceAroundScreenMm, setSpaceAroundScreenMm] = useState(
-    quote?.spaceAroundScreenMm != null ? String(quote.spaceAroundScreenMm) : '',
-  );
-  const [discountPctInput, setDiscountPctInput] = useState(
-    quote?.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
-  );
-  // A+ discount guardrail: a manager note is required above the note threshold; the cap is a hard limit
-  // for non-admins (admin-overridable). Both come from the admin-maintained DB settings (fetched below).
-  const [discountNote, setDiscountNote] = useState(quote?.discountNote ?? '');
-  const [capPct, setCapPct] = useState(12);
-  const [noteThreshold, setNoteThreshold] = useState(5);
   const isAdmin = getRole() === 'admin';
-  const discPctNum = discountPctInput.trim() === '' ? null : Number(discountPctInput);
-  const needsNote = discPctNum != null && discPctNum > noteThreshold && !discountNote.trim();
-  const overCap = discPctNum != null && discPctNum > capPct;
-  const capBlocked = overCap && !isAdmin;
-  const discountBlocked = needsNote || capBlocked;
-  // Client + Location are mandatory on the Details step — gate save/auto-save until both are set.
+  // Client + Location are required to APPROVE a quote, not to save one. They drive a hint only —
+  // never a save block — so part-finished work is never stranded (e.g. the site address is known but
+  // the location is still being confirmed). Completeness is enforced at finalisation, in changeStatus.
   const detailsIncomplete = !clientId || !locationId;
-  // Non-admins can't type above the cap (clamped). Admins MAY exceed it — no hard stop; a visible
-  // warning banner flags it (so it isn't accidental) and the server audits the override.
-  const onDiscountChange = (raw: string) => {
-    if (!isAdmin && raw.trim() !== '' && Number(raw) > capPct) { setDiscountPctInput(String(capPct)); setDirty(true); return; }
-    setDiscountPctInput(raw); setDirty(true);
-  };
-  // U5 — where the discount applies (one-off upfront vs every renewal).
-  const [discountScope, setDiscountScope] = useState<'one_off' | 'recurring'>(
-    quote?.discountScope === 'recurring' ? 'recurring' : 'one_off',
-  );
+  // NOTE: the discount override (pct / scope / manager note) and its cap+threshold guardrail live in
+  // the Review step — it is set after the final figure is known. Nothing here reads or writes it, so
+  // a Details save never touches those columns.
   const [selectedViewers, setSelectedViewers] = useState<Set<string>>(
     () => new Set((quote?.viewers ?? []).map((v) => v.user.id)),
   );
   const [clients, setClients] = useState<Opt[]>([]);
+  // Inline "new client" (reuses the admin clients drawer so there is ONE client-creation form).
+  // `POST /admin/clients` is restricted to admin+sales, so manager/director — who can otherwise write
+  // quotes — never see the create row, rather than meeting a 403 on save.
+  const canCreateClient = isAdmin || getRole() === 'sales';
+  const [clientTable, setClientTable] = useState<TableDef | null>(null);
+  const [newClientOpen, setNewClientOpen] = useState(false);
+  const [newClientName, setNewClientName] = useState('');
+  const [clientMetaBusy, setClientMetaBusy] = useState(false);
+  const [clientMetaErr, setClientMetaErr] = useState<string | null>(null);
   const [locations, setLocations] = useState<Opt[]>([]);
   const [currencies, setCurrencies] = useState<Opt[]>([]);
   const [viewers, setViewers] = useState<Array<{ id: string; name: string; email: string }>>([]);
@@ -512,16 +552,53 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       api<{ rows: Opt[] }>('/admin/locations?take=200'),
       api<Opt[]>('/catalog/currencies'),
       api<Array<{ id: string; name: string; email: string }>>('/users/viewers'),
-      api<{ capPct: number; noteThresholdPct: number }>('/quotes/discount-policy'),
-    ]).then(([c, l, cur, v, policy]) => {
+    ]).then(([c, l, cur, v]) => {
       setClients(c.rows);
       setLocations(l.rows);
       setCurrencies(cur);
       setViewers(v);
-      setCapPct(Math.round(policy.capPct * 1000) / 10);
-      setNoteThreshold(Math.round(policy.noteThresholdPct * 1000) / 10);
     });
   }, [canWrite]);
+
+  // Lazy-load the clients table definition only when the drawer is first opened: `/admin/_meta`
+  // describes every registry table, so there's no reason to pull it on every quote-details view.
+  // `typedName` is whatever was in the picker's search box — it seeds the drawer's Name field.
+  const openNewClient = async (typedName: string) => {
+    setClientMetaErr(null);
+    setNewClientName(typedName);
+    if (clientTable) {
+      setNewClientOpen(true);
+      return;
+    }
+    setClientMetaBusy(true);
+    try {
+      const r = await api<{ tables: TableDef[] }>('/admin/_meta');
+      const def = r.tables.find((t) => t.resource === 'clients');
+      if (!def) throw new Error('Client form is unavailable');
+      setClientTable(def);
+      setNewClientOpen(true);
+    } catch (e) {
+      setClientMetaErr(e instanceof Error ? e.message : 'Could not open the client form');
+    } finally {
+      setClientMetaBusy(false);
+    }
+  };
+
+  // Create through the SAME endpoint the admin clients page posts to — one creation path, so the
+  // default-discount seeding and the admin audit row both still happen. RecordForm closes itself on
+  // success and keeps the drawer open (showing the message) if this throws.
+  const saveNewClient = async (payload: Row) => {
+    const created = await api<{ id: string | number; name?: string | null }>('/admin/clients', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    const id = String(created.id);
+    // The list endpoint orders by id asc, so a new row belongs at the end — appending keeps this
+    // picker in the same order as every other client list in the app.
+    setClients((prev) => [...prev, { id, name: created.name ?? String(payload.name ?? '') }]);
+    setClientId(id);
+    setDirty(true);
+  };
 
   const toggleViewer = (id: string) => {
     setDirty(true);
@@ -541,7 +618,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
     setErr(null);
     setConflict(false);
     setAutoStatus('saving');
-    // Shared body for create + edit; discountPct converts % → fraction, blanks clear the field.
+    // Shared body for create + edit; blanks clear the field.
     const body = {
       jobReference,
       currencyCode,
@@ -551,22 +628,11 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       requestedShippingDate: requestedShippingDate || null,
       siteAddress: siteAddress.trim() ? siteAddress.trim() : null,
       projectNotes: projectNotes.trim() ? projectNotes.trim() : null,
-      // AA1 — site/context intake fields (null clears; windowFacing is a boolean flag).
-      endCustomer: endCustomer.trim() ? endCustomer.trim() : null,
+      // AA1 — site/context intake fields (null clears).
       airsideLandside: airsideLandside || null,
-      sunExposure: sunExposure || null,
-      wallSubstrate: wallSubstrate.trim() ? wallSubstrate.trim() : null,
-      powerDataAvailable: powerDataAvailable || null,
-      controllerLocation: controllerLocation.trim() ? controllerLocation.trim() : null,
-      windowFacing,
-      // AA5 — software/hardware dependency intake fields (null clears; the flags are booleans).
+      // AA5 — software/hardware dependency intake fields (null clears).
       mediaPlayerSupply: mediaPlayerSupply || null,
-      sharedDevicePlayers: sharedDevicePlayers.trim() === '' ? null : Number(sharedDevicePlayers),
-      sharedDeviceScreens: sharedDeviceScreens.trim() === '' ? null : Number(sharedDeviceScreens),
       storeSizeSqm: storeSizeSqm.trim() === '' ? null : Number(storeSizeSqm),
-      customContentCuration,
-      pcRequired,
-      hardDriveRequired,
       // AA6a — commercial intake fields (null clears; needsSolutionsEngineer is a boolean flag).
       priceSensitivity: priceSensitivity || null,
       budgetAud: budgetAud.trim() === '' ? null : Number(budgetAud),
@@ -575,10 +641,8 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       needsSolutionsEngineer,
       // Intake form v2 — account exec and space around screen.
       accountExec: accountExec.trim() || null,
-      spaceAroundScreenMm: spaceAroundScreenMm.trim() === '' ? null : Number(spaceAroundScreenMm),
-      discountPct: discountPctInput.trim() === '' ? null : Number(discountPctInput) / 100,
-      discountNote: discountNote.trim() ? discountNote.trim() : null,
-      discountScope,
+      // discountPct / discountNote / discountScope are deliberately NOT sent: they are owned by the
+      // Review step. Including them here would let a Details auto-save overwrite a discount set later.
     };
     try {
       if (isNew) {
@@ -606,7 +670,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
     } finally {
       setBusy(false);
     }
-  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, endCustomer, airsideLandside, sunExposure, wallSubstrate, powerDataAvailable, controllerLocation, windowFacing, mediaPlayerSupply, sharedDevicePlayers, sharedDeviceScreens, storeSizeSqm, customContentCuration, pcRequired, hardDriveRequired, priceSensitivity, budgetAud, tenureMonths, clientMustHaves, needsSolutionsEngineer, accountExec, spaceAroundScreenMm, discountPctInput, discountNote, discountScope, onChange]);
+  }, [isNew, router, quote, jobReference, currencyCode, clientId, locationId, selectedViewers, requestedShippingDate, siteAddress, projectNotes, airsideLandside, mediaPlayerSupply, storeSizeSqm, priceSensitivity, budgetAud, tenureMonths, clientMustHaves, needsSolutionsEngineer, accountExec, onChange]);
 
   const save = persist;
 
@@ -622,15 +686,16 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
   // conflict is showing, auto-save is suspended until the user reloads (which resets dirty).
   useEffect(() => {
     // No auto-save in CREATE mode (nothing to PATCH yet — the user clicks "Create & continue").
-    // Suspend auto-save while the discount guardrail is unmet (missing note / non-admin over cap) so the
-    // user isn't hit with a mid-typing 422/403; the explicit Save still surfaces the server error.
-    if (isNew || !canWrite || !dirty || conflict || !jobReference || discountBlocked || detailsIncomplete) return;
+    // Only a missing job reference stops the save: it is the one genuinely NOT NULL / unique column.
+    // An incomplete client/location must NOT suspend auto-save, or edits to every other field on the
+    // step would be silently dropped while the user waits on an address.
+    if (isNew || !canWrite || !dirty || conflict || !jobReference) return;
     const t = setTimeout(() => {
       setDirty(false);
       void persist();
     }, 1500);
     return () => clearTimeout(t);
-  }, [isNew, dirty, conflict, canWrite, jobReference, discountBlocked, persist]);
+  }, [isNew, dirty, conflict, canWrite, jobReference, persist]);
 
   // A viewer can't create a quote; guard the create route (the "+ New quote" button is writer-only).
   if (isNew && !canWrite) {
@@ -648,10 +713,10 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
         </div>
         <h4 style={{ margin: '16px 0 4px' }}>Project information</h4>
         <div className="grid3">
-          <div><label>Requested shipping date</label><input value={quote.requestedShippingDate ? quote.requestedShippingDate.slice(0, 10) : ''} readOnly /></div>
+          <div><label>Install start date</label><input value={quote.requestedShippingDate ? quote.requestedShippingDate.slice(0, 10) : ''} readOnly /></div>
           <div><label>Site address</label><input value={quote.siteAddress ?? ''} readOnly /></div>
-          <div><label>Discount</label><input value={quote.discountPct != null && quote.discountPct !== '' ? `${Number(quote.discountPct) * 100}%` : '(default)'} readOnly /></div>
-          <div><label>Discount applies to</label><input value={quote.discountScope === 'recurring' ? 'Every renewal (recurring)' : 'One-off (upfront)'} readOnly /></div>
+          {/* Discount is not shown on Details for writers, so it isn't shown here either — a viewer
+              reads it in the sidebar's Discount section and on the Review step. */}
         </div>
         <div style={{ marginTop: 8 }}>
           <label>Project notes</label>
@@ -660,14 +725,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
         <h4 style={{ margin: '16px 0 4px' }}>Site context</h4>
         <div className="grid3">
           <div><label>Account exec</label><input value={quote.accountExec ?? ''} readOnly /></div>
-          <div><label>End customer</label><input value={quote.endCustomer ?? ''} readOnly /></div>
           <div><label>Airside / Landside</label><input value={quote.airsideLandside ?? ''} readOnly /></div>
-          <div><label>Sun exposure</label><input value={quote.sunExposure ?? ''} readOnly /></div>
-          <div><label>Wall substrate</label><input value={quote.wallSubstrate ?? ''} readOnly /></div>
-          <div><label>Power &amp; data available</label><input value={quote.powerDataAvailable ?? ''} readOnly /></div>
-          <div><label>Controller / media-player location</label><input value={quote.controllerLocation ?? ''} readOnly /></div>
-          <div><label>Window-facing / glare risk</label><input value={quote.windowFacing == null ? '' : quote.windowFacing ? 'Yes' : 'No'} readOnly /></div>
-          <div><label>Space around screen (mm)</label><input value={quote.spaceAroundScreenMm != null ? String(quote.spaceAroundScreenMm) : ''} readOnly /></div>
         </div>
         <div style={{ marginTop: 12 }}>
           <label>Shared with viewers</label>
@@ -701,9 +759,14 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
             value={clientId}
             onChange={(v) => { setClientId(v); setDirty(true); }}
             allowEmpty
-            placeholder="Select client…"
+            placeholder={clientMetaBusy ? 'Opening…' : 'Select client…'}
             options={clients.map((c) => ({ value: c.id, label: c.name ?? '' }))}
+            // Creating a client lives IN the picker: search for one, and if it isn't there, the
+            // pinned foot-row opens the shared client drawer pre-filled with whatever was typed.
+            onCreate={canCreateClient ? openNewClient : undefined}
+            createLabel="New client"
           />
+          {clientMetaErr && <div className="error">{clientMetaErr}</div>}
         </div>
         <div>
           <label>Location <span style={{ color: 'var(--danger, #dc2626)' }}>*</span></label>
@@ -727,62 +790,21 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       </div>
 
       <h4 style={{ margin: '18px 0 4px' }}>Project information</h4>
-      <p className="muted" style={{ marginTop: 0 }}>Quote-level site &amp; commercial details. The discount overrides the client/system default (leave blank to inherit).</p>
+      <p className="muted" style={{ marginTop: 0 }}>Quote-level site &amp; commercial details.</p>
       <div className="grid3">
         <div>
-          <label>Requested shipping date</label>
+          {/* Label only — the column/field stays `requestedShippingDate`. Renaming the storage is a
+              separate migration, and a CRM autofill source for this date is not built yet. */}
+          <label>Install start date</label>
           <input type="date" value={requestedShippingDate} onChange={(e) => { setRequestedShippingDate(e.target.value); setDirty(true); }} />
         </div>
         <div>
           <label>Site address</label>
           <input value={siteAddress} onChange={(e) => { setSiteAddress(e.target.value); setDirty(true); }} placeholder="e.g. 12 Site St, Sydney" />
         </div>
-        <div>
-          <label>Discount override (%)</label>
-          <input type="number" min={0} max={isAdmin ? 99 : capPct} step="0.5" value={discountPctInput} onChange={(e) => onDiscountChange(e.target.value)} placeholder="(default)" />
-          <p className="muted" style={{ margin: '4px 0 0', fontSize: 12, color: capBlocked ? 'var(--danger, #dc2626)' : undefined }}>
-            {capBlocked
-              ? `Exceeds the ${capPct}% cap — admin approval required.`
-              : `Cap ${capPct}%. Above ${noteThreshold}% requires a manager note.`}
-          </p>
-        </div>
-        <div>
-          <label>Discount applies to</label>
-          <select value={discountScope} onChange={(e) => { setDiscountScope(e.target.value as 'one_off' | 'recurring'); setDirty(true); }}>
-            <option value="one_off">One-off (upfront)</option>
-            <option value="recurring">Every renewal (recurring)</option>
-          </select>
-        </div>
+        {/* No discount field here at all — it belongs to the Review step, applied against the final
+            figure. The sidebar's Discount section still shows the effective rate at every stage. */}
       </div>
-      {/* Admin over-cap: a visible warning (not a hard stop) so it isn't done accidentally; audited on save. */}
-      {isAdmin && overCap && (
-        <div
-          style={{
-            marginTop: 10,
-            padding: '8px 12px',
-            borderRadius: 6,
-            border: '1px solid #f59e0b',
-            background: 'rgba(245,158,11,0.12)',
-            color: '#f59e0b',
-            fontSize: 13,
-          }}
-        >
-          ⚠ This discount ({discPctNum}%) exceeds the {capPct}% cap. You can proceed as an admin, but the
-          override will be recorded in the audit log{discPctNum != null && discPctNum > noteThreshold ? ' (a manager note is required)' : ''}.
-        </div>
-      )}
-      {discPctNum != null && discPctNum > noteThreshold && (
-        <div style={{ marginTop: 8 }}>
-          <label>Manager note (required for discounts above {noteThreshold}%){needsNote && <span style={{ color: 'var(--danger, #dc2626)' }}> *</span>}</label>
-          <textarea
-            value={discountNote}
-            onChange={(e) => { setDiscountNote(e.target.value); setDirty(true); }}
-            rows={2}
-            style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box', borderColor: needsNote ? 'var(--danger, #dc2626)' : undefined }}
-            placeholder="Justification for the discount (e.g. strategic account, competitive tender)…"
-          />
-        </div>
-      )}
       <div style={{ marginTop: 8 }}>
         <label>Project notes</label>
         <textarea value={projectNotes} onChange={(e) => { setProjectNotes(e.target.value); setDirty(true); }} rows={3} style={{ width: '100%', fontFamily: 'inherit', fontSize: 13, padding: 8, boxSizing: 'border-box' }} placeholder="Internal project notes…" />
@@ -795,10 +817,6 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
         <div>
           <label>Account exec</label>
           <input value={accountExec} onChange={(e) => { setAccountExec(e.target.value); setDirty(true); }} placeholder="Account exec / owner name" />
-        </div>
-        <div>
-          <label>End customer</label>
-          <input value={endCustomer} onChange={(e) => { setEndCustomer(e.target.value); setDirty(true); }} placeholder="Where it's installed (e.g. Airport retailer)" />
         </div>
         <div>
           <label>Airside / Landside</label>
@@ -814,65 +832,11 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
             ]}
           />
         </div>
-        <div>
-          <label>Sun exposure</label>
-          <SearchSelect
-            value={sunExposure}
-            onChange={(v) => { setSunExposure(v); setDirty(true); }}
-            allowEmpty
-            placeholder="—"
-            options={[
-              { value: 'None', label: 'None' },
-              { value: 'Indirect', label: 'Indirect' },
-              { value: 'Direct', label: 'Direct' },
-            ]}
-          />
-        </div>
-        <div>
-          <label>Wall substrate</label>
-          <input value={wallSubstrate} onChange={(e) => { setWallSubstrate(e.target.value); setDirty(true); }} placeholder="e.g. plasterboard, brick, concrete" />
-        </div>
-        <div>
-          <label>Power &amp; data available</label>
-          <SearchSelect
-            value={powerDataAvailable}
-            onChange={(v) => { setPowerDataAvailable(v); setDirty(true); }}
-            allowEmpty
-            placeholder="—"
-            options={[
-              { value: 'Yes', label: 'Yes' },
-              { value: 'No', label: 'No' },
-              { value: 'Unknown', label: 'Unknown' },
-            ]}
-          />
-        </div>
-        <div>
-          <label>Controller / media-player location</label>
-          <input value={controllerLocation} onChange={(e) => { setControllerLocation(e.target.value); setDirty(true); }} placeholder="e.g. comms room, behind screen" />
-        </div>
-      </div>
-      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-        <div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
-            <input type="checkbox" checked={windowFacing} onChange={(e) => { setWindowFacing(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
-            Window-facing / glare risk
-          </label>
-        </div>
-        <div>
-          <label>Space around screen (mm)</label>
-          <input
-            type="number"
-            min={0}
-            value={spaceAroundScreenMm}
-            onChange={(e) => { setSpaceAroundScreenMm(e.target.value); setDirty(true); }}
-            placeholder="e.g. 50"
-          />
-        </div>
       </div>
 
       {/* AA5 — software/hardware dependency intake fields (Group E). Descriptive; no pricing impact. */}
       <h4 style={{ margin: '18px 0 4px' }}>Software &amp; dependencies</h4>
-      <p className="muted" style={{ marginTop: 0 }}>Media-player supply, shared-device ratio, and content/hardware dependencies (informational — feeds the PM handoff).</p>
+      <p className="muted" style={{ marginTop: 0 }}>Media-player supply and store size (informational — feeds the PM handoff).</p>
       <div className="grid3">
         <div>
           <label>Media player supply</label>
@@ -889,31 +853,9 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
           />
         </div>
         <div>
-          <label>Shared-device ratio (players)</label>
-          <input type="number" min={0} value={sharedDevicePlayers} onChange={(e) => { setSharedDevicePlayers(e.target.value); setDirty(true); }} placeholder="e.g. 1" />
-        </div>
-        <div>
-          <label>… per (screens)</label>
-          <input type="number" min={0} value={sharedDeviceScreens} onChange={(e) => { setSharedDeviceScreens(e.target.value); setDirty(true); }} placeholder="e.g. 4" />
-        </div>
-        <div>
           <label>Store size (m²)</label>
           <input type="number" min={0} step="0.01" value={storeSizeSqm} onChange={(e) => { setStoreSizeSqm(e.target.value); setDirty(true); }} placeholder="for music sizing" />
         </div>
-      </div>
-      <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 16 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={customContentCuration} onChange={(e) => { setCustomContentCuration(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
-          Custom content curation
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={pcRequired} onChange={(e) => { setPcRequired(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
-          PC required
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={hardDriveRequired} onChange={(e) => { setHardDriveRequired(e.target.checked); setDirty(true); }} style={{ width: 'auto' }} />
-          Hard drive required
-        </label>
       </div>
 
       {/* AA6a — commercial intake (Group F). Advisory only; emphasises the matching G/B/B tier + feeds the PM handoff. */}
@@ -978,7 +920,7 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
       {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
 
       <div className="step-actions">
-        <button className="primary" onClick={handleSave} disabled={busy || !jobReference || discountBlocked || detailsIncomplete}>
+        <button className="primary" onClick={handleSave} disabled={busy || !jobReference}>
           {busy ? (isNew ? 'Creating…' : 'Saving…') : isNew ? 'Create & continue' : 'Save details'}
         </button>
         {isNew && (
@@ -986,30 +928,65 @@ function DetailsStep({ quote, onChange }: { quote: Quote | null; onChange: () =>
             Cancel
           </button>
         )}
-        {detailsIncomplete ? (
+        {!jobReference && (
           <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>
-            {!clientId && !locationId
-              ? 'Client and location are required.'
-              : !clientId
-                ? 'Client is required.'
-                : 'Location is required.'}
+            A job reference is required to save.
           </span>
-        ) : (
-          discountBlocked && (
-            <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>
-              {needsNote ? `Add a manager note to save (discount above ${noteThreshold}%).` : `Discount exceeds the ${capPct}% cap.`}
-            </span>
-          )
+        )}
+        {/* Advisory, not a blocker: these are needed to APPROVE the quote, and the work saves without
+            them. Deliberately not danger-red — nothing here is stopping the user. */}
+        {jobReference && detailsIncomplete && (
+          <span className="muted" style={{ alignSelf: 'center' }}>
+            Still to add before approval:{' '}
+            {!clientId && !locationId ? 'client and location' : !clientId ? 'client' : 'location'}. You can save now and
+            finish later.
+          </span>
         )}
       </div>
+
+      {newClientOpen && clientTable && (
+        <RecordForm
+          // RecordForm seeds its state on mount, and this conditional render remounts it on every
+          // open — so the typed name lands in the Name field. `mode` keeps the heading "New Client"
+          // even though `initial` is non-null (it's a seed, not an existing record).
+          table={clientTable}
+          mode="create"
+          initial={newClientName ? { name: newClientName } : null}
+          onClose={() => setNewClientOpen(false)}
+          onSave={saveNewClient}
+        />
+      )}
     </div>
   );
+}
+
+interface TreeConstraints {
+  recommendedModelFamilies?: string[];
+  maxPitchMm?: number;
+  minPitchMm?: number;
+  pitchGuidance?: string;
+  minBrightnessNits?: number;
+  gobRequired?: boolean;
+  highAvailabilityRequired?: boolean;
+  weatherRatingRequired?: boolean;
+  curvedRequired?: boolean;
+  transparentRequired?: boolean;
+  doubleSidedRequired?: boolean;
+  allowStandardCabinets?: boolean;
+  requiresFrontService?: boolean;
+  requiresRearService?: boolean;
 }
 
 interface ConfigOption {
   productId: string;
   model: string;
   rotated: boolean;
+  /** Controller chosen by pixel count (see selectController); null = no single unit covers it. */
+  suggestedControllerId?: string | null;
+  /** How many controllers this build needs (1 for a normal fit). */
+  controllerCount?: number;
+  /** Explanation when there is no clean single-controller fit. */
+  controllerNote?: string | null;
   widthMm: number;
   heightMm: number;
   cabinetsWide: number;
@@ -1038,6 +1015,11 @@ interface ConfigOption {
   // W0: pixel pitch (mm) + a fine-pitch GOB recommendation flag (from env/viewing-distance selection).
   pixelPitchMm: number;
   gobRecommended: boolean;
+  // LED Selection Tree recommendation properties
+  recommendedFamily?: boolean;
+  recommendedReason?: string;
+  isTransparent?: boolean;
+  supportsCurved?: boolean;
 }
 
 // Good / Better / Best tiered option (T2): a ranked config + tier label/rationale + supply price.
@@ -1090,17 +1072,136 @@ type LedComponentIdField = (typeof LED_COMPONENT_TABLES)[number]['idField'];
 // A chosen component row in local state: its type, the selected catalog id, and a qty.
 interface ComponentRow { componentType: LedComponentType; itemId: string; qty: number }
 
+/**
+ * The client's preferred freight, as resolved by `/rules/client/:id/effective` (client's own value
+ * wins over its tier's). ADVISORY ONLY — it defaults the picker and is shown on screen; it does not
+ * price anything. Freight cost still comes from the freight option actually selected.
+ */
+interface PreferredFreight { value: string | null; source: 'client' | 'tier' | 'system' }
+
+/** The client-level rules the LED form reads from `/rules/client/:id/effective`. */
+interface ClientRules {
+  preferredFreight?: PreferredFreight;
+  requiresProtectiveCoating?: boolean;
+  /** AA2 — ratio labels this client normally accepts; empty = no restriction. */
+  allowedRatios?: string[];
+}
+
+/**
+ * Coating is offered as a single PROTECTIVE COATING toggle rather than a picker: it is the only
+ * coating actually quoted (Gold coating exists in the catalogue but is used by no screen). The
+ * checkbox maps to this catalogue row's id, so pricing still flows through `coating_options`.
+ */
+const PROTECTIVE_COATING = 'Protective coating';
+const protectiveCoatingRow = (rows: readonly Opt[] | undefined): Opt | undefined =>
+  rows?.find((r) => (r.name ?? '').trim().toLowerCase() === PROTECTIVE_COATING.toLowerCase());
+
+/**
+ * Match a preference word ("Air", "Sea") to a freight option, since the two vocabularies differ:
+ * preferences are short words, options are named "Freight (Standard Air)", "Freight (Sea FCL)"…
+ * Substring match, then the CHEAPEST matching rate so the default is predictable (Standard Air $13
+ * rather than Express Air $30). Returns undefined when nothing matches — e.g. "Road", for which no
+ * freight option exists at all — and the caller then defaults nothing.
+ */
+/** Freight the workbook assumes when nothing else is chosen (`(LED 1)` C23 "Freight (Standard Air)"). */
+const DEFAULT_FREIGHT_PREFERENCE = 'Standard Air';
+
+const matchFreightOption = (preference: string | null, rows: readonly Opt[] | undefined): Opt | undefined => {
+  const want = (preference ?? '').trim().toLowerCase();
+  if (!want || !rows?.length) return undefined;
+  const hits = rows.filter((r) => (r.name ?? '').toLowerCase().includes(want));
+  if (hits.length === 0) return undefined;
+  const rate = (r: Opt): number => {
+    const n = Number(r.rate ?? NaN);
+    return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY; // no rate → never the cheapest
+  };
+  return [...hits].sort((a, b) => rate(a) - rate(b) || String(a.id).localeCompare(String(b.id)))[0];
+};
+
+
+// ─── Half-finished screen drafts ──────────────────────────────────────────────
+// A screen row is PRICED the moment it is inserted, so the server has no concept of an unpriced
+// screen — which is why "+ Add screen" needs a product and dimensions. Until a draft-screen record
+// exists server-side, a part-built screen is kept HERE, in this browser, so a long add (advisor
+// answers, site context, options & services) survives a tab switch, a reload or a closed tab.
+//
+// Deliberately local-only, and the UI says so: this is not on the quote and teammates cannot see it.
+interface ScreenDraft<T> { savedAt: string; data: T }
+
+const draftKey = (kind: 'led' | 'lcd', quoteId: string): string => `quotezen_${kind}_draft:${quoteId}`;
+
+/** Read a stored draft. Storage can be unavailable (private mode / blocked) — never throw. */
+const readDraft = <T,>(kind: 'led' | 'lcd', quoteId: string): ScreenDraft<T> | null => {
+  try {
+    const raw = window.localStorage.getItem(draftKey(kind, quoteId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ScreenDraft<T>;
+    return parsed && typeof parsed === 'object' && parsed.data ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Persist a draft; returns the timestamp stored, or null when storage is unavailable/full. */
+const writeDraft = <T,>(kind: 'led' | 'lcd', quoteId: string, data: T): string | null => {
+  try {
+    const savedAt = new Date().toISOString();
+    window.localStorage.setItem(draftKey(kind, quoteId), JSON.stringify({ savedAt, data }));
+    return savedAt;
+  } catch {
+    return null;
+  }
+};
+
+const clearDraft = (kind: 'led' | 'lcd', quoteId: string): void => {
+  try {
+    window.localStorage.removeItem(draftKey(kind, quoteId));
+  } catch {
+    /* storage unavailable — nothing to clear */
+  }
+};
+
+const draftTime = (iso: string): string => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? 'earlier' : d.toLocaleString();
+};
+
+/** The user-entered half of the LED add form — everything worth keeping mid-build. */
+interface LedScreenDraft {
+  productId: string; name: string; w: string; h: string; rotate: boolean;
+  intake: LedIntakeInput; environment: string; viewingDistanceM: string;
+  orientation: string; aspectRatioId: string;
+  components: ComponentRow[]; selectedOpts: Record<string, string>;
+  backCover: boolean; recessDepthMm: string;
+  sunExposure: string; wallSubstrate: string; controllerLocation: string;
+  spaceAroundScreenMm: string; sharedDevicePlayers: string; sharedDeviceScreens: string;
+  frameNote: string; serviceDescriptionSuffix: string;
+  flatnessRequired: boolean;
+}
+
 // T3: human "Size" indicator for a config — under/exact/over with the signed % delta vs the opening.
-function sizeLabel(o: Pick<ConfigOption, 'sizeMode' | 'sizeDeltaPct'>): string {
+function sizeLabel(o: Pick<ConfigOption, 'sizeMode' | 'sizeDeltaPct' | 'deltaWidthMm' | 'deltaHeightMm'>): string {
   const pct = Number(o.sizeDeltaPct);
-  if (o.sizeMode === 'exact') return 'exact';
+  if (o.sizeMode === 'exact') {
+    // `sizeMode` compares AREA, so a rotated build can match the opening's area while being a very
+    // different shape (1350×1800 has the same area as 1200×2025). Calling that "exact" is misleading
+    // for a recess or fixed joinery, where the dimensions are what must fit — so only a build that
+    // matches on BOTH axes earns "exact"; the rest are labelled for what they actually are.
+    const fitsBothAxes = (o.deltaWidthMm ?? 0) === 0 && (o.deltaHeightMm ?? 0) === 0;
+    return fitsBothAxes ? 'exact' : 'exact area';
+  }
   const sign = pct > 0 ? '+' : '';
   return `${sign}${pct}% ${o.sizeMode}`;
 }
 
 // U2: human "Tolerance" indicator — how far the panel sits from the opening, as a ±% band.
-function toleranceLabel(o: Pick<ConfigOption, 'sizeMode' | 'toleranceBand'>): string {
-  if (o.sizeMode === 'exact' || o.toleranceBand === 0) return 'exact';
+function toleranceLabel(
+  o: Pick<ConfigOption, 'sizeMode' | 'toleranceBand' | 'deltaWidthMm' | 'deltaHeightMm'>,
+): string {
+  if (o.sizeMode === 'exact' || o.toleranceBand === 0) {
+    // Same distinction as sizeLabel: area-equal is not the same as dimensionally exact.
+    return (o.deltaWidthMm ?? 0) === 0 && (o.deltaHeightMm ?? 0) === 0 ? 'exact' : 'exact area';
+  }
   return `±${o.toleranceBand}%`;
 }
 
@@ -1304,6 +1405,99 @@ function CabinetPreview({ option }: { option: PreviewOption }) {
 }
 
 // A simple fixed-overlay modal: click-away on the backdrop + a ✕ button both close it.
+/**
+ * Confirmation shown when leaving Select Screens with an empty quote. Configuring a screen and
+ * pressing "+ Add screen" are separate actions, so an unadded configuration looks like progress
+ * but persists nothing — this makes that explicit before the user moves on.
+ */
+function NoScreensDialog({ onCancel, onContinue }: { onCancel: () => void; onContinue: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  return (
+    <div
+      onClick={onCancel}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="no-screens-title"
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+      }}
+    >
+      <div
+        className="card"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 460, width: '100%', margin: 0 }}
+      >
+        <h3 id="no-screens-title" style={{ marginTop: 0 }}>No screens added to this quote</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          This quote has no LED or LCD screens. If you configured one, remember that it is only saved
+          once you choose <strong>+ Add screen</strong> — configuring alone does not add it.
+        </p>
+        <p className="muted">
+          Screens are optional: you can continue, and the quote will price only its licences and services.
+        </p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <button className="ghost" onClick={onCancel} autoFocus>Back to screen selection</button>
+          <button className="primary" onClick={onContinue}>Continue without screens</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Shown when switching between the LED and LCD flows while the current form holds a product
+ * selection that was never added. Switching remounts the other form, so that configuration is
+ * discarded — this is the last point at which the user can still save it.
+ */
+function UnsavedScreenDialog({ from, to, hasUnsavedSelection, onCancel, onDiscard }: { from: 'LED' | 'LCD'; to: 'LED' | 'LCD'; hasUnsavedSelection: boolean; onCancel: () => void; onDiscard: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  return (
+    <div
+      onClick={onCancel}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="unsaved-screen-title"
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+      }}
+    >
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460, width: '100%', margin: 0 }}>
+        <h3 id="unsaved-screen-title" style={{ marginTop: 0 }}>
+          {hasUnsavedSelection ? `This ${from} screen hasn't been added yet` : `No ${from} screen added`}
+        </h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          {hasUnsavedSelection
+            ? `You have configured a ${from} screen but not added it to the quote. Selecting a product is not the same as adding it — choose "+ Add screen" to save it.`
+            : `This quote has no ${from} screens. If you meant to add one, configure it and choose "+ Add screen" before switching.`}
+        </p>
+        <p className="muted">
+          {hasUnsavedSelection
+            ? `Switching to ${to} now will discard this configuration — unless you cancel and choose "Save draft" first, which keeps it in this browser to come back to.`
+            : `You can switch to ${to} and come back to ${from} at any time.`}
+        </p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <button className="ghost" onClick={onCancel} autoFocus>Stay on {from}</button>
+          <button className="primary" onClick={onDiscard}>
+            {hasUnsavedSelection ? `Discard and switch to ${to}` : `Switch to ${to}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PreviewModal({ option, onClose }: { option: PreviewOption; onClose: () => void }) {
   return (
     <div
@@ -1336,14 +1530,35 @@ function PreviewModal({ option, onClose }: { option: PreviewOption; onClose: () 
 // Good-Better-Best / specific-product selection + components + rotate. Adds the screen (POST
 // /led-screens) with panel + geometry + components only; secondary options/services are set
 // afterwards via the per-screen PATCH editor (LedOptionsEditor / Form 2).
-function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quote; onChange: () => Promise<void>; editScreen?: LedScreen; onCancelEdit?: () => void }) {
+function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }: { quote: Quote; onChange: () => Promise<void>; editScreen?: LedScreen; onCancelEdit?: () => void; onDirtyChange?: (dirty: boolean) => void }) {
   const isEditing = !!editScreen;
   const [products, setProducts] = useState<Opt[]>([]);
   const [productId, setProductId] = useState(editScreen?.ledProductId != null ? String(editScreen.ledProductId) : '');
+  // A picked product that hasn't been added yet is work the user would silently lose on a type
+  // switch — surface it to the parent so it can warn before discarding the form.
+  useEffect(() => {
+    onDirtyChange?.(!!productId && !editScreen);
+    return () => onDirtyChange?.(false);
+  }, [productId, editScreen, onDirtyChange]);
   const [name, setName] = useState(editScreen?.screenName ?? '');
   const [w, setW] = useState(editScreen?.desiredWidthMm != null ? String(editScreen.desiredWidthMm) : '1120');
   const [h, setH] = useState(editScreen?.desiredHeightMm != null ? String(editScreen.desiredHeightMm) : '1920');
   const [rotate, setRotate] = useState(editScreen ? !!editScreen.rotateCabinets : true);
+  // LED Selection Tree Guided Intake State
+  const [intake, setIntake] = useState<LedIntakeInput>(() => ({
+    environment: 'Indoor',
+    priority: 'Value',
+    curved: 'No',
+    transparent: 'No',
+    indoorLocation: 'On a wall',
+    viewingIndoor: '1 to 2 metres',
+    ...(editScreen?.intakeAnswers ?? {}),
+  }));
+  const [treeConstraints, setTreeConstraints] = useState<TreeConstraints | null>(null);
+  const [caveats, setCaveats] = useState<string[]>([]);
+  const [primaryRecommendationText, setPrimaryRecommendationText] = useState<string | null>(null);
+  const [guidedIntakeOpen, setGuidedIntakeOpen] = useState(true);
+
   // W0: query-only selection drivers (not persisted on the screen) — environment + viewing distance.
   // These narrow/rank the suggestions server-side (brightness fallback + max-pitch filter). Kept
   // across configure() and loadTiers().
@@ -1365,6 +1580,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else { setSortKey(key); setSortDir('asc'); }
   };
+  // True when the options table came from "Manual choice" (geometry only, no guided filtering).
+  const [manualMode, setManualMode] = useState(false);
   // Good / Better / Best tiered options (T2).
   const [tiers, setTiers] = useState<TierOption[] | null>(null);
   const [tierReasons, setTierReasons] = useState<string[]>([]);
@@ -1411,16 +1628,105 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     })) as unknown as Record<LedOptionKey, string>,
   );
   const [backCover, setBackCover] = useState(!!editScreen?.backCover);
-  // AA4 — high-resolution supply upgrade (fractional uplift; priced only when the admin rate > 0).
-  const [highResolution, setHighResolution] = useState(!!editScreen?.highResolution);
+  // Install labour hours — see the per-screen editor for the 'auto' vs 'manual' reasoning. A NEW
+  // screen has no computed figure yet, so the box starts empty and estimates on save.
+  // COB panels are resin-sealed at manufacture, so a separate protective coating is redundant.
+  const selectedIsCob = !!products.find((pr) => pr.id === productId)?.isCob;
+  const [sharedController, setSharedController] = useState(!!editScreen?.sharedController);
+  const computedHours = editScreen?.labourHours != null ? String(editScreen.labourHours) : '';
+  const [hoursMode, setHoursMode] = useState<'auto' | 'manual'>(
+    editScreen?.labourHoursOverride != null ? 'manual' : 'auto',
+  );
+  const [labourHoursOverride, setLabourHoursOverride] = useState(
+    editScreen?.labourHoursOverride != null ? String(editScreen.labourHoursOverride) : computedHours,
+  );
   // AA1 — recess/cavity depth (mm); descriptive site-prep detail.
   const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
+  const [sunExposure, setSunExposure] = useState(editScreen?.sunExposure ?? '');
+  const [wallSubstrate, setWallSubstrate] = useState(editScreen?.wallSubstrate ?? '');
+  const [controllerLocation, setControllerLocation] = useState(editScreen?.controllerLocation ?? '');
+  const [spaceAroundScreenMm, setSpaceAroundScreenMm] = useState(editScreen?.spaceAroundScreenMm != null ? String(editScreen.spaceAroundScreenMm) : '');
+  const [sharedDevicePlayers, setSharedDevicePlayers] = useState(editScreen?.sharedDevicePlayers != null ? String(editScreen.sharedDevicePlayers) : '');
+  const [sharedDeviceScreens, setSharedDeviceScreens] = useState(editScreen?.sharedDeviceScreens != null ? String(editScreen.sharedDeviceScreens) : '');
   const [frameNote, setFrameNote] = useState(editScreen?.frameNote ?? '');
   const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(editScreen?.serviceDescriptionSuffix ?? '');
   // AA2 — content ratio + supplier + flatness.
-  const [contentRatio, setContentRatio] = useState(editScreen?.contentRatio ?? '');
-  const [contentSupplier, setContentSupplier] = useState(editScreen?.contentSupplier ?? '');
   const [flatnessRequired, setFlatnessRequired] = useState(!!editScreen?.flatnessRequired);
+
+  // The client's preferred freight (client's own value, else its tier's). Advisory: it defaults the
+  // picker and is shown beside it — it never prices anything.
+  const [preferredFreight, setPreferredFreight] = useState<PreferredFreight | null>(null);
+  const [clientWantsCoating, setClientWantsCoating] = useState(false);
+  // AA2 — the client's allowed ratios, and the per-job waiver for them.
+  const [clientAllowedRatios, setClientAllowedRatios] = useState<string[]>([]);
+  const [ignoreClientRatios, setIgnoreClientRatios] = useState(false);
+  // True once the client's rules have been fetched (or there is no client) — the freight default
+  // waits for it, so a client who prefers e.g. Sea is never pre-filled with the Standard Air fallback.
+  const [clientRulesLoaded, setClientRulesLoaded] = useState(false);
+  useEffect(() => {
+    if (!quote.clientId) { setPreferredFreight(null); setClientRulesLoaded(true); return; }
+    setClientRulesLoaded(false);
+    api<ClientRules>(`/rules/client/${quote.clientId}/effective`)
+      .then((r) => {
+        setPreferredFreight(r.preferredFreight ?? null);
+        setClientWantsCoating(!!r.requiresProtectiveCoating);
+        setClientAllowedRatios(r.allowedRatios ?? []);
+      })
+      .catch(() => { setPreferredFreight(null); setClientWantsCoating(false); setClientAllowedRatios([]); })
+      .finally(() => setClientRulesLoaded(true));
+  }, [quote.clientId]);
+
+  // Half-finished draft (this browser only). `pendingDraft` is one found on mount and offered for
+  // restore — never applied silently, since it would otherwise quietly overwrite a fresh form.
+  const [pendingDraft, setPendingDraft] = useState<ScreenDraft<LedScreenDraft> | null>(null);
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [draftErr, setDraftErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (editScreen) return; // editing a real screen — its own values win
+    setPendingDraft(readDraft<LedScreenDraft>('led', quote.id));
+  }, [editScreen, quote.id]);
+
+  const collectDraft = (): LedScreenDraft => ({
+    productId, name, w, h, rotate,
+    intake, environment, viewingDistanceM,
+    orientation, aspectRatioId,
+    components, selectedOpts,
+    backCover, recessDepthMm,
+    sunExposure, wallSubstrate, controllerLocation,
+    spaceAroundScreenMm, sharedDevicePlayers, sharedDeviceScreens,
+    frameNote, serviceDescriptionSuffix,
+    flatnessRequired,
+  });
+
+  const saveDraft = () => {
+    const at = writeDraft('led', quote.id, collectDraft());
+    if (!at) { setDraftErr('Could not save the draft — browser storage is unavailable.'); return; }
+    setDraftErr(null);
+    setDraftSavedAt(at);
+    setPendingDraft(null); // the banner refers to an older draft we have just replaced
+  };
+
+  const restoreDraft = (d: LedScreenDraft) => {
+    setProductId(d.productId); setName(d.name); setW(d.w); setH(d.h); setRotate(d.rotate);
+    setIntake(d.intake); setEnvironment(d.environment); setViewingDistanceM(d.viewingDistanceM);
+    setOrientation(d.orientation); setAspectRatioId(d.aspectRatioId);
+    setComponents(d.components ?? []);
+    setSelectedOpts(d.selectedOpts as unknown as Record<LedOptionKey, string>);
+    setBackCover(d.backCover); setRecessDepthMm(d.recessDepthMm);
+    setSunExposure(d.sunExposure); setWallSubstrate(d.wallSubstrate);
+    setControllerLocation(d.controllerLocation); setSpaceAroundScreenMm(d.spaceAroundScreenMm);
+    setSharedDevicePlayers(d.sharedDevicePlayers); setSharedDeviceScreens(d.sharedDeviceScreens);
+    setFrameNote(d.frameNote); setServiceDescriptionSuffix(d.serviceDescriptionSuffix);
+    setFlatnessRequired(d.flatnessRequired);
+    setPendingDraft(null);
+  };
+
+  const discardDraft = () => {
+    clearDraft('led', quote.id);
+    setPendingDraft(null);
+    setDraftSavedAt(null);
+  };
 
   useEffect(() => {
     // activeOnly=true hides deprecated catalog rows from NEW selections (P1-11.4); existing quotes
@@ -1450,6 +1756,43 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       ),
     ).then((entries) => setOptionRows(Object.fromEntries(entries) as unknown as Record<LedOptionKey, Opt[]>));
   }, []);
+
+  // Pre-select the 3-year warranty on a NEW screen, once the catalogs have loaded. Runs at most once
+  // (the ref), never when re-editing an existing screen, and never over a choice the user already
+  // made while the catalogs were still in flight.
+  const warrantyDefaulted = useRef(false);
+  useEffect(() => {
+    if (warrantyDefaulted.current || editScreen) return;
+    const std = defaultWarranty(optionRows.warrantyId);
+    if (!std) return;
+    warrantyDefaulted.current = true;
+    setSelectedOpts((prev) => (prev.warrantyId ? prev : { ...prev, warrantyId: String(std.id) }));
+  }, [optionRows, editScreen]);
+
+  // Default the freight option from the client's preference, once, on a NEW screen. Needs BOTH the
+  // catalogs and the preference, which arrive independently — hence its own effect. A preference with
+  // no matching option (e.g. "Road") simply defaults nothing; the note below still explains it.
+  // Tick protective coating on a NEW screen when the client always wants it. Once, and never over a
+  // choice already made — the user can untick it for a job that genuinely doesn't need it.
+  const coatingDefaulted = useRef(false);
+  useEffect(() => {
+    if (coatingDefaulted.current || editScreen || !clientWantsCoating || selectedIsCob) return;
+    const row = protectiveCoatingRow(optionRows.coatingId);
+    if (!row) return;
+    coatingDefaulted.current = true;
+    setSelectedOpts((prev) => (prev.coatingId ? prev : { ...prev, coatingId: String(row.id) }));
+  }, [optionRows, editScreen, clientWantsCoating, selectedIsCob]);
+
+  const freightDefaulted = useRef(false);
+  useEffect(() => {
+    if (freightDefaulted.current || editScreen || !clientRulesLoaded) return;
+    // The client's preference, else the workbook default (Standard Air) — the sheet never prices a
+    // screen without freight, so an empty picker silently dropped ~$1.7k of freight from a quote.
+    const match = matchFreightOption(preferredFreight?.value || DEFAULT_FREIGHT_PREFERENCE, optionRows.freightOptionId);
+    if (!match) return;
+    freightDefaulted.current = true;
+    setSelectedOpts((prev) => (prev.freightOptionId ? prev : { ...prev, freightOptionId: String(match.id) }));
+  }, [optionRows, editScreen, preferredFreight, clientRulesLoaded]);
 
   // Parse "16:9" → { w: 16, h: 9 }; null when unparseable.
   const parseRatio = (label: string | undefined): { w: number; h: number } | null => {
@@ -1490,12 +1833,14 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const onRatioChange = (v: string) => { setAspectRatioId(v); recalcDim('w', w, orientation, v); };
 
   // W0: the selection query body shared by configure() and loadTiers(). Environment + viewing
-  // distance are optional and only sent when set.
+  // distance are optional and only sent when set; intake is passed for tree-based selection.
   const selectionBody = () => ({
     desiredWidthMm: Number(w),
     desiredHeightMm: Number(h),
     allowRotation: rotate,
-    ...(environment ? { environment } : {}),
+    ignoreClientRatios,
+    intake,
+    environment: intake.environment ? intake.environment.toLowerCase() : environment ? environment : undefined,
     ...(Number(viewingDistanceM) > 0 ? { viewingDistanceM: Number(viewingDistanceM) } : {}),
   });
 
@@ -1503,12 +1848,23 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     setBusy(true);
     setErr(null);
     try {
-      const res = await api<{ options: ConfigOption[]; reasons: string[]; toleranceBands?: number[] }>(
+      const res = await api<{
+        options: ConfigOption[];
+        reasons: string[];
+        toleranceBands?: number[];
+        treeConstraints?: TreeConstraints;
+        caveats?: string[];
+        primaryRecommendationText?: string;
+      }>(
         `/quotes/${quote.id}/screens/configure`,
         { method: 'POST', body: JSON.stringify(selectionBody()) },
       );
       setOptions(res.options);
       setReasons(res.reasons);
+      setManualMode(false);
+      setTreeConstraints(res.treeConstraints ?? null);
+      setCaveats(res.caveats ?? []);
+      setPrimaryRecommendationText(res.primaryRecommendationText ?? null);
       // Best-fit and Good/Better/Best are mutually exclusive views — showing one hides the other.
       setTiers(null);
       setTierReasons([]);
@@ -1527,19 +1883,87 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     }
   };
 
+  /**
+   * Manual product choice — every product that can build this opening, ranked on geometry alone.
+   *
+   * Sends ONLY the opening (width, height, allow-rotation): no intake answers, so no Selection-Tree
+   * family boost or pitch bounds, and no environment / viewing-distance filter. That is the point —
+   * it is the escape hatch for when the guided questionnaire has narrowed the list too far, or the
+   * user already knows the panel they want. Results render in the SAME table as best-fit.
+   */
+  /**
+   * Which result view is currently on screen, so the three buttons can show which one produced it.
+   * The views are mutually exclusive: `loadTiers` nulls `options`, and the two configure calls null
+   * `tiers`. Before anything has been run, best-fit stays highlighted as the suggested first action.
+   */
+  const activeView: 'bestfit' | 'tiers' | 'manual' =
+    tiers !== null ? 'tiers' : options !== null && manualMode ? 'manual' : 'bestfit';
+
+  const configureManual = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await api<{ options: ConfigOption[]; reasons: string[]; toleranceBands?: number[] }>(
+        `/quotes/${quote.id}/screens/configure`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            desiredWidthMm: Number(w),
+            desiredHeightMm: Number(h),
+            allowRotation: rotate,
+            ignoreClientRatios,
+          }),
+        },
+      );
+      setOptions(res.options);
+      setReasons(res.reasons);
+      setManualMode(true);
+      // No intake was sent, so any tree advice on screen belongs to a previous run — clear it rather
+      // than leave "Recommended family" badges that nothing in this result set was ranked against.
+      setTreeConstraints(null);
+      setCaveats([]);
+      setPrimaryRecommendationText(null);
+      setTiers(null);
+      setTierReasons([]);
+      setConfigSearch('');
+      setSortKey(null);
+      setSortDir('asc');
+      const bands = (res.toleranceBands ?? []).slice().sort((a, b) => a - b);
+      setToleranceBands(bands);
+      if (selectedBand === null && bands.length > 0) setSelectedBand(bands[bands.length - 1]!);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Good / Better / Best: three priced tiers (Value / Recommended / Premium) for the opening.
   const loadTiers = async () => {
     setBusy(true);
     setErr(null);
     try {
-      const res = await api<{ options: TierOption[]; reasons: string[]; distinctProducts: number; toleranceBands?: number[]; commercialHints?: CommercialHints }>(
+      const res = await api<{
+        options: TierOption[];
+        reasons: string[];
+        distinctProducts: number;
+        toleranceBands?: number[];
+        commercialHints?: CommercialHints;
+        treeConstraints?: TreeConstraints;
+        caveats?: string[];
+        primaryRecommendationText?: string;
+      }>(
         `/quotes/${quote.id}/screens/options`,
         { method: 'POST', body: JSON.stringify(selectionBody()) },
       );
       setTiers(res.options);
+      setManualMode(false);
       setTierReasons(res.reasons);
       setDistinctProducts(res.distinctProducts);
       setCommercialHints(res.commercialHints ?? null);
+      setTreeConstraints(res.treeConstraints ?? null);
+      setCaveats(res.caveats ?? []);
+      setPrimaryRecommendationText(res.primaryRecommendationText ?? null);
       // Best-fit and Good/Better/Best are mutually exclusive views — showing one hides the other.
       setOptions(null);
       setReasons([]);
@@ -1579,12 +2003,16 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       // Selected option FKs (omit empties), housing/notes — all carried in the one add POST/PUT.
       const optionFks: Record<string, number> = {};
       for (const t of LED_OPTION_TABLES) if (selectedOpts[t.key]) optionFks[t.key] = Number(selectedOpts[t.key]);
+      // A COB panel is sealed at manufacture: drop any coating carried over from a previously
+      // selected non-COB product, so it can never be charged for one.
+      if (selectedIsCob) delete optionFks.coatingId;
       const body = {
         screenName: name || undefined,
         ledProductId: Number(productId),
         desiredWidthMm: Number(w),
         desiredHeightMm: Number(h),
         rotateCabinets: rotate,
+        intakeAnswers: intake,
         // S1 inputs (only sent when set).
         ...(orientation ? { orientation } : {}),
         ...(aspectRatioId ? { aspectRatioId: Number(aspectRatioId) } : {}),
@@ -1592,13 +2020,18 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         // Options & services FKs (only the selected ones).
         ...optionFks,
         backCover,
-        highResolution,
+        labourHoursOverride:
+          hoursMode === 'manual' && labourHoursOverride.trim() !== '' ? Number(labourHoursOverride) : null,
+        sharedController,
         ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
+        ...(sunExposure ? { sunExposure } : {}),
+        ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
+        ...(controllerLocation.trim() ? { controllerLocation: controllerLocation.trim() } : {}),
+        ...(spaceAroundScreenMm.trim() !== '' ? { spaceAroundScreenMm: Number(spaceAroundScreenMm) } : {}),
+        ...(sharedDevicePlayers.trim() !== '' ? { sharedDevicePlayers: Number(sharedDevicePlayers) } : {}),
+        ...(sharedDeviceScreens.trim() !== '' ? { sharedDeviceScreens: Number(sharedDeviceScreens) } : {}),
         ...(frameNote.trim() ? { frameNote: frameNote.trim() } : {}),
         ...(serviceDescriptionSuffix.trim() ? { serviceDescriptionSuffix: serviceDescriptionSuffix.trim() } : {}),
-        // AA2 — content ratio / supplier / flatness.
-        ...(contentRatio.trim() ? { contentRatio: contentRatio.trim() } : {}),
-        ...(contentSupplier.trim() ? { contentSupplier: contentSupplier.trim() } : {}),
         flatnessRequired,
       };
       if (isEditing && editScreen) {
@@ -1613,6 +2046,10 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         onCancelEdit?.();
         return;
       }
+      // The screen is on the quote now, so the local draft has served its purpose.
+      clearDraft('led', quote.id);
+      setDraftSavedAt(null);
+      setPendingDraft(null);
       // Reset the whole form for the next screen and re-open the selection accordion.
       setName('');
       setProductId('');
@@ -1622,12 +2059,38 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
       setComponents([]);
       setOrientation('');
       setAspectRatioId('');
-      setSelectedOpts(Object.fromEntries(LED_OPTION_TABLES.map((t) => [t.key, ''])) as unknown as Record<LedOptionKey, string>);
+      // Clearing the form for the NEXT screen re-applies the defaults (3-year warranty, the client's
+      // preferred freight) — otherwise only the first screen added in a session would get them, since
+      // the one-shot effects have already run.
+      setSelectedOpts(
+        Object.fromEntries(
+          LED_OPTION_TABLES.map((t) => {
+            if (t.key === 'warrantyId') return [t.key, defaultWarranty(optionRows.warrantyId)?.id ?? ''];
+            if (t.key === 'freightOptionId') {
+              return [t.key, matchFreightOption(preferredFreight?.value || DEFAULT_FREIGHT_PREFERENCE, optionRows.freightOptionId)?.id ?? ''];
+            }
+            if (t.key === 'coatingId' && clientWantsCoating) {
+              return [t.key, protectiveCoatingRow(optionRows.coatingId)?.id ?? ''];
+            }
+            return [t.key, ''];
+          }),
+        ) as unknown as Record<LedOptionKey, string>,
+      );
       setBackCover(false);
-      setHighResolution(false);
       setRecessDepthMm('');
       setFrameNote('');
       setServiceDescriptionSuffix('');
+      setIntake({
+        environment: 'Indoor',
+        priority: 'Value',
+        curved: 'No',
+        transparent: 'No',
+        indoorLocation: 'On a wall',
+        viewingIndoor: '1 to 2 metres',
+      });
+      setTreeConstraints(null);
+      setCaveats([]);
+      setPrimaryRecommendationText(null);
       setAccordionOpen(true);
       await onChange();
     } catch (e) {
@@ -1640,12 +2103,29 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   // Selecting a Configure / Good-Better-Best option sets the product + rotation and collapses the
   // selection accordion to its summary — it does NOT add the screen yet. Width/height stay the
   // entered opening; the merged details form below then attaches to this product before finalising.
-  const selectProduct = (chosenProductId: string, rotated: boolean) => {
+  /**
+   * Choosing a build also pre-fills its controller, sized by pixel count server-side. The estimator
+   * can change or remove it afterwards like any other component — this is a default, not a lock.
+   * Any controller already on the form is REPLACED, since it was sized for the previous build.
+   */
+  const selectProduct = (chosenProductId: string, rotated: boolean, opt?: ConfigOption) => {
     setProductId(chosenProductId);
     setRotate(rotated);
     setErr(null);
     setAccordionOpen(false);
+    setControllerNote(opt?.controllerNote ?? null);
+    if (!opt) return;
+    setComponents((prev) => {
+      const withoutController = prev.filter((c) => c.componentType !== 'controller');
+      if (!opt.suggestedControllerId) return withoutController; // over-capacity → note explains
+      return [
+        { componentType: 'controller' as LedComponentType, itemId: String(opt.suggestedControllerId), qty: Math.max(1, opt.controllerCount ?? 1) },
+        ...withoutController,
+      ];
+    });
   };
+  // Surfaced next to the Components list when the pixel count has no clean single-controller fit.
+  const [controllerNote, setControllerNote] = useState<string | null>(null);
 
   // The selected product's model name, for the collapsed accordion summary.
   const selectedModel = products.find((p) => p.id === productId)?.model ?? '';
@@ -1659,6 +2139,23 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   if (!(Number(h) > 0)) missing.push('height');
   const canAddSpecific = missing.length === 0;
 
+  // Derived metrics for Guided Selection (auto-calculated from opening geometry)
+  const widthMmNum = Number(w) || 0;
+  const heightMmNum = Number(h) || 0;
+  const areaSqm = widthMmNum > 0 && heightMmNum > 0 ? (widthMmNum / 1000) * (heightMmNum / 1000) : 0;
+  const isSmall = widthMmNum > 0 && heightMmNum > 0 && Math.min(widthMmNum, heightMmNum) < 1000;
+  const isUnder1Point5 = areaSqm > 0 && areaSqm < 1.5;
+  const sizeBand =
+    areaSqm <= 1.5 ? '<1.5 sqm' :
+    areaSqm <= 4 ? '1-4 sqm' :
+    areaSqm <= 8 ? '4-8 sqm' :
+    areaSqm <= 15 ? '8-15 sqm' :
+    areaSqm <= 25 ? '15-25 sqm' : '>25 sqm';
+  const exact169 =
+    widthMmNum > 0 && heightMmNum > 0
+      ? Math.abs(widthMmNum / heightMmNum - 16 / 9) < 0.05 || Math.abs(heightMmNum / widthMmNum - 16 / 9) < 0.05
+      : false;
+
   return (
     <div>
       {/* V4: editing an existing LED screen — banner + Cancel. */}
@@ -1667,6 +2164,22 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
           <div className="list-row" style={{ alignItems: 'center' }}>
             <span><b>Editing:</b> {editScreen?.screenName || 'LED screen'} <span className="muted">— change any field below and Save changes.</span></span>
             <button className="ghost" onClick={() => onCancelEdit?.()} disabled={busy}>Cancel edit</button>
+          </div>
+        </div>
+      )}
+      {/* A half-finished screen saved earlier in this browser. Offered, never auto-applied — silently
+          overwriting a form the user has already started typing into would be worse than losing it. */}
+      {!isEditing && pendingDraft && (
+        <div className="card" style={{ borderColor: '#f59e0b', background: 'rgba(245,158,11,0.10)' }}>
+          <div className="list-row" style={{ alignItems: 'center' }}>
+            <span>
+              <b>Unfinished screen saved {draftTime(pendingDraft.savedAt)}</b>
+              <span className="muted"> — kept in this browser; it was never added to the quote.</span>
+            </span>
+            <span className="row-actions">
+              <button className="primary" onClick={() => restoreDraft(pendingDraft.data)}>Restore</button>
+              <button className="ghost" onClick={discardDraft}>Discard</button>
+            </span>
           </div>
         </div>
       )}
@@ -1698,11 +2211,13 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
           <div><label>Screen name</label><input value={name} onChange={(e) => setName(e.target.value)} /></div>
           <div>
             <label style={Number(w) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Width (mm) *</label>
-            <input type="number" value={w} onChange={(e) => recalcDim('w', e.target.value)} />
+            {/* step="any": real cabinets are not whole millimetres (337.5mm), so an opening may be
+                fractional too. Without this the browser rejects decimals on a number input. */}
+            <input type="number" step="any" min={0} value={w} onChange={(e) => recalcDim('w', e.target.value)} />
           </div>
           <div>
             <label style={Number(h) > 0 ? undefined : { color: 'var(--danger, #dc2626)' }}>Height (mm) *</label>
-            <input type="number" value={h} onChange={(e) => recalcDim('h', e.target.value)} />
+            <input type="number" step="any" min={0} value={h} onChange={(e) => recalcDim('h', e.target.value)} />
           </div>
           <div>
             <label>Orientation</label>
@@ -1728,58 +2243,487 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
             <label>Allow rotation</label>
             <input type="checkbox" checked={rotate} onChange={(e) => setRotate(e.target.checked)} style={{ width: 'auto' }} />
           </div>
+          {/* Flatness sits with the geometry controls: it is a property of the opening being
+              specified, not of the housing chosen later. */}
+          <div>
+            <label title="The opening must be flat — no bow or curvature in the mounting surface">Flatness critical</label>
+            <input type="checkbox" checked={flatnessRequired} onChange={(e) => setFlatnessRequired(e.target.checked)} style={{ width: 'auto' }} />
+          </div>
+          {/* AA2 per-job override. Shown ONLY when the client actually restricts ratios — otherwise
+              it is a control with nothing to switch off. The client record is left untouched: this
+              waives the filter for this search, and the screen still raises the advisory
+              RATIO_NOT_ALLOWED finding so the deviation stays visible on review. */}
+          {clientAllowedRatios.length > 0 && (
+            <div>
+              <label title={`This client normally accepts ${clientAllowedRatios.join(', ')}`}>
+                Override client ratios
+              </label>
+              <input
+                type="checkbox"
+                checked={ignoreClientRatios}
+                onChange={(e) => setIgnoreClientRatios(e.target.checked)}
+                style={{ width: 'auto' }}
+              />
+              <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                {ignoreClientRatios
+                  ? `Showing all ratios for this job — client standard is ${clientAllowedRatios.join(', ')}.`
+                  : `Limited to the client's ratios: ${clientAllowedRatios.join(', ')}.`}
+              </p>
+            </div>
+          )}
         </div>
         <p className="muted" style={{ marginTop: 4 }}>
           Pick orientation + an aspect ratio and one dimension auto-fills the other (still editable).
         </p>
-        {/* W0: environment + viewing distance + GOB drive the suggestions. */}
-        <h4 style={{ margin: '14px 0 4px' }}>Environment &amp; suitability</h4>
-        <div className="grid3">
-          <div>
-            <label>Viewing distance (m)</label>
-            <input
-              type="number"
-              min="0"
-              step="0.5"
-              value={viewingDistanceM}
-              onChange={(e) => setViewingDistanceM(e.target.value)}
-              placeholder="optional"
-            />
-            <p className="muted" style={{ margin: '2px 0 0', fontSize: 12 }}>
-              Filters to panels sharp at this distance (max pitch ≈ distance in metres).
-            </p>
+        {/* LED Selection Tree: Guided Product Intake Questionnaire */}
+        <div style={{ marginTop: 16, border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, padding: 14, background: 'var(--bg-subtle, rgba(0,0,0,0.02))' }}>
+          <div className="list-row" style={{ alignItems: 'center', marginBottom: 8 }}>
+            <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>🧠 Guided Product Selection</span>
+              <span className="pill" style={{ fontSize: 11, background: 'var(--accent-bg, rgba(79,70,229,0.1))', color: 'var(--accent, #4f46e5)' }}>
+                Decision Tree
+              </span>
+            </h4>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setGuidedIntakeOpen((o) => !o)}
+              style={{ fontSize: 12, padding: '2px 8px' }}
+            >
+              {guidedIntakeOpen ? '▲ Collapse questionnaire' : '▼ Expand questionnaire'}
+            </button>
           </div>
-          <div>
-            <label>Environment</label>
-            <SearchSelect
-              value={environment}
-              onChange={setEnvironment}
-              allowEmpty
-              placeholder="Any"
-              options={[{ value: 'indoor', label: 'Indoor' }, { value: 'outdoor', label: 'Outdoor' }]}
-            />
+
+          {/* Auto-derived dimension tags */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: guidedIntakeOpen ? 12 : 0, fontSize: 12 }}>
+            <span className="pill" style={{ background: '#f1f5f9', color: '#475569' }}>
+              📐 Area: <b>{areaSqm > 0 ? `${areaSqm.toFixed(2)} m²` : '—'}</b>
+            </span>
+            <span className="pill" style={{ background: '#f1f5f9', color: '#475569' }}>
+              📊 Band: <b>{areaSqm > 0 ? sizeBand : '—'}</b>
+            </span>
+            {isSmall && (
+              <span className="pill" style={{ background: '#fef3c7', color: '#92400e' }}>
+                ⚡ Small dimension (&lt;1m)
+              </span>
+            )}
+            {isUnder1Point5 && (
+              <span className="pill" style={{ background: '#fef3c7', color: '#92400e' }}>
+                📏 &lt;1.5 m² (Specialty)
+              </span>
+            )}
+            {exact169 && (
+              <span className="pill" style={{ background: '#dcfce7', color: '#166534' }}>
+                ✨ ~16:9 Aspect Ratio
+              </span>
+            )}
           </div>
-          <div>
-            <label>GOB (fine pitch)</label>
-            <SearchSelect
-              value={selectedOpts.gobId}
-              onChange={(v) => setSelectedOpts((p) => ({ ...p, gobId: v }))}
-              allowEmpty
-              placeholder="Select GOB…"
-              options={(optionRows.gobId ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
-            />
-            <p className="muted" style={{ margin: '2px 0 0', fontSize: 12 }}>
-              GOB (glass-on-board) protects fine-pitch (&lt;2.5mm) screens.
-            </p>
-          </div>
+
+          {guidedIntakeOpen && (
+            <div>
+              {/* Environment toggle */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Environment</label>
+                <div role="group" style={{ display: 'inline-flex', gap: 4 }}>
+                  <button
+                    type="button"
+                    className={intake.environment === 'Indoor' ? 'primary' : 'ghost'}
+                    onClick={() => setIntake((p) => ({ ...p, environment: 'Indoor' }))}
+                  >
+                    🏠 Indoor
+                  </button>
+                  <button
+                    type="button"
+                    className={intake.environment === 'Outdoor' ? 'primary' : 'ghost'}
+                    onClick={() => setIntake((p) => ({ ...p, environment: 'Outdoor' }))}
+                  >
+                    ⛅ Outdoor
+                  </button>
+                </div>
+              </div>
+
+              {/* Indoor Questions */}
+              {intake.environment === 'Indoor' && (
+                <div className="grid3" style={{ gap: '10px 14px' }}>
+                  <div>
+                    <label style={{ fontSize: 12 }}>Priority / Budget Tier</label>
+                    <SearchSelect
+                      value={intake.priority || 'Value'}
+                      onChange={(v) => setIntake((p) => ({ ...p, priority: v as any }))}
+                      options={[
+                        { value: 'Value', label: 'Value (Budget-conscious)' },
+                        { value: 'Quality', label: 'Quality (High reliability)' },
+                        { value: 'High End', label: 'High End (Flagship)' },
+                        { value: 'Performance', label: 'Performance' },
+                        { value: 'Best Value', label: 'Best Value' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Intended Use</label>
+                    <SearchSelect
+                      value={intake.use || ''}
+                      onChange={(v) => setIntake((p) => ({ ...p, use: v as any }))}
+                      allowEmpty
+                      placeholder="General"
+                      options={[
+                        { value: 'Digital poster or retail display', label: 'Digital poster or retail display' },
+                        { value: 'Directory board', label: 'Directory board' },
+                        { value: 'Information display (computer monitor)', label: 'Information display (computer monitor)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Viewing Distance (Indoor)</label>
+                    <SearchSelect
+                      value={intake.viewingIndoor || '1 to 2 metres'}
+                      onChange={(v) => setIntake((p) => ({ ...p, viewingIndoor: v as any }))}
+                      options={[
+                        { value: 'Less than 1 metre', label: 'Less than 1 metre (Close)' },
+                        { value: '1 to 2 metres', label: '1 to 2 metres' },
+                        { value: '2 to 3 metres', label: '2 to 3 metres' },
+                        { value: 'More than 3 metres', label: 'More than 3 metres' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Mounting Location</label>
+                    <SearchSelect
+                      value={intake.indoorLocation || 'On a wall'}
+                      onChange={(v) => setIntake((p) => ({ ...p, indoorLocation: v as any }))}
+                      options={[
+                        { value: 'On a wall', label: 'On a wall (Surface mount)' },
+                        { value: 'Behind Window', label: 'Behind Window (In-window)' },
+                        { value: 'On a fixture', label: 'On a fixture / Totem' },
+                        { value: 'Hanging', label: 'Hanging (Ceiling suspend)' },
+                        { value: 'On a ceiling', label: 'On a ceiling' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Curved / Flexible Screen?</label>
+                    <SearchSelect
+                      value={intake.curved || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, curved: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No (Flat)' },
+                        { value: 'Yes', label: 'Yes (Curved / Flex module)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Transparent Screen?</label>
+                    <SearchSelect
+                      value={intake.transparent || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, transparent: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No (Solid)' },
+                        { value: 'Yes', label: 'Yes (Transparent mesh / Film)' },
+                      ]}
+                    />
+                  </div>
+
+                  {/* Conditionally rendered indoor questions */}
+                  {(intake.indoorLocation === 'Behind Window' ||
+                    intake.indoorLocation === 'Hanging' ||
+                    intake.indoorLocation === 'On a fixture') && (
+                    <div>
+                      <label style={{ fontSize: 12 }}>Double Sided Display?</label>
+                      <SearchSelect
+                        value={intake.doubleSided || 'No'}
+                        onChange={(v) => setIntake((p) => ({ ...p, doubleSided: v as any }))}
+                        options={[
+                          { value: 'No', label: 'No (Single-sided)' },
+                          { value: 'Yes', label: 'Yes (Double-sided)' },
+                        ]}
+                      />
+                    </div>
+                  )}
+
+                  {intake.indoorLocation === 'Behind Window' && (
+                    <>
+                      <div>
+                        <label style={{ fontSize: 12 }}>Set Back from Glass (&gt;500mm)?</label>
+                        <SearchSelect
+                          value={intake.canSetBack || 'No'}
+                          onChange={(v) => setIntake((p) => ({ ...p, canSetBack: v as any }))}
+                          options={[
+                            { value: 'No', label: 'No (&lt;500mm, tight window cavity)' },
+                            { value: 'Yes', label: 'Yes (&gt;500mm, accessible)' },
+                          ]}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: 12 }}>90° Convex Corner?</label>
+                        <SearchSelect
+                          value={intake.convexCorner || 'No'}
+                          onChange={(v) => setIntake((p) => ({ ...p, convexCorner: v as any }))}
+                          options={[
+                            { value: 'No', label: 'No (Flat / Standard)' },
+                            { value: 'Yes', label: 'Yes (90° corner module)' },
+                          ]}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: 12 }}>Direct Sunlight onto Screen?</label>
+                        <SearchSelect
+                          value={intake.directSunlight || 'No'}
+                          onChange={(v) => setIntake((p) => ({ ...p, directSunlight: v as any }))}
+                          options={[
+                            { value: 'No', label: 'No' },
+                            { value: 'Yes', label: 'Yes (High brightness needed)' },
+                          ]}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>High Ambient Light?</label>
+                    <SearchSelect
+                      value={intake.highAmbientLight || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, highAmbientLight: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No (Standard ambient)' },
+                        { value: 'Yes', label: 'Yes (Bright store/atrium)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Public Damage Risk (Need GOB/Armor)?</label>
+                    <SearchSelect
+                      value={intake.damageRisk || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, damageRisk: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No (Low touch risk)' },
+                        { value: 'Yes', label: 'Yes (Within reach / Retail traffic)' },
+                      ]}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Outdoor Questions */}
+              {intake.environment === 'Outdoor' && (
+                <div className="grid3" style={{ gap: '10px 14px' }}>
+                  <div>
+                    <label style={{ fontSize: 12 }}>Priority / Budget Tier</label>
+                    <SearchSelect
+                      value={intake.priority || 'Value'}
+                      onChange={(v) => setIntake((p) => ({ ...p, priority: v as any }))}
+                      options={[
+                        { value: 'Value', label: 'Value (Budget-conscious)' },
+                        { value: 'Quality', label: 'Quality (High reliability)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Outdoor Location &amp; Service</label>
+                    <SearchSelect
+                      value={intake.outdoorLocation || 'On wall (Front Service)'}
+                      onChange={(v) => setIntake((p) => ({ ...p, outdoorLocation: v as any }))}
+                      options={[
+                        { value: 'On wall (Front Service)', label: 'On wall (Front service)' },
+                        { value: 'On wall (Rear Service)', label: 'On wall (Rear service)' },
+                        { value: 'Freestanding (Rear Service)', label: 'Freestanding (Rear service)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Viewing Distance (Outdoor)</label>
+                    <SearchSelect
+                      value={intake.viewingOutdoor || '3 to 8 metres'}
+                      onChange={(v) => setIntake((p) => ({ ...p, viewingOutdoor: v as any }))}
+                      options={[
+                        { value: 'Up to 2 metres', label: 'Up to 2 metres' },
+                        { value: '2 to 3 metres', label: '2 to 3 metres' },
+                        { value: '3 to 8 metres', label: '3 to 8 metres' },
+                        { value: '8 to 20 metres', label: '8 to 20 metres' },
+                        { value: 'More than 20 metres', label: 'More than 20 metres' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Hard to Service / High Access?</label>
+                    <SearchSelect
+                      value={intake.hardToService || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, hardToService: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No (Standard access)' },
+                        { value: 'Yes', label: 'Yes (Requires cherry picker/rigging)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>High Availability (24/7 Mission-Critical)?</label>
+                    <SearchSelect
+                      value={intake.highAvailability || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, highAvailability: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No' },
+                        { value: 'Yes', label: 'Yes (Redundant power/data)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Elevated Sun / Extreme Exposure?</label>
+                    <SearchSelect
+                      value={intake.elevatedSun || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, elevatedSun: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No' },
+                        { value: 'Yes', label: 'Yes (Direct harsh sun)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Snow / Ice Environment?</label>
+                    <SearchSelect
+                      value={intake.snowIce || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, snowIce: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No' },
+                        { value: 'Yes', label: 'Yes (Sub-zero climate)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Coastal / Salt Air Zone?</label>
+                    <SearchSelect
+                      value={intake.saltAir || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, saltAir: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No' },
+                        { value: 'Yes', label: 'Yes (Marine/anti-corrosion)' },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12 }}>Photogenic / Broadcast Filming?</label>
+                    <SearchSelect
+                      value={intake.photogenic || 'No'}
+                      onChange={(v) => setIntake((p) => ({ ...p, photogenic: v as any }))}
+                      options={[
+                        { value: 'No', label: 'No' },
+                        { value: 'Yes', label: 'Yes (High refresh rate needed)' },
+                      ]}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-        {err && <div className="error">{err}</div>}
+
+        {/* Advisor Recommendations & Engineering Caveats Banner */}
+        {(primaryRecommendationText || treeConstraints || (caveats && caveats.length > 0)) && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: 12,
+              borderRadius: 8,
+              background: 'var(--accent-bg, rgba(79,70,229,0.06))',
+              border: '1px solid var(--accent, #4f46e5)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 16 }}>🎯</span>
+                <b style={{ color: 'var(--accent, #4f46e5)', fontSize: 13 }}>Advisor Recommendation:</b>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{primaryRecommendationText || 'Matching products found'}</span>
+              </div>
+              {treeConstraints?.recommendedModelFamilies && treeConstraints.recommendedModelFamilies.length > 0 && (
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <span className="muted" style={{ fontSize: 11 }}>Preferred families:</span>
+                  {treeConstraints.recommendedModelFamilies.map((f) => (
+                    <span key={f} className="pill" style={{ background: 'var(--accent, #4f46e5)', color: '#fff', fontSize: 11 }}>
+                      {f}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {treeConstraints?.pitchGuidance && (
+              <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                📏 Pitch guidance: {treeConstraints.pitchGuidance}
+              </p>
+            )}
+
+            {treeConstraints?.gobRequired && (
+              <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--ok, #15803d)', fontWeight: 600 }}>
+                🛡️ GOB (Glass-on-Board) surface protection is automatically flagged for this configuration.
+              </p>
+            )}
+
+            {caveats && caveats.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <b style={{ fontSize: 11, color: 'var(--warn, #b45309)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  Engineering Notices &amp; Caveats:
+                </b>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                  {caveats.map((c, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        fontSize: 12,
+                        padding: '4px 8px',
+                        borderRadius: 4,
+                        background: 'rgba(245, 158, 11, 0.12)',
+                        borderLeft: '3px solid #f59e0b',
+                        color: '#92400e',
+                      }}
+                    >
+                      ⚠️ {c}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {err && <div className="error" style={{ marginTop: 12 }}>{err}</div>}
         <div className="step-actions">
-          <button className="primary" onClick={configure} disabled={busy}>
+          <button
+            className={activeView === 'bestfit' ? 'primary' : ''}
+            onClick={configure}
+            disabled={busy}
+          >
             {busy ? 'Configuring…' : '🔍 Find best-fit products'}
           </button>
-          <button onClick={loadTiers} disabled={busy} style={{ marginLeft: 8 }}>
+          <button
+            className={activeView === 'tiers' ? 'primary' : ''}
+            onClick={loadTiers}
+            disabled={busy}
+            style={{ marginLeft: 8 }}
+          >
             {busy ? 'Comparing…' : '⚖️ Good / Better / Best'}
+          </button>
+          <button
+            className={activeView === 'manual' ? 'primary' : ''}
+            onClick={configureManual}
+            disabled={busy}
+            style={{ marginLeft: 8 }}
+            title="Every product that fits this opening, ranked on size alone — ignores the questionnaire"
+          >
+            {busy ? 'Listing…' : '📐 Manual choice'}
           </button>
         </div>
 
@@ -1834,7 +2778,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                 Prices shown are the LED <strong>supply</strong> figure (panel material) for a like-for-like
                 comparison; install, frame and components are added when you place the screen.
               </p>
-              <div className="grid3" style={{ alignItems: 'stretch' }}>
+              <div className="tier-grid">
                 {shownTiers.map((t) => {
                   const emphasised = commercialHints?.emphasisTier === t.tier;
                   return (
@@ -1871,11 +2815,47 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                     )}
                     <div style={{ fontWeight: 600 }}>
                       {t.model}{t.rotated ? ' (rot)' : ''}
+                      {t.recommendedFamily && (
+                        <span
+                          title={t.recommendedReason || 'Recommended by LED Selection Tree'}
+                          style={{
+                            marginLeft: 6, padding: '1px 6px', borderRadius: 10, fontSize: 10, fontWeight: 700,
+                            background: 'var(--accent-bg, rgba(79,70,229,0.15))', color: 'var(--accent, #4f46e5)',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          ⭐ Recommended
+                        </span>
+                      )}
+                      {t.isTransparent && (
+                        <span
+                          title="Transparent screen"
+                          style={{
+                            marginLeft: 4, padding: '1px 5px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                            background: 'rgba(14, 165, 233, 0.15)', color: '#0284c7',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          ✨ Transparent
+                        </span>
+                      )}
+                      {t.supportsCurved && (
+                        <span
+                          title="Supports curved / flexible deployment"
+                          style={{
+                            marginLeft: 4, padding: '1px 5px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                            background: 'rgba(168, 85, 247, 0.15)', color: '#7e22ce',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          🔄 Curved
+                        </span>
+                      )}
                       {t.gobRecommended && (
                         <span
                           title="Fine pitch — GOB recommended"
                           style={{
-                            marginLeft: 6, padding: '0 6px', borderRadius: 10, fontSize: 11, fontWeight: 700,
+                            marginLeft: 4, padding: '0 6px', borderRadius: 10, fontSize: 11, fontWeight: 700,
                             background: 'var(--accent-bg, rgba(79,70,229,0.12))', color: 'var(--accent, #4f46e5)',
                             cursor: 'help', whiteSpace: 'nowrap',
                           }}
@@ -1883,6 +2863,14 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                           GOB
                         </span>
                       )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, margin: '8px 0' }}>
+                      <button className="primary" onClick={() => selectProduct(t.productId, t.rotated, t)} disabled={busy} style={{ flex: 1 }}>
+                        Select this option
+                      </button>
+                      <button className="ghost" onClick={() => setPreview(t)} type="button">
+                        👁 Preview
+                      </button>
                     </div>
                     <table style={{ width: '100%', fontSize: 13, margin: '8px 0' }}>
                       <tbody>
@@ -1919,14 +2907,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                         )}
                       </tbody>
                     </table>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button className="primary" onClick={() => selectProduct(t.productId, t.rotated)} disabled={busy} style={{ flex: 1 }}>
-                        Select this option
-                      </button>
-                      <button className="ghost" onClick={() => setPreview(t)} type="button">
-                        👁 Preview
-                      </button>
-                    </div>
                   </div>
                   );
                 })}
@@ -1947,7 +2927,17 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         const capped = shownOptions.slice(0, CONFIG_CAP);
         return (
         <div className="card">
-          <h3 style={{ marginTop: 0 }}>Ranked configurations ({shownOptions.length}{selectedBand !== null && banded.length !== options.length ? ` of ${options.length}` : ''})</h3>
+          <h3 style={{ marginTop: 0 }}>
+            {manualMode ? 'Manual choice' : 'Ranked configurations'} ({shownOptions.length}{selectedBand !== null && banded.length !== options.length ? ` of ${options.length}` : ''})
+          </h3>
+          {/* Say plainly that this list ignored the questionnaire, so a product missing from the
+              guided results but present here isn't mistaken for a contradiction. */}
+          {manualMode && (
+            <p className="muted" style={{ marginTop: 0 }}>
+              Every product that fits {w} × {h} mm{rotate ? ' (rotation allowed)' : ' (no rotation)'}, ranked on size
+              alone — the guided questionnaire, environment and viewing-distance filters are not applied.
+            </p>
+          )}
           {options.length === 0 && <p className="muted">No fit: {reasons.join(' ')}</p>}
           {options.length > 0 && banded.length === 0 && (
             <p className="muted">No configurations within ±{selectedBand}% — widen the allowed size tolerance above.</p>
@@ -1974,7 +2964,15 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
               <table>
                 <thead>
                   <tr>
-                    {CONFIG_COLUMNS.map((c) => (
+                    <th
+                      onClick={() => toggleSort('model')}
+                      style={{ cursor: 'pointer', userSelect: 'none', minWidth: 230 }}
+                      title="Click to sort"
+                    >
+                      Product{sortKey === 'model' ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                    </th>
+                    <th style={{ whiteSpace: 'nowrap' }}>Action</th>
+                    {CONFIG_COLUMNS.filter((c) => c.key !== 'model').map((c) => (
                       <th
                         key={c.key}
                         className={c.num ? 'cell-num' : undefined}
@@ -1985,26 +2983,88 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                         {c.label}{sortKey === c.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
                       </th>
                     ))}
-                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {capped.map((o, i) => (
                     <tr key={`${o.productId}-${o.rotated}-${o.sizeMode}-${i}`}>
                       <td>
-                        {o.model}{o.rotated ? ' (rot)' : ''}
-                        {o.gobRecommended && (
-                          <span
-                            title="Fine pitch — GOB recommended"
+                        {/* Name on one line, truncated with an ellipsis; hover for the full name.
+                            A FIXED width (not maxWidth) is what makes the ellipsis work and stops the
+                            auto-layout table collapsing this column. Do NOT use overflow-wrap:anywhere
+                            here — it lets the column shrink to one character and breaks names mid-word.
+                            Capability badges wrap underneath. */}
+                        <div style={{ width: 230 }}>
+                          <div
+                            title={`${o.model}${o.rotated ? ' (rotated)' : ''}`}
                             style={{
-                              marginLeft: 6, padding: '0 6px', borderRadius: 10, fontSize: 11, fontWeight: 700,
-                              background: 'var(--accent-bg, rgba(79,70,229,0.12))', color: 'var(--accent, #4f46e5)',
-                              cursor: 'help', whiteSpace: 'nowrap',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              cursor: 'help',
                             }}
                           >
-                            GOB
-                          </span>
-                        )}
+                            {o.model}{o.rotated ? ' (rot)' : ''}
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                          {o.recommendedFamily && (
+                            <span
+                              title={o.recommendedReason || 'Recommended by LED Selection Tree'}
+                              style={{
+                                padding: '1px 6px', borderRadius: 10, fontSize: 10, fontWeight: 700,
+                                background: 'var(--accent-bg, rgba(79,70,229,0.15))', color: 'var(--accent, #4f46e5)',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              ⭐ Recommended
+                            </span>
+                          )}
+                          {o.isTransparent && (
+                            <span
+                              title="Transparent screen"
+                              style={{
+                                padding: '1px 5px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                                background: 'rgba(14, 165, 233, 0.15)', color: '#0284c7',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              ✨ Transparent
+                            </span>
+                          )}
+                          {o.supportsCurved && (
+                            <span
+                              title="Supports curved / flexible deployment"
+                              style={{
+                                padding: '1px 5px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                                background: 'rgba(168, 85, 247, 0.15)', color: '#7e22ce',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              🔄 Curved
+                            </span>
+                          )}
+                          {o.gobRecommended && (
+                            <span
+                              title="Fine pitch — GOB recommended"
+                              style={{
+                                padding: '0 6px', borderRadius: 10, fontSize: 11, fontWeight: 700,
+                                background: 'var(--accent-bg, rgba(79,70,229,0.12))', color: 'var(--accent, #4f46e5)',
+                                cursor: 'help', whiteSpace: 'nowrap',
+                              }}
+                            >
+                              GOB
+                            </span>
+                          )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="actions" style={{ whiteSpace: 'nowrap', textAlign: 'left', paddingLeft: 4 }}>
+                        <button className="primary" onClick={() => selectProduct(o.productId, o.rotated, o)} disabled={busy} style={{ marginRight: 4 }}>
+                          Select
+                        </button>
+                        <button className="ghost" onClick={() => setPreview(o)} type="button">
+                          👁 Preview
+                        </button>
                       </td>
                       <td>{o.manufacturerName ?? '—'}</td>
                       <td className="cell-num">{o.modelPriority}</td>
@@ -2036,14 +3096,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                       <td className="cell-num">{o.cabinetCount}</td>
                       <td>{o.cutCabinetSuggested ? <span title="Cabinets must be cut to fit the opening — adds cost and lead time" style={{ cursor: 'help' }}>⚠️</span> : '—'}</td>
                       <td className="cell-num">{o.confidence}</td>
-                      <td className="actions">
-                        <button className="ghost" onClick={() => setPreview(o)} type="button" style={{ marginRight: 4 }}>
-                          👁 Preview
-                        </button>
-                        <button className="primary" onClick={() => selectProduct(o.productId, o.rotated)} disabled={busy}>
-                          Select
-                        </button>
-                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -2070,7 +3122,18 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         <h4 style={{ margin: '16px 0 4px' }}>Components</h4>
         <p className="muted" style={{ marginTop: 0 }}>
           Attach controllers, mediaplayers and peripherals — add as many as needed; each is priced with the screen.
+          The controller is chosen automatically from the build's pixel count when you select a product; change or
+          remove it here if you need something else.
         </p>
+        {/* Over-capacity builds get no automatic pick — say why, and what is needed instead. */}
+        {controllerNote && (
+          <p
+            className="muted"
+            style={{ marginTop: 0, padding: '6px 10px', borderRadius: 6, border: '1px solid #f59e0b', background: 'rgba(245,158,11,0.10)', color: '#f59e0b' }}
+          >
+            ⚠ {controllerNote}
+          </p>
+        )}
         <div className="grid3">
           <div>
             <label>Type</label>
@@ -2116,6 +3179,26 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
           </div>
         )}
 
+        {/* One controller for every unit of this row. Only meaningful at qty > 1, which is why the
+            hint spells out what it will charge. */}
+        <div className="grid3">
+          <div>
+            <label title="Charge the controller once for this row instead of once per screen">
+              Shared controller
+            </label>
+            <input
+              type="checkbox"
+              checked={sharedController}
+              onChange={(e) => setSharedController(e.target.checked)}
+              style={{ width: 'auto' }}
+            />
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+              {sharedController
+                ? 'One controller drives all screens on this row — charged once.'
+                : 'Each screen on this row gets its own controller.'}
+            </p>
+          </div>
+        </div>
         <h4 style={{ margin: '16px 0 4px' }}>Options &amp; services</h4>
         <p className="muted" style={{ marginTop: 0 }}>
           Frame, trim, install, freight, warranty and more — all optional; each is priced with the screen.
@@ -2124,6 +3207,36 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         <div className="grid3">
           {/* GOB is its own up-front control in the first section (single source: selectedOpts.gobId). */}
           {LED_OPTION_TABLES.filter((t) => t.key !== 'gobId').map((t) => (
+            t.key === 'coatingId' ? (
+              // Protective coating is a yes/no on the screen, defaulted from the client's standing
+              // requirement. It still writes the catalogue FK, so pricing is unchanged.
+              <div key={t.key}>
+                <label title={`${PROTECTIVE_COATING} — priced per m² from the coating catalogue`}>
+                  Protective coating
+                </label>
+                <input
+                  type="checkbox"
+                  checked={!selectedIsCob && !!selectedOpts.coatingId}
+                  disabled={selectedIsCob}
+                  onChange={(e) => {
+                    const row = protectiveCoatingRow(optionRows.coatingId);
+                    setSelectedOpts((p) => ({ ...p, coatingId: e.target.checked && row ? String(row.id) : '' }));
+                  }}
+                  style={{ width: 'auto' }}
+                />
+                {selectedIsCob ? (
+                  <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                    Not needed — this is a COB panel, already resin-sealed.
+                  </p>
+                ) : (
+                  clientWantsCoating && (
+                    <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                      This client always wants protective coating.
+                    </p>
+                  )
+                )}
+              </div>
+            ) : (
             <div key={t.key}>
               <label>{t.label}</label>
               <SearchSelect
@@ -2133,8 +3246,52 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                 placeholder={`Select ${t.label.toLowerCase()}…`}
                 options={(optionRows[t.key] ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
               />
+              {/* Say which freight this client expects, and be explicit when no option matches it —
+                  otherwise a preference like "Road" looks as though it was simply ignored. */}
+              {t.key === 'freightOptionId' && preferredFreight?.value && (
+                <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                  Client prefers <b>{preferredFreight.value}</b>
+                  {preferredFreight.source === 'tier' ? ' (from client tier)' : ' (set on the client)'}
+                  {matchFreightOption(preferredFreight.value, optionRows.freightOptionId)
+                    ? '. Pre-selected — change it if this job differs.'
+                    : ' — no freight option matches that, so none was pre-selected.'}
+                </p>
+              )}
             </div>
+            )
           ))}
+          {/* Install labour hours. The computed estimate is used unless a number is typed here — it
+              drives the "Install, labour & freight" line, so it is set beside the install pickers. */}
+          <div>
+            <label>Install labour (hours)</label>
+            <input
+              type="number"
+              min={0}
+              step="0.5"
+              value={labourHoursOverride}
+              onChange={(e) => { setLabourHoursOverride(e.target.value); setHoursMode('manual'); }}
+              placeholder="auto"
+            />
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+              {hoursMode === 'manual' ? (
+                <>
+                  Set manually.{' '}
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => { setHoursMode('auto'); setLabourHoursOverride(computedHours); }}
+                    style={{ padding: 0, fontSize: 12, color: 'var(--accent)' }}
+                  >
+                    Reset to estimate
+                  </button>
+                </>
+              ) : computedHours ? (
+                'Estimated from size, cabinets, frame and hanging — edit to override.'
+              ) : (
+                'Leave blank to estimate from size, cabinets, frame and hanging.'
+              )}
+            </p>
+          </div>
         </div>
         <h4 style={{ margin: '14px 0 4px' }}>Housing &amp; descriptions</h4>
         <div className="grid3">
@@ -2143,12 +3300,33 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
             <input type="checkbox" checked={backCover} onChange={(e) => setBackCover(e.target.checked)} style={{ width: 'auto' }} />
           </div>
           <div>
-            <label title="Higher-resolution supply upgrade — priced only when the admin uplift rate is set">High-resolution</label>
-            <input type="checkbox" checked={highResolution} onChange={(e) => setHighResolution(e.target.checked)} style={{ width: 'auto' }} />
-          </div>
-          <div>
             <label>Recess depth (mm)</label>
             <input type="number" min={0} value={recessDepthMm} onChange={(e) => setRecessDepthMm(e.target.value)} placeholder="optional" />
+          </div>
+          <div>
+            <label title="Sun falling on THIS screen — a shaded wall and a west-facing window in the same job differ">Sun exposure</label>
+            <SearchSelect value={sunExposure} onChange={setSunExposure} allowEmpty placeholder="—"
+              options={[{ value: 'None', label: 'None' }, { value: 'Indirect', label: 'Indirect' }, { value: 'Direct', label: 'Direct' }]} />
+          </div>
+          <div>
+            <label title="What THIS screen mounts to — drives the fixing method">Wall substrate</label>
+            <input value={wallSubstrate} onChange={(e) => setWallSubstrate(e.target.value)} placeholder="e.g. plasterboard, brick, concrete" />
+          </div>
+          <div>
+            <label title="Where THIS screen's controller / media player lives">Controller / media-player location</label>
+            <input value={controllerLocation} onChange={(e) => setControllerLocation(e.target.value)} placeholder="e.g. comms room, behind screen" />
+          </div>
+          <div>
+            <label title="Clearance around THIS screen — determines whether an articulated bracket is needed">Space around screen (mm)</label>
+            <input type="number" min={0} value={spaceAroundScreenMm} onChange={(e) => setSpaceAroundScreenMm(e.target.value)} placeholder="e.g. 50" />
+          </div>
+          <div>
+            <label>Shared-device ratio (players)</label>
+            <input type="number" min={0} value={sharedDevicePlayers} onChange={(e) => setSharedDevicePlayers(e.target.value)} placeholder="e.g. 1" />
+          </div>
+          <div>
+            <label>… per (screens)</label>
+            <input type="number" min={0} value={sharedDeviceScreens} onChange={(e) => setSharedDeviceScreens(e.target.value)} placeholder="e.g. 4" />
           </div>
           <div>
             <label>Frame / housing description</label>
@@ -2157,21 +3335,6 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
           <div>
             <label>Service description suffix</label>
             <input value={serviceDescriptionSuffix} onChange={(e) => setServiceDescriptionSuffix(e.target.value)} placeholder="optional" />
-          </div>
-        </div>
-        <h4 style={{ margin: '14px 0 4px' }}>Content &amp; flatness</h4>
-        <div className="grid3">
-          <div>
-            <label>Content ratio</label>
-            <input value={contentRatio} onChange={(e) => setContentRatio(e.target.value)} placeholder="e.g. 16:9" />
-          </div>
-          <div>
-            <label>Content supplier</label>
-            <input value={contentSupplier} onChange={(e) => setContentSupplier(e.target.value)} placeholder="optional" />
-          </div>
-          <div>
-            <label>Flatness critical</label>
-            <input type="checkbox" checked={flatnessRequired} onChange={(e) => setFlatnessRequired(e.target.checked)} style={{ width: 'auto' }} />
           </div>
         </div>
 
@@ -2190,10 +3353,25 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
           <button className="primary" onClick={() => addScreen()} disabled={busy || !canAddSpecific}>
             {busy ? (isEditing ? 'Saving…' : 'Pricing…') : isEditing ? 'Save changes' : '+ Add screen'}
           </button>
+          {/* Save a half-built screen. Only offered while ADDING — an existing screen already has
+              "Save changes", which writes to the quote itself. */}
+          {!isEditing && (
+            <button onClick={saveDraft} disabled={busy} title="Keep this part-built screen in this browser and come back to it">
+              Save draft
+            </button>
+          )}
           {isEditing && (
             <button className="ghost" onClick={() => onCancelEdit?.()} disabled={busy} style={{ marginLeft: 8 }}>
               Cancel edit
             </button>
+          )}
+          {!isEditing && draftSavedAt && (
+            <span className="muted" style={{ alignSelf: 'center' }}>
+              ✓ Draft saved {draftTime(draftSavedAt)} — on this browser only, not yet on the quote.
+            </span>
+          )}
+          {!isEditing && draftErr && (
+            <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>{draftErr}</span>
           )}
         </div>
       </div>
@@ -2241,7 +3419,7 @@ const LCD_MANUAL_TEMPLATES: Record<string, Array<{ description: string; unitCost
   ],
 };
 
-interface LcdLine { sectionKey: string; itemType: LcdItemType; displayId?: string; description: string; qty: number; unitCost?: number; manual: boolean }
+interface LcdLine { sectionKey: string; itemType: LcdItemType; displayId?: string; description: string; qty: number; unitCost?: number; margin?: number; manual: boolean }
 
 // AA3b — LCD Good/Better/Best tier option (display pick at a price point; cost/margin admin-only).
 interface LcdTierOption {
@@ -2257,7 +3435,7 @@ interface LcdTierOption {
   margin: string | null;
 }
 
-function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quote; onChange: () => Promise<void>; editScreen?: LcdScreen; onCancelEdit?: () => void }) {
+function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }: { quote: Quote; onChange: () => Promise<void>; editScreen?: LcdScreen; onCancelEdit?: () => void; onDirtyChange?: (dirty: boolean) => void }) {
   const isEditing = !!editScreen;
   const [catalog, setCatalog] = useState<Opt[]>([]);
   const [serviceHoursId, setServiceHoursId] = useState(editScreen?.serviceHoursId != null ? String(editScreen.serviceHoursId) : '');
@@ -2269,6 +3447,12 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   const [orientation, setOrientation] = useState(editScreen?.orientation ?? '');
   // AA1 — recess/cavity depth (mm); descriptive site-prep detail.
   const [recessDepthMm, setRecessDepthMm] = useState(editScreen?.recessDepthMm != null ? String(editScreen.recessDepthMm) : '');
+  const [sunExposure, setSunExposure] = useState(editScreen?.sunExposure ?? '');
+  const [wallSubstrate, setWallSubstrate] = useState(editScreen?.wallSubstrate ?? '');
+  const [controllerLocation, setControllerLocation] = useState(editScreen?.controllerLocation ?? '');
+  const [spaceAroundScreenMm, setSpaceAroundScreenMm] = useState(editScreen?.spaceAroundScreenMm != null ? String(editScreen.spaceAroundScreenMm) : '');
+  const [sharedDevicePlayers, setSharedDevicePlayers] = useState(editScreen?.sharedDevicePlayers != null ? String(editScreen.sharedDevicePlayers) : '');
+  const [sharedDeviceScreens, setSharedDeviceScreens] = useState(editScreen?.sharedDeviceScreens != null ? String(editScreen.sharedDeviceScreens) : '');
   // AA3a — site/requirement fields feeding the LCD selection rules.
   const [requiresAndroid, setRequiresAndroid] = useState(editScreen?.requiresAndroid ?? false);
   const [maxDepthMm, setMaxDepthMm] = useState(editScreen?.maxDepthMm != null ? String(editScreen.maxDepthMm) : '');
@@ -2293,13 +3477,17 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     }).map((it) => {
       const manual = it.displayId == null;
       const sectionKey = LCD_SECTIONS.find((d) => d.itemType === it.itemType)?.key ?? it.itemType;
+      const unitCost = manual ? Number(it.unitCost ?? 0) : undefined;
+      const unitSell = manual && it.unitSell != null ? Number(it.unitSell) : undefined;
+      const margin = manual && unitSell != null && unitSell > 0 && unitCost != null ? Math.round(((unitSell - unitCost) / unitSell) * 100) : undefined;
       return {
         sectionKey,
         itemType: it.itemType,
         displayId: it.displayId != null ? String(it.displayId) : undefined,
         description: it.description ?? '',
         qty: Number(it.qty) || 1,
-        unitCost: manual ? Number(it.unitCost ?? 0) : undefined,
+        unitCost,
+        margin,
         manual,
       };
     }),
@@ -2317,9 +3505,15 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
 
   useEffect(() => {
     api<{ rows: Opt[] }>('/admin/display-catalog?take=500&activeOnly=true').then((r) => setCatalog(r.rows));
-    api<{ rows: Opt[] }>('/admin/service-hours?take=200').then((r) => setServiceHours(r.rows));
-    api<{ rows: Opt[] }>('/admin/warranties?take=200').then((r) => setWarranties(r.rows));
-    api<{ rows: Opt[] }>('/admin/install-methods?take=200').then((r) => setInstallMethods(r.rows));
+    api<{ rows: Opt[] }>('/admin/service-hours?take=200&activeOnly=true').then((r) => setServiceHours(r.rows));
+    api<{ rows: Opt[] }>('/admin/warranties?take=200&activeOnly=true').then((r) => {
+      setWarranties(r.rows);
+      // Same default as the LED form: a NEW screen gets the 3-year warranty; editing keeps its own.
+      if (editScreen) return;
+      const std = defaultWarranty(r.rows);
+      if (std) setWarrantyId((prev) => prev || String(std.id));
+    });
+    api<{ rows: Opt[] }>('/admin/install-methods?take=200&activeOnly=true').then((r) => setInstallMethods(r.rows));
   }, []);
 
   const catFor = (def: LcdSectionDef): Opt[] =>
@@ -2401,12 +3595,19 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
     return Number(row?.totalCost ?? row?.usd ?? 0);
   };
   const sellOf = (l: LcdLine): number => {
-    if (l.manual) return Math.round(costOf(l) * SERVICE_MARKUP * 100) / 100;
+    if (l.manual) {
+      const cost = costOf(l);
+      if (l.margin !== undefined && l.margin < 100) {
+        return Math.round((cost / (1 - l.margin / 100)) * 100) / 100;
+      }
+      return Math.round(cost * SERVICE_MARKUP * 100) / 100;
+    }
     const row = catalog.find((x) => x.id === l.displayId);
     // Catalog list sell; fall back to the margin gross-up only when the catalog row has no list sell.
     return row?.sell != null ? Number(row.sell) : Math.round(costOf(l) / (1 - MARGIN));
   };
   const marginOf = (l: LcdLine): number => {
+    if (l.manual && l.margin !== undefined) return l.margin / 100;
     const s = sellOf(l);
     return s > 0 ? (s - costOf(l)) / s : 0;
   };
@@ -2428,6 +3629,11 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
   // AA3a — brand of the chosen display line, shown read-only in the site-requirements block.
   const chosenDisplayId = lines.find((l) => l.itemType === 'display' && l.displayId)?.displayId;
   const chosenDisplayBrand = chosenDisplayId ? (catalog.find((x) => x.id === chosenDisplayId)?.brand ?? null) : null;
+  // Mirrors LedAddForm: an unsaved display selection is losable work on a type switch.
+  useEffect(() => {
+    onDirtyChange?.(!!chosenDisplayId && !editScreen);
+    return () => onDirtyChange?.(false);
+  }, [chosenDisplayId, editScreen, onDirtyChange]);
 
   const save = async () => {
     setBusy(true);
@@ -2438,12 +3644,19 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
         description: l.description || undefined,
         qty: l.qty,
         unitCost: l.manual ? (l.unitCost ?? 0) : undefined,
+        unitSell: l.manual ? sellOf(l) : undefined,
       }));
       const firstDisplay = lines.find((l) => l.itemType === 'display' && l.displayId)?.displayId;
       const body = {
         screenName: screenName || undefined,
         orientation: orientation || undefined,
         ...(recessDepthMm.trim() !== '' ? { recessDepthMm: Number(recessDepthMm) } : {}),
+        ...(sunExposure ? { sunExposure } : {}),
+        ...(wallSubstrate.trim() ? { wallSubstrate: wallSubstrate.trim() } : {}),
+        ...(controllerLocation.trim() ? { controllerLocation: controllerLocation.trim() } : {}),
+        ...(spaceAroundScreenMm.trim() !== '' ? { spaceAroundScreenMm: Number(spaceAroundScreenMm) } : {}),
+        ...(sharedDevicePlayers.trim() !== '' ? { sharedDevicePlayers: Number(sharedDevicePlayers) } : {}),
+        ...(sharedDeviceScreens.trim() !== '' ? { sharedDeviceScreens: Number(sharedDeviceScreens) } : {}),
         // AA3a — site/requirement fields (rules; checkboxes always sent, depth only when set).
         requiresAndroid,
         needsPc,
@@ -2520,6 +3733,31 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
           <div>
             <label>Recess depth (mm)</label>
             <input type="number" min={0} value={recessDepthMm} onChange={(e) => setRecessDepthMm(e.target.value)} placeholder="optional" />
+          </div>
+          <div>
+            <label title="Sun falling on THIS screen — a shaded wall and a west-facing window in the same job differ">Sun exposure</label>
+            <SearchSelect value={sunExposure} onChange={setSunExposure} allowEmpty placeholder="—"
+              options={[{ value: 'None', label: 'None' }, { value: 'Indirect', label: 'Indirect' }, { value: 'Direct', label: 'Direct' }]} />
+          </div>
+          <div>
+            <label title="What THIS screen mounts to — drives the fixing method">Wall substrate</label>
+            <input value={wallSubstrate} onChange={(e) => setWallSubstrate(e.target.value)} placeholder="e.g. plasterboard, brick, concrete" />
+          </div>
+          <div>
+            <label title="Where THIS screen's controller / media player lives">Controller / media-player location</label>
+            <input value={controllerLocation} onChange={(e) => setControllerLocation(e.target.value)} placeholder="e.g. comms room, behind screen" />
+          </div>
+          <div>
+            <label title="Clearance around THIS screen — determines whether an articulated bracket is needed">Space around screen (mm)</label>
+            <input type="number" min={0} value={spaceAroundScreenMm} onChange={(e) => setSpaceAroundScreenMm(e.target.value)} placeholder="e.g. 50" />
+          </div>
+          <div>
+            <label>Shared-device ratio (players)</label>
+            <input type="number" min={0} value={sharedDevicePlayers} onChange={(e) => setSharedDevicePlayers(e.target.value)} placeholder="e.g. 1" />
+          </div>
+          <div>
+            <label>… per (screens)</label>
+            <input type="number" min={0} value={sharedDeviceScreens} onChange={(e) => setSharedDeviceScreens(e.target.value)} placeholder="e.g. 4" />
           </div>
         </div>
         {/* AA3a + intake-v2 — site requirements, brand preference, and display specs. */}
@@ -2701,7 +3939,7 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                 <span style={{ width: 90, textAlign: 'right' }}>Sell</span>
                 <span style={{ width: 64, textAlign: 'right' }}>Qty</span>
                 <span style={{ width: 100, textAlign: 'right' }}>Price</span>
-                {isAdmin && <span style={{ width: 64, textAlign: 'right' }}>Margin</span>}
+                {isAdmin && <span style={{ width: 64, textAlign: 'right' }}>Margin %</span>}
                 <span style={{ width: 24 }} />
               </div>
             )}
@@ -2722,7 +3960,22 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit }: { quote: Quot
                 <span style={{ width: 90, textAlign: 'right' }}>{sellOf(l).toLocaleString()}</span>
                 <input style={{ width: 64 }} type="number" min="1" value={l.qty} onChange={(e) => updateLine(i, { qty: Number(e.target.value) || 1 })} />
                 <span style={{ width: 100, textAlign: 'right' }}>{quote.currency?.code} {(sellOf(l) * l.qty).toLocaleString()}</span>
-                {isAdmin && <span style={{ width: 64, textAlign: 'right' }}>{(marginOf(l) * 100).toFixed(0)}%</span>}
+                {isAdmin && (
+                  l.manual ? (
+                    <input
+                      style={{ width: 64, textAlign: 'right' }}
+                      type="number"
+                      min={0}
+                      max={99}
+                      step="1"
+                      value={l.margin !== undefined ? l.margin : Math.round(marginOf(l) * 100)}
+                      title="Margin %"
+                      onChange={(e) => updateLine(i, { margin: Number(e.target.value) })}
+                    />
+                  ) : (
+                    <span style={{ width: 64, textAlign: 'right' }}>{(marginOf(l) * 100).toFixed(0)}%</span>
+                  )
+                )}
                 <button onClick={() => removeLine(i)} aria-label="Remove">✕</button>
               </div>
             ))}
@@ -2793,7 +4046,18 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
     ) as unknown as Record<LedOptionKey, string>;
   const [selected, setSelected] = useState<Record<LedOptionKey, string>>(initial);
   const [backCover, setBackCover] = useState(!!screen.backCover);
-  const [highResolution, setHighResolution] = useState(!!screen.highResolution); // AA4
+  // Install labour hours. The box always SHOWS the hours in use, but `hoursMode` decides what is
+  // saved: in 'auto' the figure is just being displayed and null is sent (so the screen keeps
+  // re-estimating when the panel or frame changes); typing switches it to 'manual'.
+  const screenIsCob = !!screen.ledProduct?.isCob;
+  const [sharedController, setSharedController] = useState(!!screen.sharedController);
+  const computedHours = screen.labourHours != null ? String(screen.labourHours) : '';
+  const [hoursMode, setHoursMode] = useState<'auto' | 'manual'>(
+    screen.labourHoursOverride != null ? 'manual' : 'auto',
+  );
+  const [labourHoursOverride, setLabourHoursOverride] = useState(
+    screen.labourHoursOverride != null ? String(screen.labourHoursOverride) : computedHours,
+  );
   const [frameNote, setFrameNote] = useState(screen.frameNote ?? '');
   const [serviceDescriptionSuffix, setServiceDescriptionSuffix] = useState(screen.serviceDescriptionSuffix ?? '');
   const [busy, setBusy] = useState(false);
@@ -2817,11 +4081,14 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
     try {
       const body: Record<string, unknown> = {
         backCover,
-        highResolution,
+        labourHoursOverride:
+          hoursMode === 'manual' && labourHoursOverride.trim() !== '' ? Number(labourHoursOverride) : null,
+        sharedController,
         frameNote: frameNote.trim() ? frameNote.trim() : null,
         serviceDescriptionSuffix: serviceDescriptionSuffix.trim() ? serviceDescriptionSuffix.trim() : null,
       };
       for (const t of LED_OPTION_TABLES) body[t.key] = selected[t.key] ? Number(selected[t.key]) : null;
+      if (screenIsCob) body.coatingId = null; // sealed at manufacture — never charge a coating
       await api(`/quotes/${quote.id}/led-screens/${screen.id}`, { method: 'PATCH', body: JSON.stringify(body) });
       setSaved(true);
       await onChange();
@@ -2840,27 +4107,122 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
       <div className="grid3">
         {LED_OPTION_TABLES.map((t) => (
           <div key={t.key}>
-            <label>{t.label}</label>
-            <SearchSelect
-              value={selected[t.key]}
-              onChange={(v) => { setSelected((p) => ({ ...p, [t.key]: v })); setSaved(false); }}
-              allowEmpty
-              placeholder={`Select ${t.label.toLowerCase()}…`}
-              options={(optionRows[t.key] ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
-              disabled={!canWrite}
-            />
+            {t.key === 'coatingId' ? (
+              <>
+                <label title={`${PROTECTIVE_COATING} — priced per m² from the coating catalogue`}>
+                  Protective coating
+                </label>
+                <input
+                  type="checkbox"
+                  checked={!screenIsCob && !!selected.coatingId}
+                  disabled={!canWrite || screenIsCob}
+                  onChange={(e) => {
+                    const row = protectiveCoatingRow(optionRows.coatingId);
+                    setSelected((p) => ({ ...p, coatingId: e.target.checked && row ? String(row.id) : '' }));
+                    setSaved(false);
+                  }}
+                  style={{ width: 'auto' }}
+                />
+                {screenIsCob && (
+                  <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                    Not needed — this is a COB panel, already resin-sealed.
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <label>{t.label}</label>
+                <SearchSelect
+                  value={selected[t.key]}
+                  onChange={(v) => { setSelected((p) => ({ ...p, [t.key]: v })); setSaved(false); }}
+                  allowEmpty
+                  placeholder={`Select ${t.label.toLowerCase()}…`}
+                  options={(optionRows[t.key] ?? []).map((o) => ({ value: o.id, label: o.name ?? o.model ?? '' }))}
+                  disabled={!canWrite}
+                />
+              </>
+            )}
           </div>
         ))}
+        {/* Install labour hours — sits with the install pickers, since it drives the same
+            "Install, labour & freight" line. Blank = estimate from geometry + options. */}
+        <div>
+          <label>Install labour (hours)</label>
+          <input
+            type="number"
+            min={0}
+            step="0.5"
+            value={labourHoursOverride}
+            disabled={!canWrite}
+            onChange={(e) => { setLabourHoursOverride(e.target.value); setHoursMode('manual'); setSaved(false); }}
+            placeholder="auto"
+          />
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+            {hoursMode === 'manual' ? (
+              <>
+                Set manually.{' '}
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={!canWrite}
+                  onClick={() => { setHoursMode('auto'); setLabourHoursOverride(computedHours); setSaved(false); }}
+                  style={{ padding: 0, fontSize: 12, color: 'var(--accent)' }}
+                >
+                  Reset to estimate
+                </button>
+              </>
+            ) : (
+              'Estimated from size, cabinets, frame and hanging — edit to override.'
+            )}
+          </p>
+        </div>
       </div>
+      {/* Components are read-only here: this panel PATCHes options only — `updateLedScreenSchema`
+          carries no `components`, and re-pricing them is the full-edit path's job. Without this the
+          controller attached to a screen was invisible from the panel people actually open. */}
+      {(screen.components?.length ?? 0) > 0 && (
+        <>
+          <h4 style={{ margin: '14px 0 4px' }}>Components</h4>
+          <div>
+            {(screen.components ?? []).map((c) => {
+              const def = LED_COMPONENT_TABLES.find((t) => t.componentType === c.componentType);
+              return (
+                <div className="list-row" key={c.id}>
+                  <span>
+                    <span className="pill" style={{ marginRight: 6 }}>{def?.label ?? c.componentType}</span>
+                    {ledComponentName(c)} <span className="muted">× {c.qty}</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="muted" style={{ margin: '4px 0 10px', fontSize: 12 }}>
+            Add or remove components with <b>✎ Edit</b> on the screen row.
+          </p>
+        </>
+      )}
       <h4 style={{ margin: '14px 0 4px' }}>Housing &amp; descriptions</h4>
       <div className="grid3">
         <div>
-          <label>Back cover</label>
-          <input type="checkbox" checked={backCover} disabled={!canWrite} onChange={(e) => { setBackCover(e.target.checked); setSaved(false); }} style={{ width: 'auto' }} />
+          <label title="Charge the controller once for this row instead of once per screen">
+            Shared controller
+          </label>
+          <input
+            type="checkbox"
+            checked={sharedController}
+            disabled={!canWrite}
+            onChange={(e) => { setSharedController(e.target.checked); setSaved(false); }}
+            style={{ width: 'auto' }}
+          />
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+            {sharedController
+              ? `One controller for all ${screen.qty} screen(s) on this row.`
+              : 'One controller per screen on this row.'}
+          </p>
         </div>
         <div>
-          <label title="Higher-resolution supply upgrade — priced only when the admin uplift rate is set">High-resolution</label>
-          <input type="checkbox" checked={highResolution} disabled={!canWrite} onChange={(e) => { setHighResolution(e.target.checked); setSaved(false); }} style={{ width: 'auto' }} />
+          <label>Back cover</label>
+          <input type="checkbox" checked={backCover} disabled={!canWrite} onChange={(e) => { setBackCover(e.target.checked); setSaved(false); }} style={{ width: 'auto' }} />
         </div>
         <div>
           <label>Frame / housing description</label>
@@ -3059,12 +4421,22 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
   const [discDraft, setDiscDraft] = useState<Record<string, string>>({});
   const [modeBusy, setModeBusy] = useState(false);
   const [bkOpen, setBkOpen] = useState<Set<string>>(new Set());
-  const toggleBk = (key: string) =>
+  const toggleBk = (key: string) => {
+    if (!price) void loadPrice();
     setBkOpen((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  };
 
+  // A re-price round-trip can take several seconds; meanwhile the totals card shows the quote's saved
+  // totals (+ "Updating…") rather than an empty "Loading price…". The sequence number drops a slower,
+  // older response that lands after a newer one (rapid edits fire overlapping re-prices).
+  const [priceBusy, setPriceBusy] = useState(false);
+  const priceSeq = useRef(0);
   const loadPrice = useCallback(async () => {
+    const seq = ++priceSeq.current;
+    setPriceBusy(true);
     try {
       const p = await api<PriceResult>(`/quotes/${quote.id}/price`, { method: 'POST' });
+      if (seq !== priceSeq.current) return; // a newer re-price superseded this one
       setPrice(p);
       const seed: Record<string, string> = {};
       for (const sec of p.sections) for (const l of sec.lines) {
@@ -3073,12 +4445,18 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
       setDiscDraft(seed);
       setPriceErr(null);
     } catch (e) {
+      if (seq !== priceSeq.current) return;
       setPriceErr(e instanceof Error ? e.message : 'Pricing failed');
+    } finally {
+      if (seq === priceSeq.current) setPriceBusy(false);
     }
   }, [quote.id]);
 
-  // Reload the breakdown whenever the parent refetches the quote (add/edit/qty/delete/discount).
-  useEffect(() => { void loadPrice(); }, [loadPrice, quote]);
+  // Reload the breakdown whenever screens or totals change on the quote (add/edit/qty/delete/discount).
+  const screensKey = `${quote.ledScreens.length}:${quote.ledScreens.map((s) => `${s.id}:${s.priceTotal}:${s.qty}`).join(',')}|${quote.lcdScreens.length}:${quote.lcdScreens.map((s) => `${s.id}:${s.priceTotal}`).join(',')}`;
+  // `updatedAt` catches saves that leave every screen total unchanged (e.g. re-pricing a screen to the
+  // same figure but new itemised lines) — those used to leave a stale breakdown until "Refresh".
+  useEffect(() => { void loadPrice(); }, [loadPrice, screensKey, quote.lockVersion, quote.grandTotal, quote.updatedAt]);
 
   const sectionFor = (type: 'led' | 'lcd', id: string): PriceSection | null =>
     price?.sections.find((s) => s.type === type && s.screenId === id) ?? null;
@@ -3159,6 +4537,21 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
     await onChange();
   };
 
+  // True while the visible add form holds a product selection that hasn't been added to the quote.
+  const [formDirty, setFormDirty] = useState(false);
+  // Pending LED/LCD switch, held back until the user resolves the unsaved-selection dialog.
+  const [pendingType, setPendingType] = useState<'LED' | 'LCD' | null>(null);
+
+  const screenCountFor = (t: 'LED' | 'LCD') => (t === 'LED' ? quote.ledScreens.length : quote.lcdScreens.length);
+
+  // Warn on a type switch in two cases: an unsaved product selection is about to be discarded, or
+  // the user is leaving a type they never added a screen for. Both are silent losses otherwise.
+  const requestScreenType = (next: 'LED' | 'LCD') => {
+    if (next === screenType) return;
+    if (formDirty || screenCountFor(screenType) === 0) { setPendingType(next); return; }
+    setScreenType(next);
+  };
+
   const totalScreens = quote.ledScreens.length + quote.lcdScreens.length;
 
   return (
@@ -3169,8 +4562,8 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
           <div style={{ display: 'flex', gap: 8 }}>
             {canWrite && !editing && (
               <>
-                <button className={screenType === 'LED' ? 'primary' : 'ghost'} onClick={() => setScreenType('LED')}>LED</button>
-                <button className={screenType === 'LCD' ? 'primary' : 'ghost'} onClick={() => setScreenType('LCD')}>LCD</button>
+                <button className={screenType === 'LED' ? 'primary' : 'ghost'} onClick={() => requestScreenType('LED')}>LED</button>
+                <button className={screenType === 'LCD' ? 'primary' : 'ghost'} onClick={() => requestScreenType('LCD')}>LCD</button>
               </>
             )}
           </div>
@@ -3189,6 +4582,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
           onChange={onChange}
           editScreen={editLed}
           onCancelEdit={cancelEdit}
+          onDirtyChange={setFormDirty}
         />
       )}
       {canWrite && screenType === 'LCD' && (
@@ -3198,12 +4592,25 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
           onChange={onChange}
           editScreen={editLcd}
           onCancelEdit={cancelEdit}
+          onDirtyChange={setFormDirty}
+        />
+      )}
+
+      {pendingType && (
+        <UnsavedScreenDialog
+          from={screenType}
+          to={pendingType}
+          hasUnsavedSelection={formDirty}
+          onCancel={() => setPendingType(null)}
+          onDiscard={() => { setFormDirty(false); setScreenType(pendingType); setPendingType(null); }}
         />
       )}
 
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Screens on this quote ({totalScreens})</h3>
-        {totalScreens === 0 && <p className="muted">None yet — this step is optional.</p>}
+        {/* Just a list placeholder — the "screens are optional / licences only" explanation lives in
+            NoScreensDialog so it is stated once, at the moment the user tries to move on. */}
+        {totalScreens === 0 && <p className="muted">None yet.</p>}
 
         {quote.ledScreens.map((s, i) => (
           <div key={`led-${s.id}`} style={{ borderBottom: '1px solid var(--border)', paddingBottom: 10, marginBottom: 10 }}>
@@ -3294,12 +4701,15 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
         <div className="card">
           <div className="topbar">
             <h3 style={{ margin: 0 }}>Quote totals</h3>
-            <button className="ghost" onClick={() => void loadPrice()}>↻ Refresh</button>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              {priceBusy && <span className="muted" aria-live="polite">Updating…</span>}
+              <button className="ghost" onClick={() => void loadPrice()} disabled={priceBusy}>↻ Refresh</button>
+            </span>
           </div>
           {priceErr && <div className="error" style={{ marginTop: 8 }}>{priceErr}</div>}
-          {!price && !priceErr && <p className="muted">Loading price…</p>}
-          {price && (
-            <>
+          {/* The whole card renders at once: until the first re-price returns, the totals are the ones
+              already saved on the quote and the margin tiles show "…" (margin needs the live re-price). */}
+          <>
               {canWrite ? (
                 <div style={{ margin: '4px 0 12px' }}>
                   <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Discount mode</label>
@@ -3316,9 +4726,9 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
               ) : (
                 <p className="muted" style={{ marginTop: 4 }}>Read-only role — discounts and mode are view-only.</p>
               )}
-              {!price.costVisible && <p className="muted">Cost hidden for your role.</p>}
+              {price && !price.costVisible && <p className="muted">Cost hidden for your role.</p>}
 
-              {price.licences.length > 0 && (
+              {price && price.licences.length > 0 && (
                 <div style={{ marginBottom: 12 }}>
                   <b>Licences</b>
                   <div className="table-wrap" style={{ marginTop: 6 }}>
@@ -3338,17 +4748,25 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
               )}
 
               <div className="totals">
-                <div className="stat"><div className="label">Equipment</div><div className="value">{cur} {Number(price.totals.equipment).toLocaleString()}</div></div>
-                <div className="stat"><div className="label">Services</div><div className="value">{cur} {Number(price.totals.services).toLocaleString()}</div></div>
-                <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(price.totals.recurring).toLocaleString()}</div></div>
-                {price.discount && price.discount.pct > 0 && (
+                <div className="stat"><div className="label">Equipment</div><div className="value">{cur} {Number(price?.totals.equipment ?? quote.totalEquipment).toLocaleString()}</div></div>
+                <div className="stat"><div className="label">Services</div><div className="value">{cur} {Number(price?.totals.services ?? quote.totalServices).toLocaleString()}</div></div>
+                <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(price?.totals.recurring ?? quote.totalRecurring).toLocaleString()}</div></div>
+                {price?.discount && price.discount.pct > 0 && (
                   <div className="stat">
                     <div className="label">Discount ({(price.discount.pct * 100).toFixed(price.discount.pct * 100 % 1 ? 1 : 0)}% · {price.discount.scope === 'recurring' ? 'per renewal' : 'one-off'})</div>
                     <div className="value" style={{ color: 'var(--danger, #dc2626)' }}>− {cur} {Number(price.discount.amount).toLocaleString()}</div>
                   </div>
                 )}
-                <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(price.totals.grandTotal).toLocaleString()}</div></div>
-                {price.totals.margin != null && (() => {
+                <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(price?.totals.grandTotal ?? quote.grandTotal).toLocaleString()}</div></div>
+                {/* Margin is only returned to roles that may see cost (admin); before the first re-price
+                    the tiles are shown as placeholders for those roles so the card doesn't jump. */}
+                {!price && getRole() === 'admin' && (
+                  <>
+                    <div className="stat"><div className="label">Margin</div><div className="value muted">…</div></div>
+                    <div className="stat"><div className="label">Margin floor</div><div className="value muted">…</div></div>
+                  </>
+                )}
+                {price && price.totals.margin != null && (() => {
                   const margin = Number(price.totals.margin);
                   const floor = price.totals.marginFloor;
                   const below = floor != null && margin < floor;
@@ -3360,8 +4778,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
                   );
                 })()}
               </div>
-            </>
-          )}
+          </>
         </div>
       )}
     </div>
@@ -3369,6 +4786,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
 }
 
 function LicenceStep({ quote, onChange }: { quote: Quote; onChange: () => Promise<void> }) {
+  const canWrite = getRole() !== 'viewer';
   const [screenType, setScreenType] = useState('LED');
   const [tier, setTier] = useState('low');
   const [qty, setQty] = useState('1');
@@ -3376,6 +4794,7 @@ function LicenceStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
   const [busy, setBusy] = useState(false);
 
   const add = async () => {
+    if (!canWrite) return;
     setBusy(true);
     try {
       await api(`/quotes/${quote.id}/licences`, {
@@ -3388,42 +4807,66 @@ function LicenceStep({ quote, onChange }: { quote: Quote; onChange: () => Promis
     }
   };
 
+  const remove = async (licenceId: string) => {
+    if (!canWrite) return;
+    setBusy(true);
+    try {
+      await api(`/quotes/${quote.id}/licences/${licenceId}`, { method: 'DELETE' });
+      await onChange();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div>
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Add SeenCMP licence</h3>
-        <div className="grid3">
-          <div>
-            <label>Screen type</label>
-            <SearchSelect
-              value={screenType}
-              onChange={setScreenType}
-              options={[{ value: 'LED', label: 'LED' }, { value: 'LCD', label: 'LCD' }]}
-            />
+      {canWrite && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Add SeenCMP licence</h3>
+          <div className="grid3">
+            <div>
+              <label>Screen type</label>
+              <SearchSelect
+                value={screenType}
+                onChange={setScreenType}
+                options={[{ value: 'LED', label: 'LED' }, { value: 'LCD', label: 'LCD' }]}
+              />
+            </div>
+            <div>
+              <label>Volume tier</label>
+              <SearchSelect
+                value={tier}
+                onChange={setTier}
+                options={[{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }]}
+              />
+            </div>
+            <div><label>Qty (screens)</label><input type="number" value={qty} onChange={(e) => setQty(e.target.value)} /></div>
+            <div>
+              <label>Interactive</label>
+              <input type="checkbox" checked={interactive} onChange={(e) => setInteractive(e.target.checked)} style={{ width: 'auto' }} />
+            </div>
           </div>
-          <div>
-            <label>Volume tier</label>
-            <SearchSelect
-              value={tier}
-              onChange={setTier}
-              options={[{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }]}
-            />
-          </div>
-          <div><label>Qty (screens)</label><input type="number" value={qty} onChange={(e) => setQty(e.target.value)} /></div>
-          <div>
-            <label>Interactive</label>
-            <input type="checkbox" checked={interactive} onChange={(e) => setInteractive(e.target.checked)} style={{ width: 'auto' }} />
+          <div className="step-actions">
+            <button className="primary" onClick={add} disabled={busy}>+ Add licence</button>
           </div>
         </div>
-        <div className="step-actions">
-          <button className="primary" onClick={add} disabled={busy}>+ Add licence</button>
-        </div>
-      </div>
+      )}
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Licences ({quote.licences.length})</h3>
+        {quote.licences.length === 0 && <p className="muted">No licences added yet.</p>}
         {quote.licences.map((l) => (
-          <div className="list-row" key={l.id}>
+          <div className="list-row" key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>{l.screenType} · {l.tier} · {l.qty} screen(s){l.isInteractive ? ' · interactive' : ''}</span>
+            {canWrite && (
+              <button
+                className="secondary"
+                style={{ padding: '2px 8px', fontSize: 12 }}
+                disabled={busy}
+                onClick={() => remove(l.id)}
+              >
+                Delete
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -3484,8 +4927,17 @@ interface VersionView {
   snapshot: VersionSnapshot;
 }
 
+// Keys whose stored name no longer matches what the field is called in the UI. Without this a
+// version diff would show the storage name ("Requested Shipping Date") for a field the rest of the
+// app labels "Install start date".
+const FIELD_LABELS: Record<string, string> = {
+  requestedShippingDate: 'Install start date',
+};
+
 // camelCase / snake_case key → "Title Case" human label.
 function titleCase(key: string): string {
+  const override = FIELD_LABELS[key];
+  if (override) return override;
   const spaced = key
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .replace(/_/g, ' ')
@@ -3770,6 +5222,82 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const isAdmin = role === 'admin';
   const canPrice = role === 'admin' || role === 'sales';
   const canWrite = role !== 'viewer';
+
+  // ── Discount override (set HERE, at the end, once the final figure is known) ────────────────────
+  // Moved out of the Details step: discounting before any screens exist meant conceding margin
+  // against a zero total. The guardrail moved with it — a manager note above the threshold, and a
+  // hard cap for non-admins (admins may exceed it; the server audits the override).
+  const [discPctInput, setDiscPctInput] = useState(
+    quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
+  );
+  const [discNote, setDiscNote] = useState(quote.discountNote ?? '');
+  // Scope is no longer offered: a quote discount is always a one-off up-front concession. The API
+  // still supports `recurring` (see u5.test.ts) — the UI simply never elects it, and pins every save
+  // to `one_off` so the card's wording is always true of what was stored.
+  const discScope = 'one_off' as const;
+  const [discCapPct, setDiscCapPct] = useState(12);
+  const [discNoteThreshold, setDiscNoteThreshold] = useState(5);
+  const [discBusy, setDiscBusy] = useState(false);
+  const [discErr, setDiscErr] = useState<string | null>(null);
+  const [discSavedAt, setDiscSavedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<{ capPct: number; noteThresholdPct: number }>('/quotes/discount-policy')
+      .then((p) => {
+        setDiscCapPct(Math.round(p.capPct * 1000) / 10);
+        setDiscNoteThreshold(Math.round(p.noteThresholdPct * 1000) / 10);
+      })
+      .catch(() => undefined); // non-fatal: the defaults above still guard the input
+  }, []);
+
+  // Re-sync the draft from the server whenever the quote advances (our own save, or a change made
+  // elsewhere). The step is never unmounted between saves, so without this the inputs would go stale.
+  useEffect(() => {
+    setDiscPctInput(
+      quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '',
+    );
+    setDiscNote(quote.discountNote ?? '');
+  }, [quote.lockVersion, quote.discountPct, quote.discountNote]);
+
+  const discNum = discPctInput.trim() === '' ? null : Number(discPctInput);
+  const discNeedsNote = discNum != null && discNum > discNoteThreshold && !discNote.trim();
+  const discOverCapNow = discNum != null && discNum > discCapPct;
+  const discBlocked = discNeedsNote || (discOverCapNow && !isAdmin);
+  const discDirty =
+    discPctInput !== (quote.discountPct != null && quote.discountPct !== '' ? String(Number(quote.discountPct) * 100) : '') ||
+    discNote !== (quote.discountNote ?? '') ||
+    quote.discountScope === 'recurring'; // a legacy recurring quote is dirty until pinned back
+
+  // Non-admins are clamped to the cap as they type; admins may exceed it (warned, then audited).
+  const onDiscChange = (raw: string) => {
+    if (!isAdmin && raw.trim() !== '' && Number(raw) > discCapPct) { setDiscPctInput(String(discCapPct)); return; }
+    setDiscPctInput(raw);
+  };
+
+  const saveDiscount = async () => {
+    setDiscBusy(true);
+    setDiscErr(null);
+    try {
+      await api(`/quotes/${quote.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          discountPct: discPctInput.trim() === '' ? null : Number(discPctInput) / 100,
+          discountNote: discNote.trim() ? discNote.trim() : null,
+          discountScope: discScope,
+          expectedVersion: quote.lockVersion,
+        }),
+      });
+      await onChange(); // refetch → totals reflect the discount, and the sync effect above re-seeds.
+      setDiscSavedAt(new Date().toLocaleTimeString());
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'conflict') {
+        await onChange();
+        setDiscErr('Quote changed elsewhere — reloaded. Re-apply the discount.');
+      } else setDiscErr(e instanceof Error ? e.message : 'Could not save the discount');
+    } finally {
+      setDiscBusy(false);
+    }
+  };
 
   // Editable proposal text (P1-18.2): three textareas, one line per item, pre-filled from the API.
   const [assumptionsText, setAssumptionsText] = useState('');
@@ -4129,6 +5657,118 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
           <div className="stat"><div className="label">Recurring / yr</div><div className="value">{cur} {Number(quote.totalRecurring).toLocaleString()}</div></div>
           <div className="stat"><div className="label">Grand total</div><div className="value">{cur} {Number(quote.grandTotal).toLocaleString()}</div></div>
         </div>
+      </div>
+
+      {/* Discount override — deliberately placed directly beneath the totals: it is applied at the end
+          of the process, once the final figure has been reviewed or the customer has come back. */}
+      <div className="card">
+        <div className="topbar">
+          <h3 style={{ margin: 0 }}>Discount override</h3>
+          {discSavedAt && !discDirty && <span className="muted">✓ Saved {discSavedAt}</span>}
+        </div>
+        {!canWrite ? (
+          <p className="muted" style={{ marginTop: 8 }}>
+            Read-only role — the discount is{' '}
+            {quote.discountPct != null && quote.discountPct !== ''
+              ? `${Number(quote.discountPct) * 100}%`
+              : 'the client/system default'}.
+          </p>
+        ) : (
+          <>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Applied as a one-off concession to the up-front total above. Leave blank to inherit the
+              client/tier/system default.
+            </p>
+            <div className="grid3">
+              <div>
+                <label>Discount (%)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={isAdmin ? 99 : discCapPct}
+                  step="0.5"
+                  value={discPctInput}
+                  onChange={(e) => onDiscChange(e.target.value)}
+                  placeholder="(default)"
+                />
+                <p
+                  className="muted"
+                  style={{ margin: '4px 0 0', fontSize: 12, color: discOverCapNow && !isAdmin ? 'var(--danger, #dc2626)' : undefined }}
+                >
+                  {discOverCapNow && !isAdmin
+                    ? `Exceeds the ${discCapPct}% cap — admin approval required.`
+                    : `Cap ${discCapPct}%. Above ${discNoteThreshold}% requires a manager note.`}
+                </p>
+              </div>
+              <div>
+                <label>Discount applies to</label>
+                {/* One-off is the only scope offered. The control stays so the quote still states
+                    what the discount applies to; the "recurring" option was withdrawn. The API can
+                    still express it (see u5.test.ts) — the wizard just never elects it. */}
+                <select value={discScope} onChange={() => undefined}>
+                  <option value="one_off">One-off (upfront)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Admin over-cap: a visible warning, not a hard stop, so it can't happen by accident. */}
+            {isAdmin && discOverCapNow && (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  border: '1px solid #f59e0b',
+                  background: 'rgba(245,158,11,0.12)',
+                  color: '#f59e0b',
+                  fontSize: 13,
+                }}
+              >
+                ⚠ This discount ({discNum}%) exceeds the {discCapPct}% cap. You can proceed as an admin, but the
+                override will be recorded in the audit log
+                {discNum != null && discNum > discNoteThreshold ? ' (a manager note is required)' : ''}.
+              </div>
+            )}
+
+            {discNum != null && discNum > discNoteThreshold && (
+              <div style={{ marginTop: 8 }}>
+                <label>
+                  Manager note (required for discounts above {discNoteThreshold}%)
+                  {discNeedsNote && <span style={{ color: 'var(--danger, #dc2626)' }}> *</span>}
+                </label>
+                <textarea
+                  value={discNote}
+                  onChange={(e) => setDiscNote(e.target.value)}
+                  rows={2}
+                  style={{
+                    width: '100%',
+                    fontFamily: 'inherit',
+                    fontSize: 13,
+                    padding: 8,
+                    boxSizing: 'border-box',
+                    borderColor: discNeedsNote ? 'var(--danger, #dc2626)' : undefined,
+                  }}
+                  placeholder="Justification for the discount (e.g. strategic account, competitive tender)…"
+                />
+              </div>
+            )}
+
+            {discErr && <div className="error" style={{ marginTop: 10 }}>{discErr}</div>}
+
+            <div className="step-actions">
+              <button className="primary" onClick={saveDiscount} disabled={discBusy || discBlocked || !discDirty}>
+                {discBusy ? 'Applying…' : 'Apply discount'}
+              </button>
+              {discBlocked && (
+                <span className="muted" style={{ color: 'var(--danger, #dc2626)', alignSelf: 'center' }}>
+                  {discNeedsNote
+                    ? `Add a manager note (discount above ${discNoteThreshold}%).`
+                    : `Discount exceeds the ${discCapPct}% cap.`}
+                </span>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       <div className="card">

@@ -33,10 +33,10 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-// ─── Quote-level intake fields (accountExec + spaceAroundScreenMm) ────────────
+// ─── Quote-level intake fields (accountExec) ─────────────────────────────────
 
-describe('intake-v2 — quote-level fields (accountExec, spaceAroundScreenMm)', () => {
-  it('round-trips accountExec and spaceAroundScreenMm through create → GET', async () => {
+describe('intake-v2 — quote-level fields (accountExec)', () => {
+  it('round-trips accountExec through create → GET', async () => {
     const created = await app.inject({
       method: 'POST',
       url: '/quotes',
@@ -45,7 +45,6 @@ describe('intake-v2 — quote-level fields (accountExec, spaceAroundScreenMm)', 
         jobReference: `${JOB_PREFIX}Q-${Math.floor(Math.random() * 1e9)}`,
         currencyCode: 'AUD',
         accountExec: 'Jane Smith',
-        spaceAroundScreenMm: 75,
       },
     });
     expect(created.statusCode).toBe(201);
@@ -55,10 +54,9 @@ describe('intake-v2 — quote-level fields (accountExec, spaceAroundScreenMm)', 
     expect(got.statusCode).toBe(200);
     const q = got.json();
     expect(q.accountExec).toBe('Jane Smith');
-    expect(q.spaceAroundScreenMm).toBe(75);
   });
 
-  it('clears accountExec and spaceAroundScreenMm via PATCH (null)', async () => {
+  it('clears accountExec via PATCH (null)', async () => {
     const created = await app.inject({
       method: 'POST',
       url: '/quotes',
@@ -67,7 +65,6 @@ describe('intake-v2 — quote-level fields (accountExec, spaceAroundScreenMm)', 
         jobReference: `${JOB_PREFIX}QU-${Math.floor(Math.random() * 1e9)}`,
         currencyCode: 'AUD',
         accountExec: 'Tom Jones',
-        spaceAroundScreenMm: 50,
       },
     });
     const id = created.json().id as string;
@@ -80,7 +77,6 @@ describe('intake-v2 — quote-level fields (accountExec, spaceAroundScreenMm)', 
       payload: {
         expectedVersion: lockVersion,
         accountExec: null,
-        spaceAroundScreenMm: null,
       },
     });
     expect(patched.statusCode).toBe(200);
@@ -88,7 +84,6 @@ describe('intake-v2 — quote-level fields (accountExec, spaceAroundScreenMm)', 
     const got = await app.inject({ method: 'GET', url: `/quotes/${id}`, headers: auth() });
     const q = got.json();
     expect(q.accountExec).toBeNull();
-    expect(q.spaceAroundScreenMm).toBeNull();
   });
 });
 

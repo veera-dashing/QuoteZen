@@ -102,4 +102,41 @@ describe('update path enforces the same rules', () => {
     });
     expect(withNote.statusCode).toBe(200);
   });
+
+  // The guardrail gates CHANGES to the discount, not every edit of a discounted quote. The discount
+  // is set in the Review step, so a Details-step save (unrelated fields, no discount in the payload)
+  // must not be judged against the stored value — otherwise, once an admin approves an above-cap
+  // discount, a non-admin could never edit anything else on that quote again.
+  it('lets a non-admin edit unrelated fields on a quote an admin discounted above the cap', async () => {
+    const created = await create(admin(), { discountPct: 0.15, discountNote: 'exec-approved' });
+    expect(created.statusCode).toBe(201);
+    const id = created.json().id as string;
+    const v = created.json().lockVersion as number;
+
+    const unrelated = await app.inject({
+      method: 'PATCH',
+      url: `/quotes/${id}`,
+      headers: sales(),
+      payload: { siteAddress: '12 Site St, Sydney', expectedVersion: v },
+    });
+    expect(unrelated.statusCode).toBe(200);
+    // The above-cap discount is untouched by an edit that never mentioned it.
+    expect(Number(unrelated.json().discountPct)).toBeCloseTo(0.15);
+  });
+
+  // ...but touching the note alone still re-evaluates, so a note can't be cleared off a >5% discount.
+  it('still blocks clearing the manager note from an above-threshold discount', async () => {
+    const created = await create(sales(), { discountPct: 0.09, discountNote: 'volume deal' });
+    expect(created.statusCode).toBe(201);
+    const id = created.json().id as string;
+    const v = created.json().lockVersion as number;
+
+    const cleared = await app.inject({
+      method: 'PATCH',
+      url: `/quotes/${id}`,
+      headers: sales(),
+      payload: { discountNote: null, expectedVersion: v },
+    });
+    expect(cleared.statusCode).toBe(422);
+  });
 });

@@ -342,8 +342,8 @@ export default function QuotesList() {
                       {q.currency?.code ?? ''} {Number(q.grandTotal).toLocaleString()}
                       <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
                         {q.requestedShippingDate
-                          ? `Go-live ${new Date(q.requestedShippingDate).toLocaleDateString()}`
-                          : 'Go-live TBC'}
+                          ? `Install start ${new Date(q.requestedShippingDate).toLocaleDateString()}`
+                          : 'Install start TBC'}
                       </div>
                     </td>
                     <td className="actions">

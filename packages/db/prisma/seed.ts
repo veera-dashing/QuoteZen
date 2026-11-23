@@ -354,10 +354,19 @@ const ACCESS_EQUIPMENT: Array<[string, number]> = [
 // $95 when null). hourly_rate_cost is left null here → uses the $95 setting. Admins tune both in the CRUD.
 // NOTE: EXISTING RDS install-method rows keep default_hours=0 (migration default) until an admin edits
 // them, so no existing quote reprices — only FRESH seeds get these placeholders.
+// Install methods. `defaultHours` seeds the auto install-labour line (estimateInstallHours' base).
+// The four newer methods carry the SAME 4 h baseline as the original three — that is the existing
+// baseline and the code's own fallback, not an estimate of how long each really takes. The workbook
+// gives no per-method hours, so nothing here is invented: admins set the real figures in
+// Reference data → Install Methods.
 const INSTALL_METHODS: Array<[string, number]> = [
   ['Wall Mount', 4],
   ['Ceiling Mount', 4],
   ['Freestanding', 4],
+  ['On-Glass', 4],
+  ['Recessed', 4],
+  ['Hanging', 4],
+  ['Into Client Housing', 4],
 ];
 
 const MEDIAPLAYERS: Array<[string, string, number]> = [
@@ -534,10 +543,13 @@ async function main(): Promise<void> {
   await seedIfEmpty('engineeringOption', () =>
     prisma.engineeringOption.createMany({ data: ENGINEERING.map(([name, price]) => ({ name, price })) }),
   );
-  await seedIfEmpty('installMethod', () =>
-    prisma.installMethod.createMany({
-      data: INSTALL_METHODS.map(([name, defaultHours]) => ({ name, defaultHours })),
-    }),
+  // Install methods are TOPPED UP by name rather than count-guarded: the catalogue gained options
+  // after the first seed ran, and `seedIfEmpty` skips any table that already has rows — so a
+  // count-guard would never deliver them to an existing database. Rows already present are left
+  // exactly as they are, including any hours an admin has tuned.
+  await topUpByName(
+    'installMethod',
+    INSTALL_METHODS.map(([name, defaultHours]) => ({ name, defaultHours })),
   );
   await seedIfEmpty('accessEquipment', () =>
     prisma.accessEquipment.createMany({
@@ -696,6 +708,29 @@ async function main(): Promise<void> {
 }
 
 /** Run a createMany only when the table is empty, so the seed is safe to re-run. */
+/**
+ * Insert only the rows whose `name` is missing, leaving every existing row untouched.
+ *
+ * Use this instead of {@link seedIfEmpty} for a lookup table that gains options over time: a count
+ * guard skips the whole table once it has any rows, so later additions would never reach a database
+ * that has already been seeded. Idempotent — re-running inserts nothing once the names are present.
+ */
+async function topUpByName(
+  model: string,
+  rows: ReadonlyArray<{ name: string } & Record<string, unknown>>,
+): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const delegate = (prisma as any)[model];
+  let inserted = 0;
+  for (const row of rows) {
+    const existing = await delegate.findFirst({ where: { name: row.name } });
+    if (existing) continue;
+    await delegate.create({ data: row });
+    inserted += 1;
+  }
+  console.warn(`  ${model}: topped up ${inserted} missing row(s) of ${rows.length}`);
+}
+
 async function seedIfEmpty(
   model: string,
   insert: () => Promise<{ count: number }>,

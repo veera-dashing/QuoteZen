@@ -7,6 +7,8 @@ import Link from 'next/link';
 import { api, clearToken, getRole, getToken, type Role } from '@/lib/api';
 import type { TableDef } from '@/lib/types';
 import ThemeToggle from '@/components/ThemeToggle';
+import ChangePasswordButton from '@/components/ChangePasswordDialog';
+import Logo from '@/components/Logo';
 
 // Top-level nav items and which roles may see them.
 const STAFF: Role[] = ['admin', 'sales', 'director', 'manager']; // internal staff (not viewer)
@@ -71,7 +73,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          🧾 QuoteZen <small>{role}</small>
+          <Logo />
+          <small>{role}</small>
         </div>
         {navItems.map((n) => (
           <Link key={n.href} href={n.href} className="nav-item" style={{ fontWeight: 600 }}>
@@ -96,6 +99,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
           ))}
         <div style={{ marginTop: 20, padding: '0 10px', display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
           <ThemeToggle />
+          <ChangePasswordButton />
           <button className="ghost" onClick={signOut}>
             Sign out
           </button>

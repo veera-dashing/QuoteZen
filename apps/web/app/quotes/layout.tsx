@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { clearToken, getRole, getToken, type Role } from '@/lib/api';
 import ThemeToggle from '@/components/ThemeToggle';
+import Logo from '@/components/Logo';
+import ChangePasswordButton from '@/components/ChangePasswordDialog';
 
 export default function QuotesLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -29,12 +31,14 @@ export default function QuotesLayout({ children }: { children: ReactNode }) {
     <div>
       <header className="qheader">
         <div className="brand">
-          🧾 QuoteZen <small>quotes</small>
+          <Logo />
+          <small>quotes</small>
         </div>
         <nav className="qnav">
           <Link href="/quotes">Quotes</Link>
           {canSeeReference && <Link href="/admin">Reference data</Link>}
           <ThemeToggle />
+          <ChangePasswordButton />
           <button
             className="ghost"
             onClick={() => {
@@ -46,7 +50,7 @@ export default function QuotesLayout({ children }: { children: ReactNode }) {
           </button>
         </nav>
       </header>
-      <main className="main" style={{ maxWidth: 1100, margin: '0 auto' }}>
+      <main className="main" style={{ maxWidth: 1440, margin: '0 auto' }}>
         {children}
       </main>
     </div>

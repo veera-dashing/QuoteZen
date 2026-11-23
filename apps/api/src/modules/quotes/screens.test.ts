@@ -244,11 +244,15 @@ describe('per-screen qty rollup + management (P1-14)', () => {
     const unit = Number(screen.priceTotal);
     expect(unit).toBeGreaterThan(0);
 
-    // qty 1 → equipment == 1× unit
+    // qty 1 → equipment + services == 1× unit. Since 5f51303 a screen's install/labour/freight share
+    // rolls into the quote's Services total and only the remainder into Equipment; together they are
+    // still exactly the screen's sell.
+    const rolled = (b: { totalEquipment: string; totalServices: string }) =>
+      Number(b.totalEquipment) + Number(b.totalServices);
     const r1 = await app.inject({ method: 'POST', url: `/quotes/${quoteId}/recompute`, headers: auth() });
-    expect(Number(r1.json().totalEquipment)).toBeCloseTo(unit, 2);
+    expect(rolled(r1.json())).toBeCloseTo(unit, 2);
 
-    // bump qty to 2 → equipment == 2× unit
+    // bump qty to 2 → equipment + services == 2× unit
     const patched = await app.inject({
       method: 'PATCH',
       url: `/quotes/${quoteId}/led-screens/${screen.id}/qty`,
@@ -256,7 +260,7 @@ describe('per-screen qty rollup + management (P1-14)', () => {
       payload: { qty: 2 },
     });
     expect(patched.statusCode).toBe(200);
-    expect(Number(patched.json().totalEquipment)).toBeCloseTo(unit * 2, 2);
+    expect(rolled(patched.json())).toBeCloseTo(unit * 2, 2);
 
     // qty 0 is rejected (positive int only) — Zod validation failure → 422
     const bad = await app.inject({
@@ -592,7 +596,8 @@ describe('quote wizard backend', () => {
     });
     expect(lic.statusCode).toBe(201);
 
-    // recompute → equipment total should equal the LED screen price
+    // recompute → equipment + services should equal the LED screen price (the screen's install/labour/
+    // freight share is in Services, the rest in Equipment — see the 5f51303 rollup split)
     const recomputed = await app.inject({
       method: 'POST',
       url: `/quotes/${quoteId}/recompute`,
@@ -600,7 +605,8 @@ describe('quote wizard backend', () => {
     });
     expect(recomputed.statusCode).toBe(200);
     const body = recomputed.json();
-    expect(Number(body.totalEquipment)).toBeCloseTo(Number(screen.priceTotal), 2);
+    expect(Number(body.totalServices)).toBeGreaterThan(0);
+    expect(Number(body.totalEquipment) + Number(body.totalServices)).toBeCloseTo(Number(screen.priceTotal), 2);
     expect(Number(body.grandTotal)).toBeGreaterThan(0);
 
     // delete the screen → recompute drops to zero equipment

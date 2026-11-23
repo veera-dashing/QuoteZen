@@ -40,10 +40,17 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-/** Services (freight) is on the LED screen's `priceServices` column + the "Install, labour & freight" line. */
+/**
+ * Services (freight) is on the LED screen's `priceServices` column. The install section is itemised
+ * (overhead rows, freight, local delivery, labour…), so total every `services` line of the LED section.
+ */
 const servicesLine = (priceBody: {
-  sections: Array<{ type: string; lines: Array<{ label: string; cost: string | null; sell: string | null }> }>;
-}) => priceBody.sections.find((s) => s.type === 'led')!.lines.find((l) => /Install, labour & freight/.test(l.label))!;
+  sections: Array<{ type: string; lines: Array<{ label: string; category?: string; cost: string | null; sell: string | null }> }>;
+}) => {
+  const svc = priceBody.sections.find((s) => s.type === 'led')!.lines.filter((l) => l.category === 'services');
+  const total = (k: 'cost' | 'sell') => svc.reduce((acc, l) => acc + Number(l[k] ?? 0), 0);
+  return { cost: String(total('cost')), sell: String(total('sell')) };
+};
 
 describe('AA6b — region/product freight overrides', () => {
   it('baseline (no override) → matching override → non-matching override', async () => {
@@ -142,10 +149,16 @@ describe('AA6b — region/product freight overrides', () => {
     // The install line cost = markupable(labour + access + freight) + engineering. With no access/eng
     // here, cost = labour + freight. So baseCost - override rate delta = labour, and matchCost = labour + 90.
     // We assert the direction + the flat contribution rather than reconstructing labour independently:
-    // matchCost should equal baseCost - weightFreight + 90.
+    // matchCost should equal baseCost - weightFreight + 90, where the weight-based freight the override
+    // replaces is the international freight PLUS its local delivery (f3bbc3a): MAX(multiplier × intl, min).
     const freightKg = Number(screen.freightKg);
-    const weightFreight = freightKg * Number(freightOpt!.rate);
-    expect(weightFreight).toBeGreaterThan(0);
+    const intlFreight = freightKg * Number(freightOpt!.rate);
+    const localDelivery = Math.max(
+      intlFreight * Number(quoteLocation.freightMultiplier ?? 0.1),
+      Number(quoteLocation.freightMin ?? 0),
+    );
+    const weightFreight = intlFreight + localDelivery;
+    expect(intlFreight).toBeGreaterThan(0);
     expect(Number(matchServices.cost)).toBeCloseTo(baseCost - weightFreight + ratePerScreen, 2);
 
     // ── (3) a NON-matching override (different location) → price unchanged ──

@@ -47,15 +47,10 @@ export const createQuoteSchema = z.object({
   /** AA1 — site/context intake fields (one-per-quote site details from the intake questionnaire). */
   endCustomer: z.string().max(200).optional(),
   airsideLandside: z.string().max(20).optional(),
-  sunExposure: z.string().max(20).optional(),
-  wallSubstrate: z.string().max(200).optional(),
   powerDataAvailable: z.string().max(20).optional(),
-  controllerLocation: z.string().max(200).optional(),
   windowFacing: z.boolean().optional(),
   /** AA5 — software/hardware dependency intake fields (Group E). Descriptive; no pricing impact. */
   mediaPlayerSupply: z.string().max(50).optional(),
-  sharedDevicePlayers: z.coerce.number().int().nonnegative().optional(),
-  sharedDeviceScreens: z.coerce.number().int().nonnegative().optional(),
   storeSizeSqm: z.coerce.number().nonnegative().optional(),
   customContentCuration: z.boolean().optional(),
   pcRequired: z.boolean().optional(),
@@ -70,7 +65,6 @@ export const createQuoteSchema = z.object({
   /** Account exec / owner for the quote (free text). */
   accountExec: z.string().max(200).optional(),
   /** Space around the screen (mm) — determines if an articulated bracket is needed. */
-  spaceAroundScreenMm: z.coerce.number().int().nonnegative().optional(),
   /** Viewer users this quote is shared with (they can read only quotes assigned to them). */
   viewerUserIds: z.array(idSchema).optional(),
 });
@@ -93,15 +87,10 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   /** AA1 — site/context intake fields (nullish on update so they can be cleared). */
   endCustomer: z.string().max(200).nullish(),
   airsideLandside: z.string().max(20).nullish(),
-  sunExposure: z.string().max(20).nullish(),
-  wallSubstrate: z.string().max(200).nullish(),
   powerDataAvailable: z.string().max(20).nullish(),
-  controllerLocation: z.string().max(200).nullish(),
   windowFacing: z.boolean().nullish(),
   /** AA5 — software/hardware dependency intake fields (nullish on update so they can be cleared). */
   mediaPlayerSupply: z.string().max(50).nullish(),
-  sharedDevicePlayers: z.coerce.number().int().nonnegative().nullish(),
-  sharedDeviceScreens: z.coerce.number().int().nonnegative().nullish(),
   storeSizeSqm: z.coerce.number().nonnegative().nullish(),
   customContentCuration: z.boolean().nullish(),
   pcRequired: z.boolean().nullish(),
@@ -114,7 +103,6 @@ export const updateQuoteSchema = createQuoteSchema.partial().extend({
   needsSolutionsEngineer: z.boolean().nullish(),
   // Intake form v2 — quote-level fields (nullish on update so they can be cleared).
   accountExec: z.string().max(200).nullish(),
-  spaceAroundScreenMm: z.coerce.number().int().nonnegative().nullish(),
   /** Optimistic-locking token from the last read; a mismatch is a 409 conflict (P1-05.2). */
   expectedVersion: z.coerce.number().int().nonnegative().optional(),
 });
@@ -173,15 +161,58 @@ export const ledComponentSchema = z
     { message: 'exactly one component reference must be set' },
   );
 
+export const ledIntakeSchema = z.object({
+  environment: z.enum(['Indoor', 'Outdoor']).optional(),
+  priority: z.enum(['Value', 'Quality']).optional(),
+  use: z.enum(['Digital poster or retail display', 'Directory board', 'Information display (computer monitor)']).optional(),
+  curved: z.enum(['Yes', 'No']).optional(),
+  transparent: z.enum(['Yes', 'No']).optional(),
+  indoorLocation: z.enum(['On a wall', 'Behind Window', 'On a fixture', 'Hanging', 'On a ceiling']).optional(),
+  smallDimension: z.enum(['Yes', 'No']).optional(),
+  underOneAndHalfSqm: z.enum(['Yes', 'No']).optional(),
+  exact169: z.enum(['Yes', 'No']).optional(),
+  doubleSided: z.enum(['Yes', 'No']).optional(),
+  directSunlight: z.enum(['Yes', 'No']).optional(),
+  highAmbientLight: z.enum(['Yes', 'No']).optional(),
+  canSetBack: z.enum(['Yes', 'No']).optional(),
+  convexCorner: z.enum(['Yes', 'No']).optional(),
+  viewingIndoor: z.enum(['Less than 1 metre', '1 to 2 metres', '2 to 3 metres', 'More than 3 metres']).optional(),
+  damageRisk: z.enum(['Yes', 'No']).optional(),
+  outdoorLocation: z.enum(['On wall (Front Service)', 'On wall (Rear Service)', 'Freestanding (Rear Service)']).optional(),
+  serviceAccess: z.enum(['Front', 'Rear']).optional(),
+  viewingOutdoor: z.enum(['Up to 2 metres', '2 to 3 metres', '3 to 8 metres', '8 to 20 metres', 'More than 20 metres']).optional(),
+  sizeBand: z.enum(['Less than 4 sqm', '4 to 10 sqm', 'More than 10 sqm']).optional(),
+  hardToService: z.enum(['Yes', 'No']).optional(),
+  highAvailability: z.enum(['Yes', 'No']).optional(),
+  elevatedSun: z.enum(['Yes', 'No']).optional(),
+  snowIce: z.enum(['Yes', 'No']).optional(),
+  saltAir: z.enum(['Yes', 'No']).optional(),
+  photogenic: z.enum(['Yes', 'No']).optional(),
+});
+export type LedIntakeInput = z.infer<typeof ledIntakeSchema>;
+
 export const ledScreenSchema = z.object({
   screenName: z.string().max(120).optional(),
   ledProductId: idSchema.optional(),
   qty: qtySchema,
-  desiredWidthMm: z.coerce.number().int().positive().optional(),
-  desiredHeightMm: z.coerce.number().int().positive().optional(),
+  // Openings are NOT whole millimetres: real cabinets can be 337.5mm, so a requested size may be
+  // fractional too. Integers still pass — this only widens what is accepted.
+  desiredWidthMm: z.coerce.number().positive().optional(),
+  desiredHeightMm: z.coerce.number().positive().optional(),
   rotateCabinets: z.boolean().default(false),
   /** AA1 — recess/cavity depth in mm (site-prep detail; descriptive, not priced). */
   recessDepthMm: z.coerce.number().int().nonnegative().optional(),
+  /** AA1 — sun exposure at this screen's position: None / Indirect / Direct (descriptive, not priced). */
+  sunExposure: z.string().max(20).optional(),
+  /** AA1 — what this screen mounts to (e.g. plasterboard, brick, concrete); drives the fixing method. */
+  wallSubstrate: z.string().max(200).optional(),
+  /** AA1 — where this screen's controller / media-player lives (free text). */
+  controllerLocation: z.string().max(200).optional(),
+  /** Space around this screen (mm) — determines whether an articulated bracket is needed. */
+  spaceAroundScreenMm: z.coerce.number().int().nonnegative().optional(),
+  /** AA5 — shared-device ratio for this screen: N players per M screens. */
+  sharedDevicePlayers: z.coerce.number().int().nonnegative().optional(),
+  sharedDeviceScreens: z.coerce.number().int().nonnegative().optional(),
   orientation: z.enum(ORIENTATIONS).optional(),
   aspectRatioId: idSchema.optional(),
   backCover: z.boolean().default(false),
@@ -200,11 +231,16 @@ export const ledScreenSchema = z.object({
   hangingBarId: idSchema.optional(),
   engineeringId: idSchema.optional(),
   installMethodId: idSchema.optional(),
+  /** Manual install labour hours; omit/null to derive them from the geometry + options. */
+  labourHoursOverride: z.coerce.number().nonnegative().max(2000).nullish(),
+  /** One controller serves every unit of this screen row — charge it once, not per unit. */
+  sharedController: z.boolean().optional(),
   freightOptionId: idSchema.optional(),
   warrantyId: idSchema.optional(),
   serviceHoursId: idSchema.optional(),
   accessEquipmentId: idSchema.optional(),
   marginOverride: z.coerce.number().min(0).max(0.99).optional(),
+  intakeAnswers: z.record(z.unknown()).nullish(),
   components: z.array(ledComponentSchema).default([]),
 });
 export type LedScreenInput = z.infer<typeof ledScreenSchema>;
@@ -224,6 +260,8 @@ export const updateLedScreenSchema = z.object({
   hangingBarId: idSchema.nullish(),
   engineeringId: idSchema.nullish(),
   installMethodId: idSchema.nullish(),
+  labourHoursOverride: z.coerce.number().nonnegative().max(2000).nullish(),
+  sharedController: z.boolean().nullish(),
   freightOptionId: idSchema.nullish(),
   warrantyId: idSchema.nullish(),
   serviceHoursId: idSchema.nullish(),
@@ -254,6 +292,17 @@ export const lcdScreenSchema = z.object({
   warrantyId: idSchema.optional(),
   /** AA1 — recess/cavity depth in mm (site-prep detail; descriptive, not priced). */
   recessDepthMm: z.coerce.number().int().nonnegative().optional(),
+  /** AA1 — sun exposure at this screen's position: None / Indirect / Direct (descriptive, not priced). */
+  sunExposure: z.string().max(20).optional(),
+  /** AA1 — what this screen mounts to (e.g. plasterboard, brick, concrete); drives the fixing method. */
+  wallSubstrate: z.string().max(200).optional(),
+  /** AA1 — where this screen's controller / media-player lives (free text). */
+  controllerLocation: z.string().max(200).optional(),
+  /** Space around this screen (mm) — determines whether an articulated bracket is needed. */
+  spaceAroundScreenMm: z.coerce.number().int().nonnegative().optional(),
+  /** AA5 — shared-device ratio for this screen: N players per M screens. */
+  sharedDevicePlayers: z.coerce.number().int().nonnegative().optional(),
+  sharedDeviceScreens: z.coerce.number().int().nonnegative().optional(),
   // ─── AA3a — site/requirement fields feeding the LCD selection rules (all optional) ───
   requiresAndroid: z.boolean().optional(),
   maxDepthMm: z.coerce.number().int().nonnegative().optional(),

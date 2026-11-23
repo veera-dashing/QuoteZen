@@ -68,11 +68,12 @@ export const buildApp = async (config: AppConfig): Promise<FastifyInstance> => {
     if (typeof (error as { code?: string }).code === 'string' && (error as { code: string }).code === 'P2002') {
       return reply.code(409).send({ error: { code: 'conflict', message: 'Resource already exists' } });
     }
+    console.error('Unhandled server error:', error);
     app.log.error(error);
     const statusCode = (error as { statusCode?: number }).statusCode ?? 500;
     return reply
       .code(statusCode >= 400 ? statusCode : 500)
-      .send({ error: { code: 'internal_error', message: 'Internal server error' } });
+      .send({ error: { code: 'internal_error', message: (error as Error).message || 'Internal server error' } });
   });
 
   await app.register(healthRoutes);

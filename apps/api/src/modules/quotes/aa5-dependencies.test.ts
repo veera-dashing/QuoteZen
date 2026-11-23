@@ -34,8 +34,6 @@ afterAll(async () => {
 
 const DEPENDENCIES = {
   mediaPlayerSupply: 'Client-supplied',
-  sharedDevicePlayers: 1,
-  sharedDeviceScreens: 4,
   storeSizeSqm: 120.5,
   customContentCuration: true,
   pcRequired: true,
@@ -61,8 +59,6 @@ describe('AA5 — software/hardware dependency intake fields', () => {
     expect(got.statusCode).toBe(200);
     const q = got.json();
     expect(q.mediaPlayerSupply).toBe(DEPENDENCIES.mediaPlayerSupply);
-    expect(q.sharedDevicePlayers).toBe(1);
-    expect(q.sharedDeviceScreens).toBe(4);
     expect(Number(q.storeSizeSqm)).toBe(120.5);
     expect(q.customContentCuration).toBe(true);
     expect(q.pcRequired).toBe(true);
@@ -99,8 +95,6 @@ describe('AA5 — software/hardware dependency intake fields', () => {
     expect(q.storeSizeSqm).toBeNull();
     expect(q.pcRequired).toBe(false);
     // Untouched fields stay.
-    expect(q.sharedDevicePlayers).toBe(1);
-    expect(q.sharedDeviceScreens).toBe(4);
     expect(q.customContentCuration).toBe(true);
   });
 });

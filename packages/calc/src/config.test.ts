@@ -498,4 +498,45 @@ describe('selectTiers (Good/Better/Best — T2)', () => {
   it('returns no picks for an empty ranked list', () => {
     expect(selectTiers([], lookupOf(TIER_PRODUCTS))).toEqual({ picks: [], distinctProducts: 0 });
   });
+
+  it('filters and prioritizes options according to treeConstraints', () => {
+    const products: ConfigProduct[] = [
+      { id: 1, model: 'LEDFul BM 1.8', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 1.8, pixelPitchVmm: 1.8 },
+      { id: 2, model: 'LEDFul FLEX 2.5', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 2.5, pixelPitchVmm: 2.5, supportsCurved: true },
+      { id: 3, model: 'LEDFul TGC Transparent', minCabinetWMm: 500, minCabinetHMm: 500, pixelPitchHmm: 3.9, pixelPitchVmm: 3.9, isTransparent: true },
+    ];
+
+    // Transparent constraint filters out opaque screens
+    const transRes = configureScreen(products, {
+      desiredWidthMm: 1000,
+      desiredHeightMm: 1000,
+      ratios: RATIOS,
+      treeConstraints: {
+        recommendedModelFamilies: ['TGC'],
+        transparentRequired: true,
+        gobRequired: false,
+        caveats: ['TGC hanging caveat'],
+        firedRuleIds: ['p49'],
+      },
+    });
+    expect(transRes.options.length).toBe(1);
+    expect(transRes.options[0]!.model).toContain('TGC');
+    expect(transRes.caveats).toContain('TGC hanging caveat');
+
+    // Curved constraint filters out non-curved screens
+    const curvedRes = configureScreen(products, {
+      desiredWidthMm: 1000,
+      desiredHeightMm: 1000,
+      ratios: RATIOS,
+      treeConstraints: {
+        recommendedModelFamilies: ['FLEX'],
+        curvedRequired: true,
+        gobRequired: true,
+        caveats: [],
+        firedRuleIds: ['p47'],
+      },
+    });
+    expect(curvedRes.options.length).toBe(1);
+    expect(curvedRes.options[0]!.model).toContain('FLEX');
+  });
 });

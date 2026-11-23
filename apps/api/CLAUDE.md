@@ -176,7 +176,7 @@ All blocks also have web counterparts — see `apps/web/CLAUDE.md` for the UI si
 - `stack` = both quote + line; `item_only` = line discounts suppress quote discount
 
 ### Block 12 — Environment + viewing distance filters
-- `led_products.environment` (indoor/outdoor/both); `outdoor_brightness_nits` setting
+- `led_products.environment` (nullable `'indoor'` | `'outdoor'` — there is no `'both'`; null falls back to the brightness heuristic); `outdoor_brightness_nits` setting
 - `configureScreen` filters by environment + `viewingDistanceM` (max pitch ≈ distance in metres)
 
 ### Block 13 — LCD validation + warranty/install pricing

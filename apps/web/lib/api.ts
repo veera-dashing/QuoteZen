@@ -1,7 +1,24 @@
 'use client';
 
-/** Minimal typed API client. Token lives in localStorage; 401s bounce to /login. */
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+/** Get API base URL: defaults to '/api' in production/staging and 'http://localhost:4000' in local dev */
+export function getApiUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  if (typeof window !== 'undefined') {
+    // If accessing standalone local development on port 3000 (direct Fastify on port 4000)
+    if (
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+      window.location.port === '3000'
+    ) {
+      return 'http://localhost:4000';
+    }
+    // In all production, staging, Nginx reverse proxy, mobile, and custom domain environments:
+    return '/api';
+  }
+  return 'http://localhost:4000';
+}
+
 const TOKEN_KEY = 'quotezen_token';
 const USER_KEY = 'quotezen_user';
 
@@ -65,7 +82,7 @@ export async function api<T = unknown>(
   options: RequestInit = {},
 ): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${getApiUrl()}${path}`, {
     ...options,
     headers: {
       // Only declare a JSON body when one is actually sent (avoids empty-body 400s on POSTs).
@@ -99,7 +116,7 @@ export async function uploadFile<T = unknown>(path: string, file: File): Promise
   const token = getToken();
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${getApiUrl()}${path}`, {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: form,
@@ -120,7 +137,7 @@ export async function uploadFile<T = unknown>(path: string, file: File): Promise
 /** Fetch an authenticated binary endpoint and trigger a browser download. */
 export const downloadFile = async (path: string, filename: string): Promise<void> => {
   const token = getToken();
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${getApiUrl()}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new ApiError(res.status, 'error', 'Download failed');

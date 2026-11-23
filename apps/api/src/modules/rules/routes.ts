@@ -73,12 +73,16 @@ export const ruleRoutes = async (app: FastifyInstance): Promise<void> => {
         }
         return { value: null, source: 'system' as const, overridesGlobal: false, tierDefault: null };
       })(),
+      /** Standing per-client requirement: always coat their LED screens (advisory default). */
+      requiresProtectiveCoating: client.requiresProtectiveCoating,
       preferredProductFamily: field(client.preferredProductFamily, Boolean(client.preferredProductFamily)),
       preferredPitchMm: field(
         client.preferredPitchMm != null ? Number(client.preferredPitchMm) : null,
         client.preferredPitchMm != null,
       ),
       excludedComponents: excluded,
+      /** AA2 — the ratio labels this client normally accepts (empty = no restriction). */
+      allowedRatios: (client.allowedRatios ?? '').split(',').map((r) => r.trim()).filter((r) => r.length > 0),
       // Z6: the rule-bearing tier block (null when the client has no tier / an unknown tier name).
       tier: tier
         ? {

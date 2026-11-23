@@ -324,10 +324,16 @@ model LedProduct {
   manufacturerId   BigInt?  @map("manufacturer_id")
   model            String
   serviceCategory  String?  @map("service_category")
-  moduleWMm        Int?     @map("module_w_mm")
-  moduleHMm        Int?     @map("module_h_mm")
-  minCabinetWMm    Int?     @map("min_cabinet_w_mm")
-  minCabinetHMm    Int?     @map("min_cabinet_h_mm")
+  /** Module/cabinet sizes are DECIMAL: real panels are not whole millimetres (e.g. a 337.5mm
+      cabinet). Rounding them drifts by the cabinet count — 6 high was reported 3mm too tall. */
+  moduleWMm        Decimal? @map("module_w_mm") @db.Decimal(10, 2)
+  moduleHMm        Decimal? @map("module_h_mm") @db.Decimal(10, 2)
+  minCabinetWMm    Decimal? @map("min_cabinet_w_mm") @db.Decimal(10, 2)
+  minCabinetHMm    Decimal? @map("min_cabinet_h_mm") @db.Decimal(10, 2)
+  /** Standard / largest cabinet dimensions (cols E & F in sheet). Used for installer handling & labour hours,
+      while minCabinetWMm/HMm handles active dimension snapping. */
+  cabinetWMm       Decimal? @map("cabinet_w_mm") @db.Decimal(10, 2)
+  cabinetHMm       Decimal? @map("cabinet_h_mm") @db.Decimal(10, 2)
   cabinetDepthMm   Int?     @map("cabinet_depth_mm")
   cabinetType      String?  @map("cabinet_type")
   pixelPitchH      Decimal? @map("pixel_pitch_h") @db.Decimal(6, 3)
@@ -355,6 +361,16 @@ model LedProduct {
   /** AA2 — component compatibility group. When set on BOTH a screen product and a selected controller
       or frame (bracket) with a DIFFERENT group, validation flags a mismatch (error). Null → no check. */
   compatibilityGroup String? @map("compatibility_group")
+  /** Phase 1: Explicit transparency and curved / flexible capability flags. */
+  isTransparent    Boolean  @default(false) @map("is_transparent")
+  supportsCurved   Boolean  @default(false) @map("supports_curved")
+  /**
+   * Chip-on-Board construction: the LED dice are bonded to the board and flood-coated in resin, so
+   * the panel face is already sealed. A COB panel therefore needs no separate protective coating —
+   * the wizard hides that option for these products. Set explicitly rather than parsed out of the
+   * model name, so admins stay in control of it.
+   */
+  isCob            Boolean  @default(false) @map("is_cob")
   deprecated       Boolean  @default(false) @map("deprecated")
 
   commentary LedCommentary[]
@@ -816,6 +832,12 @@ model Client {
   /** Per-client preferred freight override (Z6) — wins over the tier's `preferredFreight`. */
   preferredFreight       String?  @map("preferred_freight")
   /**
+   * This client always wants protective coating on their LED screens. Captured on the client so
+   * estimators see the standing requirement; it does not price anything by itself — the coating is
+   * still chosen per screen from `coating_options`.
+   */
+  requiresProtectiveCoating Boolean @default(false) @map("requires_protective_coating")
+  /**
    * AA2 — CSV of allowed aspect-ratio labels for this client (e.g. "16:9,9:16,6:1"). When non-empty,
    * the config engine only offers configurations whose achieved ratio label is in this set, and a
    * stored screen whose ratio is outside it is flagged (RATIO_NOT_ALLOWED, warning). Empty/null → no
@@ -901,23 +923,13 @@ model Quote {
   endCustomer           String?     @map("end_customer")
   /** Airside / Landside / N/A — relevant for airport & secure-zone sites. */
   airsideLandside       String?     @map("airside_landside")
-  /** Sun exposure at the install location: None / Indirect / Direct (affects brightness suitability). */
-  sunExposure           String?     @map("sun_exposure")
-  /** Wall substrate free-text (e.g. plasterboard, brick, concrete) — drives fixing method. */
-  wallSubstrate         String?     @map("wall_substrate")
   /** Whether power & data are available at the location: Yes / No / Unknown. */
   powerDataAvailable    String?     @map("power_data_available")
-  /** Where the controller / media-player will live (free text). */
-  controllerLocation    String?     @map("controller_location")
   /** Window-facing / glare risk flag. */
   windowFacing          Boolean?    @map("window_facing")
   // AA5 — software/hardware dependency intake fields (Group E). Descriptive; feed the PM handoff + solution summary; no pricing impact.
   /** Who supplies the media player: 'Seen' / 'Client-supplied' / 'Mandated'. */
   mediaPlayerSupply     String?     @map("media_player_supply")
-  /** Shared-device ratio — N players … (paired with sharedDeviceScreens). */
-  sharedDevicePlayers   Int?        @map("shared_device_players")
-  /** Shared-device ratio — … per M screens (paired with sharedDevicePlayers). */
-  sharedDeviceScreens   Int?        @map("shared_device_screens")
   /** Store size (m²) — drives music-service sizing. */
   storeSizeSqm          Decimal?    @map("store_size_sqm") @db.Decimal(10, 2)
   /** Custom content curation required. */
@@ -941,8 +953,6 @@ model Quote {
   // Intake form v2 — quote-level fields from the intake questionnaire V0.2.
   /** Account exec / owner for the quote (free text). */
   accountExec           String?     @map("account_exec")
-  /** Space around the screen (mm) — determines if an articulated bracket is needed. */
-  spaceAroundScreenMm   Int?        @map("space_around_screen_mm")
   /** Soft-delete / archive timestamp (P1-05.1); null = active. The row is never hard-deleted. */
   archivedAt            DateTime?   @map("archived_at")
   estimatedCost         Decimal?    @map("estimated_cost") @db.Decimal(12, 2)
@@ -1045,8 +1055,9 @@ model QuoteLedScreen {
   screenName          String?  @map("screen_name")
   ledProductId        BigInt?  @map("led_product_id")
   qty                 Int      @default(1)
-  desiredWidthMm      Int?     @map("desired_width_mm")
-  desiredHeightMm     Int?     @map("desired_height_mm")
+  /** The requested opening. DECIMAL so an opening can be stated to sub-millimetre precision. */
+  desiredWidthMm      Decimal? @map("desired_width_mm") @db.Decimal(10, 2)
+  desiredHeightMm     Decimal? @map("desired_height_mm") @db.Decimal(10, 2)
   rotateCabinets      Boolean  @default(false) @map("rotate_cabinets")
   // LED-1 input fields (S0): orientation/aspect drive UI auto-calc; back_cover may later feed pricing.
   orientation         String?  @map("orientation")
@@ -1076,6 +1087,8 @@ model QuoteLedScreen {
   serviceHoursId      BigInt?  @map("service_hours_id")
   accessEquipmentId   BigInt?  @map("access_equipment_id")
   marginOverride      Decimal? @map("margin_override") @db.Decimal(8, 4)
+  /** Phase 1: Intake questionnaire answers that drove the screen selection. */
+  intakeAnswers       Json?    @map("intake_answers")
   // computed PI / spec outputs
   resolutionWpx       Int?     @map("resolution_w_px")
   resolutionHpx       Int?     @map("resolution_h_px")
@@ -1089,8 +1102,32 @@ model QuoteLedScreen {
   recessSize          String?  @map("recess_size")
   /** AA1 — recess/cavity depth in mm (complements the front/rear `serviceAccess`). */
   recessDepthMm       Int?     @map("recess_depth_mm")
+  /** AA1 — sun exposure at THIS screen's position: None / Indirect / Direct (affects brightness
+      suitability). Per-screen, not per-quote: one site can hold a shaded screen and a west-facing one. */
+  sunExposure         String?  @map("sun_exposure")
+  /** AA1 — what THIS screen mounts to (e.g. plasterboard, brick, concrete) — drives the fixing
+      method. Per-screen: screens in one job routinely land on different substrates. */
+  wallSubstrate       String?  @map("wall_substrate")
+  /** AA1 — where THIS screen's controller / media-player lives (free text). */
+  controllerLocation  String?  @map("controller_location")
+  /** Space around THIS screen (mm) — determines whether an articulated bracket is needed. */
+  spaceAroundScreenMm Int?     @map("space_around_screen_mm")
+  /** AA5 — shared-device ratio for THIS screen: N players … (paired with sharedDeviceScreens). */
+  sharedDevicePlayers Int?     @map("shared_device_players")
+  /** AA5 — … per M screens (paired with sharedDevicePlayers). */
+  sharedDeviceScreens Int?     @map("shared_device_screens")
   freightKg           Decimal? @map("freight_kg") @db.Decimal(10, 2)
+  /** COMPUTED install labour hours for this screen (the estimate, or the override below). */
   labourHours         Decimal? @map("labour_hours") @db.Decimal(8, 2)
+  /** User-set install labour hours. When present it REPLACES `estimateInstallHours`; null = auto.
+      Kept separate from `labourHours` so re-editing a screen never mistakes a previous estimate
+      for a deliberate override. */
+  labourHoursOverride Decimal? @map("labour_hours_override") @db.Decimal(8, 2)
+  /**
+   * One controller drives ALL units of this screen row (multiple screens of the same type sharing a
+   * sender). The controller is then charged ONCE for the row instead of once per unit.
+   */
+  sharedController    Boolean  @default(false) @map("shared_controller")
   // per-screen PI fields
   spareModulesPct     Decimal? @map("spare_modules_pct") @db.Decimal(6, 2)
   spareHubCard        Int?     @map("spare_hub_card")
@@ -1189,6 +1226,18 @@ model QuoteLcdScreen {
   warrantyId             BigInt?  @map("warranty_id")
   /** AA1 — recess/cavity depth in mm (site-prep detail). */
   recessDepthMm          Int?     @map("recess_depth_mm")
+  /** AA1 — sun exposure at THIS screen's position: None / Indirect / Direct. */
+  sunExposure            String?  @map("sun_exposure")
+  /** AA1 — what THIS screen mounts to (e.g. plasterboard, brick, concrete) — drives the fixing method. */
+  wallSubstrate          String?  @map("wall_substrate")
+  /** AA1 — where THIS screen's controller / media-player lives (free text). */
+  controllerLocation     String?  @map("controller_location")
+  /** Space around THIS screen (mm) — determines whether an articulated bracket is needed. */
+  spaceAroundScreenMm    Int?     @map("space_around_screen_mm")
+  /** AA5 — shared-device ratio for THIS screen: N players … (paired with sharedDeviceScreens). */
+  sharedDevicePlayers    Int?     @map("shared_device_players")
+  /** AA5 — … per M screens (paired with sharedDevicePlayers). */
+  sharedDeviceScreens    Int?     @map("shared_device_screens")
   /** AA3a — site/requirement fields feeding the LCD selection rules (all nullable). */
   requiresAndroid        Boolean? @map("requires_android")
   maxDepthMm             Int?     @map("max_depth_mm")

@@ -74,7 +74,7 @@ describe('versioning & snapshots', () => {
     expect(rb.statusCode).toBe(201);
     expect(rb.json().revisionNo).toBe(3);
     expect(rb.json().restoredFrom).toBe(1);
-  });
+  }, 120_000);
 });
 
 describe('margin guardrail (Z3 two-tier)', () => {

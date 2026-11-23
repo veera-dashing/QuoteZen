@@ -1,6 +1,6 @@
 import { prisma } from '@quotezen/db';
 import type { Prisma } from '@quotezen/db';
-import { aggregateQuote, type QuoteLineContribution } from '@quotezen/calc';
+import { aggregateQuote, annualLicence, type LicenceRates, type QuoteLineContribution } from '@quotezen/calc';
 import { d, marginOf, round, sum } from '@quotezen/shared';
 import type { CreateQuoteInput, UpdateQuoteInput } from '@quotezen/shared';
 import type { DiscountMode, DiscountScope, QuoteStatus } from '@quotezen/shared';
@@ -49,14 +49,9 @@ const QUOTE_HEADER_FIELDS = [
   'projectNotes',
   'endCustomer',
   'airsideLandside',
-  'sunExposure',
-  'wallSubstrate',
   'powerDataAvailable',
-  'controllerLocation',
   'windowFacing',
   'mediaPlayerSupply',
-  'sharedDevicePlayers',
-  'sharedDeviceScreens',
   'storeSizeSqm',
   'customContentCuration',
   'pcRequired',
@@ -67,7 +62,6 @@ const QUOTE_HEADER_FIELDS = [
   'clientMustHaves',
   'needsSolutionsEngineer',
   'accountExec',
-  'spaceAroundScreenMm',
 ] as const;
 
 const dec = (v: { toString(): string } | null | undefined): string => (v ? v.toString() : '0');
@@ -120,6 +114,48 @@ const lcdScreenDiscountedSell = (s: LcdScreen): Decimal => {
   }
   const frac = fullCost.greaterThan(0) ? discCost.div(fullCost) : d(1);
   return round(priceTotal.times(frac));
+};
+
+/**
+ * The share of a LED screen's sell that is SERVICES (install / labour / freight / engineering),
+ * taken from its own cost-breakdown categories with per-line discounts applied. 0 when the screen
+ * has no priced lines.
+ */
+const ledServicesFraction = (s: LedScreen): Decimal => {
+  let services = d(0);
+  let total = d(0);
+  for (const l of s.costBreakdown) {
+    if (!l.sell) continue;
+    const eff = d(l.sell.toString()).times(d(1).minus(lineDisc(l.discountPct)));
+    total = total.plus(eff);
+    if (l.category === 'services') services = services.plus(eff);
+  }
+  return total.greaterThan(0) ? services.div(total) : d(0);
+};
+
+/** The same share for a LCD screen, from its stored section subtotals (the `(LCD 1)` analysis block). */
+const lcdServicesFraction = (s: LcdScreen): Decimal => {
+  const total = d(dec(s.priceTotal));
+  const services = d(dec(s.priceServices));
+  return total.greaterThan(0) ? services.div(total) : d(0);
+};
+
+/**
+ * Split a screen's extended sell into its equipment and services portions for the quote rollup.
+ *
+ * Without this a screen contributed its WHOLE sell as `equipment`, so the quote's Services total was
+ * only ever software activities — install, labour and freight (a third of some quotes) were reported
+ * as equipment. This is a RE-BUCKETING ONLY: services is derived from the screen's own bucket mix and
+ * equipment is the REMAINDER, so the two always add back to `extended` to the cent and the grand
+ * total is unchanged. A screen-level price override — which pins one number carrying no bucket split
+ * of its own — is apportioned pro-rata rather than landing wholesale in equipment.
+ */
+const splitScreenSell = (
+  extended: Decimal,
+  servicesFraction: Decimal,
+): { equipment: Decimal; services: Decimal } => {
+  const services = round(extended.times(servicesFraction));
+  return { equipment: round(extended.minus(services)), services };
 };
 
 /** True when any LED cost line or LCD item on the quote carries a per-line discount (V2). */
@@ -175,14 +211,9 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput, actor
         projectNotes: input.projectNotes ?? null,
         endCustomer: input.endCustomer ?? null,
         airsideLandside: input.airsideLandside ?? null,
-        sunExposure: input.sunExposure ?? null,
-        wallSubstrate: input.wallSubstrate ?? null,
         powerDataAvailable: input.powerDataAvailable ?? null,
-        controllerLocation: input.controllerLocation ?? null,
         windowFacing: input.windowFacing ?? null,
         mediaPlayerSupply: input.mediaPlayerSupply ?? null,
-        sharedDevicePlayers: input.sharedDevicePlayers ?? null,
-        sharedDeviceScreens: input.sharedDeviceScreens ?? null,
         storeSizeSqm: input.storeSizeSqm ?? null,
         customContentCuration: input.customContentCuration ?? null,
         pcRequired: input.pcRequired ?? null,
@@ -193,7 +224,6 @@ export const createQuote = async (userId: bigint, input: CreateQuoteInput, actor
         clientMustHaves: input.clientMustHaves ?? null,
         needsSolutionsEngineer: input.needsSolutionsEngineer ?? null,
         accountExec: input.accountExec ?? null,
-        spaceAroundScreenMm: input.spaceAroundScreenMm ?? null,
         createdById: userId,
         viewers: input.viewerUserIds?.length
           ? { create: input.viewerUserIds.map((uid) => ({ userId: BigInt(uid) })) }
@@ -364,10 +394,20 @@ export const updateQuote = async (
   // Quote-level discount guardrail (A+): evaluate the EFFECTIVE discount + note after this update
   // (fall back to the stored values when a field isn't being changed) so the 12% cap and the
   // above-5% note requirement hold whether the user changes the pct, the note, or both.
-  const effectivePct =
-    input.discountPct !== undefined ? input.discountPct : existing.discountPct != null ? Number(existing.discountPct) : null;
-  const effectiveNote = input.discountNote !== undefined ? input.discountNote : existing.discountNote;
-  const { capOverride } = await enforceDiscountGuardrail(effectivePct, effectiveNote, actorRole === 'admin');
+  //
+  // Only gate an update that actually TOUCHES the discount. A PATCH of unrelated fields must not be
+  // judged against a pre-existing discount: otherwise, once an admin approves an above-cap discount,
+  // no non-admin could ever edit anything else on that quote (they'd 403 on the stored value), and
+  // every unrelated admin save would write another spurious `discount_guardrail` audit row.
+  // Changing the note alone still gates — clearing the note on an 8% discount must fail.
+  const touchesDiscount = input.discountPct !== undefined || input.discountNote !== undefined;
+  let capOverride: string | null = null;
+  if (touchesDiscount) {
+    const effectivePct =
+      input.discountPct !== undefined ? input.discountPct : existing.discountPct != null ? Number(existing.discountPct) : null;
+    const effectiveNote = input.discountNote !== undefined ? input.discountNote : existing.discountNote;
+    ({ capOverride } = await enforceDiscountGuardrail(effectivePct, effectiveNote, actorRole === 'admin'));
+  }
 
   const data: Record<string, unknown> = { lockVersion: { increment: 1 } };
   if (input.jobReference !== undefined) data.jobReference = input.jobReference;
@@ -384,14 +424,9 @@ export const updateQuote = async (
   if (input.projectNotes !== undefined) data.projectNotes = input.projectNotes;
   if (input.endCustomer !== undefined) data.endCustomer = input.endCustomer;
   if (input.airsideLandside !== undefined) data.airsideLandside = input.airsideLandside;
-  if (input.sunExposure !== undefined) data.sunExposure = input.sunExposure;
-  if (input.wallSubstrate !== undefined) data.wallSubstrate = input.wallSubstrate;
   if (input.powerDataAvailable !== undefined) data.powerDataAvailable = input.powerDataAvailable;
-  if (input.controllerLocation !== undefined) data.controllerLocation = input.controllerLocation;
   if (input.windowFacing !== undefined) data.windowFacing = input.windowFacing;
   if (input.mediaPlayerSupply !== undefined) data.mediaPlayerSupply = input.mediaPlayerSupply;
-  if (input.sharedDevicePlayers !== undefined) data.sharedDevicePlayers = input.sharedDevicePlayers;
-  if (input.sharedDeviceScreens !== undefined) data.sharedDeviceScreens = input.sharedDeviceScreens;
   if (input.storeSizeSqm !== undefined) data.storeSizeSqm = input.storeSizeSqm;
   if (input.customContentCuration !== undefined) data.customContentCuration = input.customContentCuration;
   if (input.pcRequired !== undefined) data.pcRequired = input.pcRequired;
@@ -402,7 +437,6 @@ export const updateQuote = async (
   if (input.clientMustHaves !== undefined) data.clientMustHaves = input.clientMustHaves;
   if (input.needsSolutionsEngineer !== undefined) data.needsSolutionsEngineer = input.needsSolutionsEngineer;
   if (input.accountExec !== undefined) data.accountExec = input.accountExec;
-  if (input.spaceAroundScreenMm !== undefined) data.spaceAroundScreenMm = input.spaceAroundScreenMm;
   if (input.currencyCode !== undefined) {
     const currency = await findCurrencyByCode(input.currencyCode);
     if (!currency) throw notFound('Currency', input.currencyCode);
@@ -772,24 +806,94 @@ export interface OverrideSummary {
   createdAt: string;
 }
 
+export interface LicenceComponentLike {
+  component: string;
+  tier: string;
+  screenType: string;
+  value: { toString(): string } | number | string;
+}
+
+export const listLicenceComponents = () => prisma.licenceComponent.findMany();
+
+export const resolveLicenceRates = (
+  rows: readonly LicenceComponentLike[] | undefined,
+  tier: string,
+  screenType: string,
+): LicenceRates => {
+  const find = (name: string, fallback: number) => {
+    if (!rows || rows.length === 0) return fallback;
+    const match = rows.find(
+      (r) =>
+        r.component.toLowerCase() === name.toLowerCase() &&
+        r.tier.toLowerCase() === tier.toLowerCase() &&
+        r.screenType.toLowerCase() === screenType.toLowerCase(),
+    );
+    if (!match) {
+      const partialMatch = rows.find(
+        (r) =>
+          r.component.toLowerCase() === name.toLowerCase() &&
+          r.tier.toLowerCase() === tier.toLowerCase(),
+      );
+      if (partialMatch) return Number(partialMatch.value);
+      return fallback;
+    }
+    return Number(match.value);
+  };
+
+  const isHigh = tier.toLowerCase() === 'high';
+  return {
+    siteFee: find('Site Fee', isHigh ? 165 : 270),
+    perScreen: find('Licence Per Screen', isHigh ? 95 : 125),
+    interactiveUplift: find('Interactive Licence Per Screen Uplift', 100),
+  };
+};
+
+export const computeLicenceAnnual = (
+  l: {
+    licenceComponentId?: bigint | null;
+    licenceComponent?: { value: { toString(): string } | null } | null;
+    screenType: string;
+    tier: string;
+    qty: number;
+    isInteractive: boolean;
+  },
+  licenceRows?: readonly LicenceComponentLike[],
+): Decimal => {
+  if (l.licenceComponentId && l.licenceComponent?.value) {
+    return d(dec(l.licenceComponent.value)).times(l.qty);
+  }
+  const rates = resolveLicenceRates(licenceRows, l.tier, l.screenType);
+  return annualLicence({
+    screenCount: l.qty,
+    interactiveCount: l.isInteractive ? l.qty : 0,
+    rates,
+  });
+};
+
 /**
  * Fully itemised price view (P1-16.8): recompute totals, then return every stored line grouped by
  * screen, with raw cost masked for non-admin actors. Deterministic for a given persisted state.
  */
 export const priceQuote = async (actor: Actor, id: bigint) => {
-  await recomputeQuote(actor.id, id);
-  const quote = await getQuote(id);
+  const quote = await recomputeQuote(actor.id, id);
   const showCost = isAdmin(actor);
+  const [overridesList, licenceRows, defaultDiscount, marginFloor, walkAwayMargin] = await Promise.all([
+    listOverrides(id),
+    prisma.licenceComponent.findMany(),
+    getDefaultDiscountPct(),
+    showCost ? getMinGrossMargin() : Promise.resolve(null),
+    showCost ? getWalkAwayMargin() : Promise.resolve(null),
+  ]);
   // Active overrides (post-prune) drive the per-line flag + the overrides summary (P1-17.2/.3).
-  const activeOverrides = await pruneOrphanOverrides(quote, await listOverrides(id));
+  const activeOverrides = await pruneOrphanOverrides(quote, overridesList);
   const ovMap = overrideMap(activeOverrides);
   // U3/U5 — effective client discount (quote override → client → system default) + discounted margin.
   // V2 — mode-adjusted: in `item_only` mode with per-line discounts present the quote/client discount
   // is suppressed (pct 0), so the surfaced discount matches what actually applied to the totals.
-  const discount = resolveModedDiscount(quote, await getDefaultDiscountPct());
+  const discount = resolveModedDiscount(quote, defaultDiscount);
   // Authoritative, scope-aware discount amount (one-off vs recurring) from the shared rollup, so the
   // surfaced concession matches whichever base the discount was applied to (U5).
-  const discountAmount = computeQuoteTotals(quote, ovMap, await getDefaultDiscountPct()).discount.amount;
+  const discountAmount = computeQuoteTotals(quote, ovMap, defaultDiscount, licenceRows).discount.amount;
 
   const sections: PriceSection[] = [];
   for (const s of quote.ledScreens) {
@@ -867,7 +971,7 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
       tier: l.tier,
       qty: l.qty,
       isInteractive: l.isInteractive,
-      annual: dec(l.licenceComponent?.value),
+      annual: computeLicenceAnnual(l, licenceRows).toString(),
     })),
     // U3/U5 — effective discount; `scope` decides the base: `one_off` discounts the upfront sell
     // (equipment + services, after markup), `recurring` discounts the renewal total. `amount` is the
@@ -892,8 +996,8 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
       margin: showCost ? computeMargin(quote, ovMap, discount.pct, discount.scope).margin.toString() : null,
       // Z3 — the surfaced "floor" is now the minimum gross margin (the 28% gate the UI enforces first);
       // the walk-away floor is the harder director-only tier below it.
-      marginFloor: showCost ? await getMinGrossMargin() : null,
-      walkAwayMargin: showCost ? await getWalkAwayMargin() : null,
+      marginFloor,
+      walkAwayMargin,
     },
   };
 };
@@ -924,6 +1028,7 @@ export const computeQuoteTotals = (
   quote: QuoteWithChildren,
   overrides: Map<string, OverrideRow>,
   defaultDiscountPct = 0,
+  licenceRows?: readonly LicenceComponentLike[],
 ): QuoteTotalsResult => {
   const lines: QuoteLineContribution[] = [];
 
@@ -931,12 +1036,24 @@ export const computeQuoteTotals = (
   // carry a screen-level qty; LCD screens have none (their item rows carry their own qty), so the
   // stored LCD priceTotal is already the full screen price.
   for (const s of quote.ledScreens) {
-    // V2 — per-line-discounted per-unit sell (override pin wins), × screen qty.
-    lines.push({ kind: 'equipment', extendedSell: round(ledScreenDiscountedSell(overrides, s).times(s.qty)).toString() });
+    // V2 — per-line-discounted per-unit sell (override pin wins), × screen qty, then split across
+    // the equipment/services buckets the screen's own cost lines carry.
+    const extended = round(ledScreenDiscountedSell(overrides, s).times(s.qty));
+    const split = splitScreenSell(extended, ledServicesFraction(s));
+    lines.push({ kind: 'equipment', extendedSell: split.equipment.toString() });
+    if (split.services.greaterThan(0)) {
+      lines.push({ kind: 'services', extendedSell: split.services.toString() });
+    }
   }
   for (const s of quote.lcdScreens) {
-    // V2 — per-line-discounted extended sell (Σ item.unitSell × qty × (1 − discountPct)).
-    lines.push({ kind: 'equipment', extendedSell: lcdScreenDiscountedSell(s).toString() });
+    // V2 — per-line-discounted extended sell (Σ item.unitSell × qty × (1 − discountPct)), split the
+    // same way using the screen's stored section subtotals.
+    const extended = lcdScreenDiscountedSell(s);
+    const split = splitScreenSell(extended, lcdServicesFraction(s));
+    lines.push({ kind: 'equipment', extendedSell: split.equipment.toString() });
+    if (split.services.greaterThan(0)) {
+      lines.push({ kind: 'services', extendedSell: split.services.toString() });
+    }
   }
   for (const m of quote.manufacturedItems) {
     lines.push({ kind: 'equipment', extendedSell: Number(dec(m.product.sell)) * m.qty });
@@ -948,7 +1065,8 @@ export const computeQuoteTotals = (
     lines.push({ kind: 'services', extendedSell: Number(dec(sw.softwareActivity.sell)) * Number(sw.qty) });
   }
   for (const l of quote.licences) {
-    lines.push({ kind: 'recurring', extendedSell: Number(dec(l.licenceComponent?.value)) * l.qty });
+    const annual = computeLicenceAnnual(l, licenceRows);
+    lines.push({ kind: 'recurring', extendedSell: annual });
   }
   for (const mu of quote.musicItems) {
     lines.push({ kind: 'recurring', extendedSell: Number(dec(mu.musicService.sell)) * mu.qty });
@@ -997,8 +1115,11 @@ export const computeQuoteTotals = (
 export const recomputePreview = async (id: bigint) => {
   const quote = await getQuote(id);
   const overrides = overrideMap(await pruneOrphanOverrides(quote, await listOverrides(id)));
-  const defaultDiscount = await getDefaultDiscountPct();
-  const recomputed = computeQuoteTotals(quote, overrides, defaultDiscount).grandTotal;
+  const [defaultDiscount, licenceRows] = await Promise.all([
+    getDefaultDiscountPct(),
+    prisma.licenceComponent.findMany(),
+  ]);
+  const recomputed = computeQuoteTotals(quote, overrides, defaultDiscount, licenceRows).grandTotal;
   const current = dec(quote.grandTotal);
   return { current, recomputed, differs: Number(current) !== Number(recomputed) };
 };
@@ -1014,9 +1135,23 @@ export const recomputeQuote = async (userId: bigint, id: bigint) => {
   const quote = await getQuote(id);
   // Pinned overrides (P1-17): a screen's effective sell is its override value (if active) else the
   // computed price; everything downstream (equipment, grand total) recomputes from the pinned value.
-  const overrides = overrideMap(await pruneOrphanOverrides(quote, await listOverrides(id)));
-  const defaultDiscount = await getDefaultDiscountPct();
-  const totals = computeQuoteTotals(quote, overrides, defaultDiscount);
+  const [overridesList, defaultDiscount, licenceRows] = await Promise.all([
+    listOverrides(id),
+    getDefaultDiscountPct(),
+    prisma.licenceComponent.findMany(),
+  ]);
+  const overrides = overrideMap(await pruneOrphanOverrides(quote, overridesList));
+  const totals = computeQuoteTotals(quote, overrides, defaultDiscount, licenceRows);
+
+  const unchanged =
+    d(dec(quote.totalEquipment)).equals(d(totals.equipment)) &&
+    d(dec(quote.totalServices)).equals(d(totals.services)) &&
+    d(dec(quote.totalRecurring)).equals(d(totals.recurring)) &&
+    d(dec(quote.grandTotal)).equals(d(totals.grandTotal));
+
+  if (unchanged) {
+    return quote;
+  }
 
   return prisma.$transaction(async (tx) => {
     const updated = await tx.quote.update({
