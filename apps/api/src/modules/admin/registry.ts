@@ -18,6 +18,11 @@ export interface FieldDef {
   min?: number;
   /** EXCLUSIVE upper bound for `int` / `decimal` fields (a margin must be < 1, never = 1). */
   lessThan?: number;
+  /**
+   * Stored as a FRACTION (0.3) but shown and entered in the admin UI as a PERCENTAGE (30). Display
+   * concern only: the API, validation, pricing and CSV import/export all keep the stored fraction.
+   */
+  percent?: boolean;
 }
 
 export interface TableDef {
@@ -54,6 +59,12 @@ const fRange = (
   label: string,
   opts: { min?: number; lessThan?: number },
 ): FieldDef => ({ name, label, type: 'decimal', required: false, min: opts.min, lessThan: opts.lessThan });
+
+/** A 0..<1 fraction (margin / discount) that the admin UI shows and edits as a percentage. */
+const fPercent = (name: string, label: string): FieldDef => ({
+  ...fRange(name, label, { min: 0, lessThan: 1 }),
+  percent: true,
+});
 
 const TIER = ['low', 'high'];
 const SCREEN = ['LCD', 'LED'];
@@ -360,8 +371,8 @@ export const TABLES: TableDef[] = [
     titleField: 'name', searchFields: ['name', 'marginNote', 'preferredProductFamily'],
     fields: [
       f('name', 'string', true), f('tier', 'enum', false, CLIENT_TIER),
-      fRange('defaultMargin', 'Default margin (fraction, e.g. 0.3 = 30%)', { min: 0, lessThan: 1 }),
-      fRange('discountPct', 'Discount (fraction, e.g. 0.05 = 5%)', { min: 0, lessThan: 1 }),
+      fPercent('defaultMargin', 'Default margin (%)'),
+      fPercent('discountPct', 'Discount (%)'),
       f('preferredProductFamily'),
       f('preferredPitchMm', 'decimal'), f('excludedComponents'),
       f('allowedRatios'),
@@ -379,7 +390,7 @@ export const TABLES: TableDef[] = [
     titleField: 'name', searchFields: ['name', 'label', 'description'],
     fields: [
       f('name', 'string', true), f('label'), f('description', 'text'),
-      f('installStandard'), f('preferredFreight'), f('defaultDiscountPct', 'decimal'),
+      f('installStandard'), f('preferredFreight'), fPercent('defaultDiscountPct', 'Default discount (%)'),
       DEPRECATED,
     ],
     listFields: ['name', 'preferredFreight', 'defaultDiscountPct'],

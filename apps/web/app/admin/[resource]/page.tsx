@@ -21,8 +21,12 @@ interface ImportReport {
   errors: RowError[];
 }
 
-const formatCell = (value: unknown): { text: string; numeric: boolean } => {
+const formatCell = (value: unknown, percent = false): { text: string; numeric: boolean } => {
   if (value === null || value === undefined) return { text: '—', numeric: false };
+  // Fraction stored, percentage shown (registry `percent` fields such as client margin / discount).
+  if (percent && value !== '' && !Number.isNaN(Number(value))) {
+    return { text: `${Number((Number(value) * 100).toFixed(4))}%`, numeric: true };
+  }
   if (typeof value === 'boolean') return { text: value ? '✓' : '✗', numeric: false };
   if (typeof value === 'number') return { text: String(value), numeric: true };
   const s = String(value);
@@ -300,7 +304,7 @@ export default function ResourcePage() {
               data?.rows.map((row) => (
                 <tr key={String(row.id)}>
                   {cols.map((c) => {
-                    const cell = formatCell(row[c]);
+                    const cell = formatCell(row[c], table.fields.find((fd) => fd.name === c)?.percent);
                     return (
                       <td key={c} className={cell.numeric ? 'cell-num' : ''}>
                         {cell.text}
