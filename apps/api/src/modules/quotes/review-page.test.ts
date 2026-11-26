@@ -6,7 +6,9 @@ import { loadConfig } from '../../config.js';
 
 /**
  * Review page (POST /quotes/:id/price):
- *   • `breakdown` — by type, per screen + whole job; each screen's groups add up to its price.
+ *   • `breakdown` — by type, per screen + whole job; each screen's groups add up to its price;
+ *   • `totals.marginBasis` — admin-only cost + pre-discount sell, from which a TARGET margin converts to
+ *     the discount that delivers it: d = 1 − cost / (sell × (1 − margin)).
  * Live-DB integration; quotes use the job-ref prefix and are deleted afterwards.
  */
 const JOB_PREFIX = `TESTREVIEW-${process.pid}-`;
@@ -21,6 +23,7 @@ type Price = {
     screens: Array<{ screenId: string; total: number; groups: Record<string, { sell: number; cost: number | null }> }>;
     job: { total: number; groups: Record<string, { sell: number; cost: number | null }> };
   };
+  totals: { margin: string | null; marginBasis: { cost: string; sellBeforeDiscount: string } | null };
 };
 
 let quoteId: string;
@@ -79,5 +82,30 @@ describe('breakdown by type', () => {
     expect(screen.groups.labour!.sell).toBeGreaterThan(0);
     expect(p.breakdown.job.total).toBeCloseTo(screen.total, 2);
     expect(screen.groups.screen!.cost).not.toBeNull(); // admin sees cost
+  });
+});
+
+describe('target margin → discount', () => {
+  it('the discount worked out from a target margin delivers that margin', SLOW, async () => {
+    const p = await price();
+    expect(p.totals.marginBasis).not.toBeNull();
+    const cost = Number(p.totals.marginBasis!.cost);
+    const sell = Number(p.totals.marginBasis!.sellBeforeDiscount);
+    const noDiscountMargin = (sell - cost) / sell;
+    const target = Math.max(0.05, noDiscountMargin - 0.03); // a few points below → a small discount
+    const discount = 1 - cost / (sell * (1 - target));
+    expect(discount).toBeGreaterThan(0);
+
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: `/quotes/${quoteId}`,
+      headers: auth(),
+      payload: { discountPct: Math.round(discount * 10000) / 10000, discountScope: 'one_off', discountNote: 'target margin test' },
+    });
+    expect(patch.statusCode).toBe(200);
+    const after = await price();
+    expect(Number(after.totals.margin)).toBeCloseTo(target, 3);
+    // The basis is the PRE-discount sell — unchanged by the discount just applied.
+    expect(Number(after.totals.marginBasis!.sellBeforeDiscount)).toBeCloseTo(sell, 2);
   });
 });

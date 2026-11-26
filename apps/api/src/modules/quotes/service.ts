@@ -1047,6 +1047,15 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
       // the walk-away floor is the harder director-only tier below it.
       marginFloor,
       walkAwayMargin,
+      // Admin-only basis for the Review page's "target margin %" → discount conversion: the job's total
+      // cost and its one-off sell BEFORE the quote discount (per-line discounts / overrides applied).
+      //   discount = 1 − cost / (sellBeforeDiscount × (1 − targetMargin))
+      marginBasis: showCost
+        ? (() => {
+            const base = computeMargin(quote, ovMap, 0, 'one_off');
+            return { cost: base.totalCost.toString(), sellBeforeDiscount: base.totalSell.toString() };
+          })()
+        : null,
     },
   };
 };

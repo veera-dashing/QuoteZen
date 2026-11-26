@@ -4337,6 +4337,8 @@ interface PriceResult {
   totals: {
     equipment: string; services: string; recurring: string; grandTotal: string;
     margin: string | null; marginFloor: number | null;
+    /** Admin-only: total cost + one-off sell before the quote discount (target margin → discount). */
+    marginBasis?: { cost: string; sellBeforeDiscount: string } | null;
   };
 }
 
@@ -5469,7 +5471,44 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const onDiscChange = (raw: string) => {
     if (!isAdmin && raw.trim() !== '' && Number(raw) > discCapPct) { setDiscPctInput(String(discCapPct)); return; }
     setDiscPctInput(raw);
+    setMarginInput('');
+    setMarginMsg(null);
   };
+
+  // ── Target margin % ⇄ discount % (admin — margin derives from cost, BR-081) ──
+  // Enter the margin you want; the discount that delivers it is filled in (all the discount rules
+  // above still apply to it). margin = (sell × (1 − d) − cost) / (sell × (1 − d))
+  //   ⇒ d = 1 − cost / (sell × (1 − margin)).
+  // A discount only lowers the price, so a margin above the undiscounted one can't be reached here.
+  const marginBasis = price?.totals.marginBasis ?? null;
+  const basisCost = marginBasis ? Number(marginBasis.cost) : 0;
+  const basisSell = marginBasis ? Number(marginBasis.sellBeforeDiscount) : 0;
+  const marginAtDiscount = (discPct: number): number | null => {
+    const sell = basisSell * (1 - discPct / 100);
+    return marginBasis && sell > 0 ? ((sell - basisCost) / sell) * 100 : null;
+  };
+  const [marginInput, setMarginInput] = useState('');
+  const [marginMsg, setMarginMsg] = useState<string | null>(null);
+  const onMarginChange = (raw: string) => {
+    setMarginInput(raw);
+    setMarginMsg(null);
+    if (!marginBasis || raw.trim() === '' || basisSell <= 0) return;
+    const m = Number(raw) / 100;
+    if (!Number.isFinite(m) || m >= 1) { setMarginMsg('Margin must be below 100%.'); return; }
+    const d = 1 - basisCost / (basisSell * (1 - m));
+    const maxMargin = marginAtDiscount(0);
+    if (d < 0) {
+      setMarginMsg(
+        `That's above the margin with no discount (${maxMargin?.toFixed(1)}%). A discount can only lower the price — use Override price to raise it.`,
+      );
+      return;
+    }
+    const pct = String(Math.round(d * 10000) / 100);
+    if (!isAdmin && Number(pct) > discCapPct) setMarginMsg(`Needs a ${pct}% discount — above the ${discCapPct}% cap.`);
+    if (!isAdmin && Number(pct) > discCapPct) setDiscPctInput(String(discCapPct));
+    else setDiscPctInput(pct);
+  };
+  const resultingMargin = marginAtDiscount(discNum ?? 0);
 
   const saveDiscount = async () => {
     setDiscBusy(true);
@@ -5897,6 +5936,34 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
                     : `Cap ${discCapPct}%. Above ${discNoteThreshold}% requires a manager note.`}
                 </p>
               </div>
+              {isAdmin && (
+                <div>
+                  <label>Target margin (%)</label>
+                  {marginBasis ? (
+                    <>
+                      <input
+                        type="number"
+                        min={0}
+                        max={99}
+                        step="0.5"
+                        value={marginInput}
+                        onChange={(e) => onMarginChange(e.target.value)}
+                        placeholder={resultingMargin != null ? resultingMargin.toFixed(1) : ''}
+                      />
+                      <p className="muted" style={{ margin: '4px 0 0', fontSize: 12, color: marginMsg ? 'var(--danger, #dc2626)' : undefined }}>
+                        {marginMsg ??
+                          (resultingMargin != null
+                            ? `Margin at this discount: ${resultingMargin.toFixed(1)}% (no discount: ${marginAtDiscount(0)?.toFixed(1)}%). Type a margin to work out the discount.`
+                            : 'No priced screens yet.')}
+                      </p>
+                    </>
+                  ) : (
+                    <button className="ghost" onClick={loadPrice} disabled={pricing}>
+                      {pricing ? 'Loading…' : 'Show margin'}
+                    </button>
+                  )}
+                </div>
+              )}
               <div>
                 <label>Discount applies to</label>
                 {/* One-off is the only scope offered. The control stays so the quote still states
