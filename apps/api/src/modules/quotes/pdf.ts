@@ -57,12 +57,20 @@ export const buildQuotePdf = (
     if (quote.validUntil) doc.text(`Valid until: ${new Date(quote.validUntil).toLocaleDateString()}`);
 
     // LED screens — deterministic descriptions (P1-18.1)
-    const descriptions = new Map(buildDescriptions(quote, ratios).map((d) => [d.screenId, d.description]));
+    const described = buildDescriptions(quote, ratios);
+    const descriptions = new Map(described.map((d) => [d.screenId, d.description]));
+    // Install methodology per screen (workbook Summary column C), printed under the screen line.
+    const servicesOf = new Map(described.map((d) => [`${d.type}:${d.screenId}`, d.servicesDescription]));
+    const servicesNote = (key: string) => {
+      const text = servicesOf.get(key);
+      if (text) doc.fontSize(8).fillColor('#888').text(text, L, doc.y, { width: CONTENT_W });
+    };
     if (quote.ledScreens.length > 0) {
       heading('LED screens');
       for (const s of quote.ledScreens) {
         const ledSell = screenSells?.get(`led:${s.id.toString()}`) ?? s.priceTotal;
         line(descriptions.get(s.id.toString()) ?? s.screenName ?? 'LED screen', money(ledSell, code));
+        servicesNote(`led:${s.id.toString()}`);
       }
     }
     // LCD screens — deterministic descriptions (tab B2) + order list (tab B56).
@@ -71,6 +79,7 @@ export const buildQuotePdf = (
       for (const s of quote.lcdScreens) {
         const lcdSell = screenSells?.get(`lcd:${s.id.toString()}`) ?? s.priceTotal;
         line(descriptions.get(s.id.toString()) ?? s.screenName ?? 'LCD', money(lcdSell, code));
+        servicesNote(`lcd:${s.id.toString()}`);
         const order = lcdOrderList(s);
         if (order) doc.fontSize(8).fillColor('#888').text(`Order list: ${order}`, L, doc.y, { width: CONTENT_W });
       }

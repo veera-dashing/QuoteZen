@@ -3,14 +3,16 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '@quotezen/db';
 import { buildApp } from '../../app.js';
 import { loadConfig } from '../../config.js';
+import { buildDescriptions, servicesDescription } from './outputs.js';
 import { getQuote, screenEffectiveSells } from './service.js';
 
 /**
  * Quote review fixes:
- *   #44 a 100%-discounted LCD prices at $0 per screen (not only in the totals) — `screenEffectiveSells`,
- *       used by the PDF and the wizard's screen rows;
+ *   #44 a 100%-discounted LCD prices at $0 per screen (not only in the totals) — `screenEffectiveSells`;
  *   #45 a product whose price already includes GOB is never charged GOB / protective coating on top,
- *       takes the GOB spares rate, and satisfies the fine-pitch GOB requirement.
+ *       takes the GOB spares rate, and satisfies the fine-pitch GOB requirement;
+ *   #47 the install method reaches the outputs as the Summary's "Services Description".
+ * (#46, the default SeenCMP media player, is a wizard default — UI only.)
  *
  * Live-DB integration: quotes use the job-ref prefix and are deleted afterwards; the one product flag
  * this file flips (`gob_included`) is restored to its original value.
@@ -159,5 +161,36 @@ describe('#44 a fully discounted LCD is $0 per screen, not only in the totals', 
 
     const pdf = await app.inject({ method: 'GET', url: `/quotes/${q}/export.pdf`, headers: auth() });
     expect(pdf.statusCode).toBe(200);
+  });
+});
+
+describe('#47 install method on the quote outputs', () => {
+  it('servicesDescription frames the install method (+ optional suffix)', () => {
+    expect(servicesDescription(null, null)).toBeNull();
+    expect(servicesDescription('Wall Mount')).toBe('Service estimate based on install (by Seen Technology): Wall Mount');
+    expect(servicesDescription('Freestanding', 'with cladding (by Seen Technology)')).toBe(
+      'Service estimate based on install (by Seen Technology): Freestanding with cladding (by Seen Technology)',
+    );
+  });
+
+  it('each LED / LCD screen description carries its install method', SLOW, async () => {
+    const method = await prisma.installMethod.findFirstOrThrow({ where: { deprecated: false } });
+    const q = await newQuote('install');
+    await app.inject({
+      method: 'POST',
+      url: `/quotes/${q}/led-screens`,
+      headers: auth(),
+      payload: { ledProductId: Number(gobProductId), desiredWidthMm: 1500, desiredHeightMm: 1000, installMethodId: Number(method.id) },
+    });
+    const display = await prisma.displayCatalog.findFirstOrThrow({ where: { totalCost: { gt: 0 }, deprecated: false } });
+    await app.inject({
+      method: 'POST',
+      url: `/quotes/${q}/lcd-screens`,
+      headers: auth(),
+      payload: { installMethodId: Number(method.id), items: [{ itemType: 'display', displayId: Number(display.id), qty: 1 }] },
+    });
+    const described = buildDescriptions(await getQuote(BigInt(q)));
+    expect(described).toHaveLength(2);
+    for (const d of described) expect(d.servicesDescription).toContain(method.name);
   });
 });

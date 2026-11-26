@@ -57,7 +57,22 @@ export interface ScreenDescription {
   screenId: string;
   type: 'led' | 'lcd';
   description: string;
+  /** Install methodology — the workbook Summary's "Services Description" (column C); null when unset. */
+  servicesDescription: string | null;
 }
+
+/**
+ * The workbook Summary "Services Description" (column C = the screen tab's C2 = Install Method & " " &
+ * Service description suffix). Our install-method catalogue holds short names ("Wall Mount"), so the
+ * sentence is framed around it. Null when the screen has no install method and no suffix.
+ */
+export const servicesDescription = (installMethod: string | null | undefined, suffix?: string | null): string | null => {
+  const method = installMethod?.trim();
+  const extra = suffix?.trim();
+  if (!method && !extra) return null;
+  const base = method ? `Service estimate based on install (by Seen Technology): ${method}` : 'Service estimate';
+  return extra ? `${base} ${extra}` : base;
+};
 
 export const buildDescriptions = (
   quote: QuoteWithChildren,
@@ -89,6 +104,7 @@ export const buildDescriptions = (
         coatingName: s.coating?.name ?? null,
         highResolution: s.highResolution ?? null,
       }),
+      servicesDescription: servicesDescription(s.installMethod?.name, s.serviceDescriptionSuffix),
     });
   }
   for (const s of quote.lcdScreens) {
@@ -103,6 +119,7 @@ export const buildDescriptions = (
         externalMediaplayers: lcdExternalMediaplayers(s),
         componentDescriptions: lcdComponentDescriptions(s),
       }),
+      servicesDescription: servicesDescription(s.installMethod?.name),
     });
   }
   return out;
@@ -209,6 +226,7 @@ export const buildSolutionSummary = (quote: QuoteWithChildren, showCost: boolean
     name: s.screenName,
     display: s.display?.model ?? null,
     orientation: s.orientation ?? null,
+    installMethod: s.installMethod?.name ?? null,
     priceTotal: dec(s.priceTotal),
     costTotal: showCost ? dec(s.priceScreenMediaplayer) : null,
     // Order list (tab B56): what to procure for this display.
