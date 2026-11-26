@@ -11,6 +11,7 @@ import { AppError, conflict, notFound } from '../../errors.js';
 import type { UserRole } from '@quotezen/shared';
 import { diffFields, recordAudit } from '../../services/audit.js';
 import { CAPTURE_STATUSES, captureKbEntry } from './kb.js';
+import { buildBreakdown, lcdItemGroup, ledLineGroup, type BreakdownScreenInput } from './breakdown.js';
 import { assertIssueReviews } from './reviews.js';
 import { collectAllErrors, validateQuote } from './validate.js';
 import {
@@ -978,9 +979,39 @@ export const priceQuote = async (actor: Actor, id: bigint) => {
     createdAt: o.createdAt.toISOString(),
   }));
 
+  // Review-page breakdown by type (screen / media player / frame / freight / labour), per screen and
+  // for the whole job. Each screen's effective price is split by its lines (see breakdown.ts).
+  const breakdownInput: BreakdownScreenInput[] = [
+    ...quote.ledScreens.map((s): BreakdownScreenInput => ({
+      screenId: s.id.toString(),
+      name: s.screenName ?? s.ledProduct?.model ?? 'LED screen',
+      type: 'led',
+      qty: s.qty,
+      effectiveSell: ledScreenDiscountedSell(ovMap, s).times(s.qty).toNumber(),
+      lines: s.costBreakdown.map((l) => ({
+        group: ledLineGroup(l.category, l.lineLabel),
+        weight: Number(l.sell ?? 0) * (1 - lineDisc(l.discountPct)),
+        cost: Number(l.cost ?? 0) * s.qty,
+      })),
+    })),
+    ...quote.lcdScreens.map((s): BreakdownScreenInput => ({
+      screenId: s.id.toString(),
+      name: s.screenName ?? s.display?.model ?? 'LCD display',
+      type: 'lcd',
+      qty: 1,
+      effectiveSell: lcdScreenDiscountedSell(s).toNumber(),
+      lines: s.items.map((i) => {
+        const cost = Number(dec(i.unitCost) ?? 0) * Number(i.qty);
+        return { group: lcdItemGroup(i.itemType), weight: cost * (1 - lineDisc(i.discountPct)), cost };
+      }),
+    })),
+  ];
+  const breakdown = buildBreakdown(breakdownInput, showCost);
+
   return {
     costVisible: showCost,
     sections,
+    breakdown,
     // Active overrides + a convenience flag so the UI can badge affected lines/totals (P1-17.2).
     overrides: overridesOut,
     hasOverrides: overridesOut.length > 0,

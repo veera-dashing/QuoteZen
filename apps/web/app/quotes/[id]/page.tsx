@@ -4315,9 +4315,19 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
 
 // The full PriceResult shape (mirrors service.ts priceQuote). Shared by the Review "Itemised price"
 // card and the inline per-screen cost breakdown in Select Screens.
+type BreakdownGroupKey = 'screen' | 'mediaplayer' | 'frame' | 'freight' | 'labour' | 'other';
+type BreakdownAmounts = Record<BreakdownGroupKey, { sell: number; cost: number | null }>;
+/** Cost breakdown by type, per screen and for the whole job (service.ts priceQuote → breakdown.ts). */
+interface QuoteBreakdown {
+  groups: Array<{ key: BreakdownGroupKey; label: string }>;
+  screens: Array<{ screenId: string; name: string; type: 'led' | 'lcd'; qty: number; groups: BreakdownAmounts; total: number }>;
+  job: { groups: BreakdownAmounts; total: number };
+}
+
 interface PriceResult {
   costVisible: boolean;
   sections: PriceSection[];
+  breakdown?: QuoteBreakdown;
   overrides?: OverrideSummary[];
   hasOverrides?: boolean;
   licences: Array<{ screenType: string; tier: string; qty: number; isInteractive: boolean; annual: string }>;
@@ -4328,6 +4338,106 @@ interface PriceResult {
     equipment: string; services: string; recurring: string; grandTotal: string;
     margin: string | null; marginFloor: number | null;
   };
+}
+
+/**
+ * Review page — cost breakdown by type (screen / media player / frame / freight / labour), switchable
+ * between the whole job and per screen. Sell figures are each screen's price after line discounts
+ * (before the quote discount); cost + margin columns only when the role may see cost.
+ */
+function BreakdownByType({ breakdown, cur, costVisible }: { breakdown: QuoteBreakdown; cur: string; costVisible: boolean }) {
+  const [view, setView] = useState<'job' | 'screen'>('job');
+  const money = (n: number) => `${cur} ${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const marginPct = (sell: number, cost: number | null) =>
+    cost == null || sell <= 0 ? '—' : `${(((sell - cost) / sell) * 100).toFixed(1)}%`;
+  // Only show groups that carry something somewhere in the job (keeps the table short).
+  const groups = breakdown.groups.filter(
+    (g) => breakdown.job.groups[g.key].sell !== 0 || (breakdown.job.groups[g.key].cost ?? 0) !== 0,
+  );
+  if (breakdown.screens.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div className="topbar">
+        <b>Breakdown by type</b>
+        <div className="row-actions">
+          <button className={view === 'job' ? 'primary' : 'ghost'} onClick={() => setView('job')}>Whole job</button>
+          <button className={view === 'screen' ? 'primary' : 'ghost'} onClick={() => setView('screen')}>Per screen</button>
+        </div>
+      </div>
+      <p className="muted" style={{ margin: '4px 0 6px', fontSize: 12 }}>
+        Screen prices after line discounts, before the quote discount.
+      </p>
+      <div className="table-wrap">
+        {view === 'job' ? (
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                {costVisible && <th className="cell-num">Cost</th>}
+                <th className="cell-num">Sell</th>
+                {costVisible && <th className="cell-num">Margin</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((g) => {
+                const a = breakdown.job.groups[g.key];
+                return (
+                  <tr key={g.key}>
+                    <td>{g.label}</td>
+                    {costVisible && <td className="cell-num">{money(a.cost ?? 0)}</td>}
+                    <td className="cell-num">{money(a.sell)}</td>
+                    {costVisible && <td className="cell-num">{marginPct(a.sell, a.cost)}</td>}
+                  </tr>
+                );
+              })}
+              <tr>
+                <td><b>All screens</b></td>
+                {costVisible && (
+                  <td className="cell-num"><b>{money(groups.reduce((t, g) => t + (breakdown.job.groups[g.key].cost ?? 0), 0))}</b></td>
+                )}
+                <td className="cell-num"><b>{money(breakdown.job.total)}</b></td>
+                {costVisible && (
+                  <td className="cell-num">
+                    <b>{marginPct(breakdown.job.total, groups.reduce((t, g) => t + (breakdown.job.groups[g.key].cost ?? 0), 0))}</b>
+                  </td>
+                )}
+              </tr>
+            </tbody>
+          </table>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Screen</th>
+                {groups.map((g) => <th key={g.key} className="cell-num">{g.label}</th>)}
+                <th className="cell-num">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {breakdown.screens.map((sc) => (
+                <tr key={`${sc.type}:${sc.screenId}`}>
+                  <td>
+                    {sc.name} <span className="muted">· {sc.type.toUpperCase()}{sc.qty > 1 ? ` × ${sc.qty}` : ''}</span>
+                  </td>
+                  {groups.map((g) => (
+                    <td key={g.key} className="cell-num">{money(sc.groups[g.key].sell)}</td>
+                  ))}
+                  <td className="cell-num"><b>{money(sc.total)}</b></td>
+                </tr>
+              ))}
+              <tr>
+                <td><b>Whole job</b></td>
+                {groups.map((g) => (
+                  <td key={g.key} className="cell-num"><b>{money(breakdown.job.groups[g.key].sell)}</b></td>
+                ))}
+                <td className="cell-num"><b>{money(breakdown.job.total)}</b></td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // Inline per-screen cost-breakdown table (moved out of the old right-side drawer so the breakdown sits
@@ -5879,6 +5989,7 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
             {!price.costVisible && (
               <p className="muted" style={{ marginTop: 0 }}>Cost hidden for your role.</p>
             )}
+            {price.breakdown && <BreakdownByType breakdown={price.breakdown} cur={cur} costVisible={price.costVisible} />}
             {overrideWarning && <div className="error" style={{ marginTop: 10 }}>⚠️ {overrideWarning}</div>}
             {price.sections.length === 0 && <p className="muted">No priced lines yet.</p>}
             {price.sections.map((sec, si) => {
