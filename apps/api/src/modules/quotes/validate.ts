@@ -89,7 +89,8 @@ const ledScreenToInput = (
 
   return {
     pixelPitchMm: pitch,
-    gobSelected: screen.gobId != null,
+    // A product whose price already includes GOB satisfies the fine-pitch GOB requirement on its own.
+    gobSelected: screen.gobId != null || screen.ledProduct?.gobIncluded === true,
     totalPixels: screen.totalPixels != null ? Number(screen.totalPixels) : null,
     controllerSelected,
     controllerMaxPixels,

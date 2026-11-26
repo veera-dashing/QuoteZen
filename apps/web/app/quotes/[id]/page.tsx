@@ -8,7 +8,7 @@ import RecordForm from '@/components/RecordForm';
 import type { Row, TableDef } from '@/lib/types';
 import type { LedIntakeInput } from '@quotezen/shared';
 
-interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null; years?: number; rate?: string | number | null; isCob?: boolean }
+interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null; years?: number; rate?: string | number | null; isCob?: boolean; gobIncluded?: boolean | null }
 
 /**
  * A NEW screen pre-selects the 3-year warranty. This mirrors the `standard_warranty_years` setting
@@ -56,7 +56,7 @@ interface LedScreen {
   spaceAroundScreenMm?: number | null; // space around this screen (mm)
   sharedDevicePlayers?: number | null; sharedDeviceScreens?: number | null; // AA5 — ratio for this screen
   // The attached LED product (model) + its manufacturer, for the "Manufacturer - Model" row label.
-  ledProduct?: { model: string; isCob?: boolean | null; manufacturer?: { name: string } | null } | null;
+  ledProduct?: { model: string; isCob?: boolean | null; gobIncluded?: boolean | null; manufacturer?: { name: string } | null } | null;
   components?: LedComponent[];
   intakeAnswers?: LedIntakeInput | null;
   // Secondary options/services (Form 2) — raw FK scalars + housing/notes, used to pre-fill the editor.
@@ -1632,6 +1632,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   // screen has no computed figure yet, so the box starts empty and estimates on save.
   // COB panels are resin-sealed at manufacture, so a separate protective coating is redundant.
   const selectedIsCob = !!products.find((pr) => pr.id === productId)?.isCob;
+  // GOB already in the product's base price: protective coating is shown ticked + locked, never charged.
+  const selectedGobIncluded = !!products.find((pr) => pr.id === productId)?.gobIncluded;
   const [sharedController, setSharedController] = useState(!!editScreen?.sharedController);
   const computedHours = editScreen?.labourHours != null ? String(editScreen.labourHours) : '';
   const [hoursMode, setHoursMode] = useState<'auto' | 'manual'>(
@@ -1776,12 +1778,12 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   // choice already made — the user can untick it for a job that genuinely doesn't need it.
   const coatingDefaulted = useRef(false);
   useEffect(() => {
-    if (coatingDefaulted.current || editScreen || !clientWantsCoating || selectedIsCob) return;
+    if (coatingDefaulted.current || editScreen || !clientWantsCoating || selectedIsCob || selectedGobIncluded) return;
     const row = protectiveCoatingRow(optionRows.coatingId);
     if (!row) return;
     coatingDefaulted.current = true;
     setSelectedOpts((prev) => (prev.coatingId ? prev : { ...prev, coatingId: String(row.id) }));
-  }, [optionRows, editScreen, clientWantsCoating, selectedIsCob]);
+  }, [optionRows, editScreen, clientWantsCoating, selectedIsCob, selectedGobIncluded]);
 
   const freightDefaulted = useRef(false);
   useEffect(() => {
@@ -2006,6 +2008,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
       // A COB panel is sealed at manufacture: drop any coating carried over from a previously
       // selected non-COB product, so it can never be charged for one.
       if (selectedIsCob) delete optionFks.coatingId;
+      // GOB-included product: the coating is already in its price — never send a chargeable one.
+      if (selectedGobIncluded) delete optionFks.coatingId;
       const body = {
         screenName: name || undefined,
         ledProductId: Number(productId),
@@ -3216,15 +3220,19 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
                 </label>
                 <input
                   type="checkbox"
-                  checked={!selectedIsCob && !!selectedOpts.coatingId}
-                  disabled={selectedIsCob}
+                  checked={selectedGobIncluded || (!selectedIsCob && !!selectedOpts.coatingId)}
+                  disabled={selectedIsCob || selectedGobIncluded}
                   onChange={(e) => {
                     const row = protectiveCoatingRow(optionRows.coatingId);
                     setSelectedOpts((p) => ({ ...p, coatingId: e.target.checked && row ? String(row.id) : '' }));
                   }}
                   style={{ width: 'auto' }}
                 />
-                {selectedIsCob ? (
+                {selectedGobIncluded ? (
+                  <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                    Included — this product&apos;s price already includes GOB protective coating.
+                  </p>
+                ) : selectedIsCob ? (
                   <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
                     Not needed — this is a COB panel, already resin-sealed.
                   </p>
@@ -4050,6 +4058,7 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
   // saved: in 'auto' the figure is just being displayed and null is sent (so the screen keeps
   // re-estimating when the panel or frame changes); typing switches it to 'manual'.
   const screenIsCob = !!screen.ledProduct?.isCob;
+  const screenGobIncluded = !!screen.ledProduct?.gobIncluded;
   const [sharedController, setSharedController] = useState(!!screen.sharedController);
   const computedHours = screen.labourHours != null ? String(screen.labourHours) : '';
   const [hoursMode, setHoursMode] = useState<'auto' | 'manual'>(
@@ -4089,6 +4098,7 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
       };
       for (const t of LED_OPTION_TABLES) body[t.key] = selected[t.key] ? Number(selected[t.key]) : null;
       if (screenIsCob) body.coatingId = null; // sealed at manufacture — never charge a coating
+      if (screenGobIncluded) body.coatingId = null; // GOB already in the product price
       await api(`/quotes/${quote.id}/led-screens/${screen.id}`, { method: 'PATCH', body: JSON.stringify(body) });
       setSaved(true);
       await onChange();
@@ -4114,8 +4124,8 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
                 </label>
                 <input
                   type="checkbox"
-                  checked={!screenIsCob && !!selected.coatingId}
-                  disabled={!canWrite || screenIsCob}
+                  checked={screenGobIncluded || (!screenIsCob && !!selected.coatingId)}
+                  disabled={!canWrite || screenIsCob || screenGobIncluded}
                   onChange={(e) => {
                     const row = protectiveCoatingRow(optionRows.coatingId);
                     setSelected((p) => ({ ...p, coatingId: e.target.checked && row ? String(row.id) : '' }));
@@ -4123,7 +4133,11 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
                   }}
                   style={{ width: 'auto' }}
                 />
-                {screenIsCob && (
+                {screenGobIncluded ? (
+                  <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                    Included — this product&apos;s price already includes GOB protective coating.
+                  </p>
+                ) : screenIsCob && (
                   <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
                     Not needed — this is a COB panel, already resin-sealed.
                   </p>
