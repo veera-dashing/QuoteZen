@@ -15,6 +15,8 @@ export const buildQuotePdf = (
   quote: QuoteWithChildren,
   ratios?: readonly ScreenRatioRow[],
   licenceRows?: readonly LicenceComponentLike[],
+  /** Effective (discounted) extended sell per screen, keyed `led:<id>` / `lcd:<id>` (screenEffectiveSells). */
+  screenSells?: ReadonlyMap<string, string>,
 ): Promise<Buffer> =>
   new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
@@ -59,14 +61,16 @@ export const buildQuotePdf = (
     if (quote.ledScreens.length > 0) {
       heading('LED screens');
       for (const s of quote.ledScreens) {
-        line(descriptions.get(s.id.toString()) ?? s.screenName ?? 'LED screen', money(s.priceTotal, code));
+        const ledSell = screenSells?.get(`led:${s.id.toString()}`) ?? s.priceTotal;
+        line(descriptions.get(s.id.toString()) ?? s.screenName ?? 'LED screen', money(ledSell, code));
       }
     }
     // LCD screens — deterministic descriptions (tab B2) + order list (tab B56).
     if (quote.lcdScreens.length > 0) {
       heading('LCD displays');
       for (const s of quote.lcdScreens) {
-        line(descriptions.get(s.id.toString()) ?? s.screenName ?? 'LCD', money(s.priceTotal, code));
+        const lcdSell = screenSells?.get(`lcd:${s.id.toString()}`) ?? s.priceTotal;
+        line(descriptions.get(s.id.toString()) ?? s.screenName ?? 'LCD', money(lcdSell, code));
         const order = lcdOrderList(s);
         if (order) doc.fontSize(8).fillColor('#888').text(`Order list: ${order}`, L, doc.y, { width: CONTENT_W });
       }

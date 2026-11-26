@@ -871,6 +871,24 @@ export const computeLicenceAnnual = (
 };
 
 /**
+ * Each screen's EFFECTIVE extended sell — what actually rolls into the quote totals (per-line
+ * discounts applied; a pinned LED screen-price override wins). Keyed `led:<id>` / `lcd:<id>`.
+ * Outputs (PDF) show these per screen so a discounted screen never prints its pre-discount price
+ * while the totals below it are discounted.
+ */
+export const screenEffectiveSells = (
+  quote: QuoteWithChildren,
+  overrides: Map<string, OverrideRow>,
+): Map<string, string> => {
+  const out = new Map<string, string>();
+  for (const s of quote.ledScreens) {
+    out.set(`led:${s.id.toString()}`, round(ledScreenDiscountedSell(overrides, s).times(s.qty)).toString());
+  }
+  for (const s of quote.lcdScreens) out.set(`lcd:${s.id.toString()}`, lcdScreenDiscountedSell(s).toString());
+  return out;
+};
+
+/**
  * Fully itemised price view (P1-16.8): recompute totals, then return every stored line grouped by
  * screen, with raw cost masked for non-admin actors. Deterministic for a given persisted state.
  */

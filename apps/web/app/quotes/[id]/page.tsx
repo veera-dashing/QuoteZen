@@ -4460,6 +4460,24 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
 
   const sectionFor = (type: 'led' | 'lcd', id: string): PriceSection | null =>
     price?.sections.find((s) => s.type === type && s.screenId === id) ?? null;
+  // A screen row's price as it rolls into the totals (per-line discounts / overrides applied), with the
+  // pre-discount figure shown struck through when they differ. LED section totals are per unit.
+  const screenPrice = (type: 'led' | 'lcd', id: string, priceTotal: string | null, qty: number) => {
+    const base = Number(priceTotal ?? 0) * qty;
+    const section = sectionFor(type, id);
+    const effective = section ? Number(section.total) * (type === 'led' ? qty : 1) : base;
+    const changed = Math.abs(effective - base) >= 0.005;
+    return (
+      <span>
+        {changed && (
+          <s className="muted" style={{ marginRight: 6 }} title="Before line discounts">
+            {cur} {base.toLocaleString()}
+          </s>
+        )}
+        {cur} {effective.toLocaleString()}
+      </span>
+    );
+  };
 
   // Persist a per-line discount; routes by section type (LED cost-breakdown line vs LCD item).
   const commitDiscount = async (type: 'led' | 'lcd' | 'licence', lineId: string, raw: string) => {
@@ -4639,7 +4657,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                   />
                 </label>
-                <span>{cur} {(Number(s.priceTotal ?? 0) * s.qty).toLocaleString()}</span>
+                {screenPrice('led', s.id, s.priceTotal, s.qty)}
                 <RowMenu
                   active={expanded === s.id || bkOpen.has(`led-${s.id}`) || (editing?.type === 'LED' && editing.id === s.id)}
                   items={[
@@ -4677,7 +4695,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
                 <b>{lcdScreenLabel(s)}</b>
               </div>
               <div className="row-actions" style={{ alignItems: 'center' }}>
-                <span>{cur} {Number(s.priceTotal ?? 0).toLocaleString()}</span>
+                {screenPrice('lcd', s.id, s.priceTotal, 1)}
                 <RowMenu
                   active={bkOpen.has(`lcd-${s.id}`) || (editing?.type === 'LCD' && editing.id === s.id)}
                   items={[

@@ -44,10 +44,12 @@ import {
   recomputeQuote,
   setLcdItemDiscount,
   setLedLineDiscount,
+  screenEffectiveSells,
   setOverride,
   updateQuote,
   type Actor,
 } from './service.js';
+import { listOverrides, overrideMap } from './overrides.js';
 import { listKbEntries } from './kb.js';
 import { listReviews, recordReview } from './reviews.js';
 import { validateQuote } from './validate.js';
@@ -283,12 +285,15 @@ export const quoteRoutes = async (
   app.get('/quotes/:id/export.pdf', auth, async (request, reply) => {
     const { id } = parse(idParam, request.params);
     await assertOwnership(id, actor(request));
-    const [quote, ratios, licenceRows] = await Promise.all([
+    const [quote, ratios, licenceRows, overrides] = await Promise.all([
       getQuote(id),
       loadRatios(),
       listLicenceComponents(),
+      listOverrides(id),
     ]);
-    const pdf = await buildQuotePdf(quote, ratios, licenceRows);
+    // Per-screen prices as they roll into the totals (per-line discounts / pinned overrides applied).
+    const screenSells = screenEffectiveSells(quote, overrideMap(overrides));
+    const pdf = await buildQuotePdf(quote, ratios, licenceRows, screenSells);
     return reply
       .header('content-type', 'application/pdf')
       .header('content-disposition', `attachment; filename="quote-${quote.jobReference}.pdf"`)
