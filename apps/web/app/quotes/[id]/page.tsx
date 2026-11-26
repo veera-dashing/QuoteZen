@@ -21,6 +21,25 @@ const DEFAULT_WARRANTY_YEARS = 3;
 /** The catalog row a new screen should default its warranty to (undefined → leave unset). */
 const defaultWarranty = (rows: readonly Opt[] | undefined): Opt | undefined =>
   rows?.find((o) => Number(o.years) === DEFAULT_WARRANTY_YEARS);
+
+/**
+ * A NEW screen gets the standard SeenCMP media player by default (qty 1) — unless the quote says the
+ * client supplies their own. The user can still change or remove it. Matched by name, as the two
+ * catalogues name it differently:
+ *   • LED components (`mediaplayers`): "SeenCMP Mediaplayer" (not the Wide Temperature / Mini variants);
+ *   • LCD items (`display_catalog`, Mediaplayers): "SeenCMP Windows Mediaplayer (F106D …)".
+ */
+const defaultLedMediaplayer = (rows: readonly Opt[] | undefined): Opt | undefined =>
+  rows?.find((o) => (o.name ?? o.model ?? '').trim().toLowerCase() === 'seencmp mediaplayer');
+const defaultLcdMediaplayer = (rows: readonly Opt[]): Opt | undefined =>
+  rows.find(
+    (o) =>
+      (o.category ?? '').toLowerCase().includes('mediaplayer') &&
+      /^seencmp windows mediaplayer/i.test((o.model ?? '').trim()) &&
+      /f106d/i.test(o.model ?? ''),
+  );
+const clientSuppliesMediaplayer = (q: { mediaPlayerSupply?: string | null }): boolean =>
+  (q.mediaPlayerSupply ?? '').toLowerCase().startsWith('client');
 // A stored LED component row (as returned on the screen) — carries the componentType + the one FK id.
 interface LedComponent {
   id: string; componentType: string; qty: number;
@@ -1759,6 +1778,24 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     ).then((entries) => setOptionRows(Object.fromEntries(entries) as unknown as Record<LedOptionKey, Opt[]>));
   }, []);
 
+  // Default the standard SeenCMP media player on a NEW screen, once the component catalogs load.
+  // Once (the ref), never when editing, never over a mediaplayer the user already added, and not when
+  // the client supplies their own player.
+  const ledMediaplayerRow = defaultLedMediaplayer(componentRows.mediaplayer);
+  const ledDefaultComponents = (): ComponentRow[] =>
+    ledMediaplayerRow && !clientSuppliesMediaplayer(quote)
+      ? [{ componentType: 'mediaplayer' as LedComponentType, itemId: String(ledMediaplayerRow.id), qty: 1 }]
+      : [];
+  const mediaplayerDefaulted = useRef(false);
+  useEffect(() => {
+    if (mediaplayerDefaulted.current || editScreen || !ledMediaplayerRow) return;
+    mediaplayerDefaulted.current = true;
+    const defaults = ledDefaultComponents();
+    if (defaults.length === 0) return;
+    setComponents((prev) => (prev.some((c) => c.componentType === 'mediaplayer') ? prev : [...prev, ...defaults]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ledMediaplayerRow, editScreen]);
+
   // Pre-select the 3-year warranty on a NEW screen, once the catalogs have loaded. Runs at most once
   // (the ref), never when re-editing an existing screen, and never over a choice the user already
   // made while the catalogs were still in flight.
@@ -2060,7 +2097,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
       setOptions(null);
       setTiers(null);
       setSelectedBand(null);
-      setComponents([]);
+      setComponents(ledDefaultComponents()); // next screen starts with the default media player again
       setOrientation('');
       setAspectRatioId('');
       // Clearing the form for the NEXT screen re-applies the defaults (3-year warranty, the client's
@@ -3511,8 +3548,26 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   const [lcdCommercialHints, setLcdCommercialHints] = useState<CommercialHints | null>(null);
   const [targetSizeIn, setTargetSizeIn] = useState('');
 
+  // Default line for a NEW screen: the standard SeenCMP media player (see defaultLcdMediaplayer).
+  const lcdDefaultLines = (rows: readonly Opt[]): LcdLine[] => {
+    if (clientSuppliesMediaplayer(quote)) return [];
+    const mp = defaultLcdMediaplayer(rows);
+    const def = LCD_SECTIONS.find((d) => d.itemType === 'mediaplayer');
+    return mp && def
+      ? [{ sectionKey: def.key, itemType: 'mediaplayer', displayId: String(mp.id), description: mp.model ?? '', qty: 1, manual: false }]
+      : [];
+  };
+
   useEffect(() => {
-    api<{ rows: Opt[] }>('/admin/display-catalog?take=500&activeOnly=true').then((r) => setCatalog(r.rows));
+    api<{ rows: Opt[] }>('/admin/display-catalog?take=500&activeOnly=true').then((r) => {
+      setCatalog(r.rows);
+      // A NEW screen starts with the default media player (never over one the user already added).
+      if (editScreen) return;
+      const defaults = lcdDefaultLines(r.rows);
+      if (defaults.length > 0) {
+        setLines((ls) => (ls.some((l) => l.itemType === 'mediaplayer') ? ls : [...ls, ...defaults]));
+      }
+    });
     api<{ rows: Opt[] }>('/admin/service-hours?take=200&activeOnly=true').then((r) => setServiceHours(r.rows));
     api<{ rows: Opt[] }>('/admin/warranties?take=200&activeOnly=true').then((r) => {
       setWarranties(r.rows);
@@ -3688,7 +3743,7 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         return;
       }
       await api(`/quotes/${quote.id}/lcd-screens`, { method: 'POST', body: JSON.stringify(body) });
-      setLines([]);
+      setLines(lcdDefaultLines(catalog)); // next screen starts with the default media player again
       setScreenName('');
       setRecessDepthMm('');
       setRequiresAndroid(false);
