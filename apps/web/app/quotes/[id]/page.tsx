@@ -8,7 +8,7 @@ import RecordForm from '@/components/RecordForm';
 import type { Row, TableDef } from '@/lib/types';
 import type { LedIntakeInput } from '@quotezen/shared';
 
-interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null; years?: number; rate?: string | number | null; isCob?: boolean }
+interface Opt { id: string; name?: string; model?: string; sell?: string | null; totalCost?: string | null; usd?: string | null; category?: string; code?: string; brand?: string | null; years?: number; rate?: string | number | null; isCob?: boolean; gobIncluded?: boolean | null }
 
 /**
  * A NEW screen pre-selects the 3-year warranty. This mirrors the `standard_warranty_years` setting
@@ -21,6 +21,25 @@ const DEFAULT_WARRANTY_YEARS = 3;
 /** The catalog row a new screen should default its warranty to (undefined → leave unset). */
 const defaultWarranty = (rows: readonly Opt[] | undefined): Opt | undefined =>
   rows?.find((o) => Number(o.years) === DEFAULT_WARRANTY_YEARS);
+
+/**
+ * A NEW screen gets the standard SeenCMP media player by default (qty 1) — unless the quote says the
+ * client supplies their own. The user can still change or remove it. Matched by name, as the two
+ * catalogues name it differently:
+ *   • LED components (`mediaplayers`): "SeenCMP Mediaplayer" (not the Wide Temperature / Mini variants);
+ *   • LCD items (`display_catalog`, Mediaplayers): "SeenCMP Windows Mediaplayer (F106D …)".
+ */
+const defaultLedMediaplayer = (rows: readonly Opt[] | undefined): Opt | undefined =>
+  rows?.find((o) => (o.name ?? o.model ?? '').trim().toLowerCase() === 'seencmp mediaplayer');
+const defaultLcdMediaplayer = (rows: readonly Opt[]): Opt | undefined =>
+  rows.find(
+    (o) =>
+      (o.category ?? '').toLowerCase().includes('mediaplayer') &&
+      /^seencmp windows mediaplayer/i.test((o.model ?? '').trim()) &&
+      /f106d/i.test(o.model ?? ''),
+  );
+const clientSuppliesMediaplayer = (q: { mediaPlayerSupply?: string | null }): boolean =>
+  (q.mediaPlayerSupply ?? '').toLowerCase().startsWith('client');
 // A stored LED component row (as returned on the screen) — carries the componentType + the one FK id.
 interface LedComponent {
   id: string; componentType: string; qty: number;
@@ -56,7 +75,7 @@ interface LedScreen {
   spaceAroundScreenMm?: number | null; // space around this screen (mm)
   sharedDevicePlayers?: number | null; sharedDeviceScreens?: number | null; // AA5 — ratio for this screen
   // The attached LED product (model) + its manufacturer, for the "Manufacturer - Model" row label.
-  ledProduct?: { model: string; isCob?: boolean | null; manufacturer?: { name: string } | null } | null;
+  ledProduct?: { model: string; isCob?: boolean | null; gobIncluded?: boolean | null; manufacturer?: { name: string } | null } | null;
   components?: LedComponent[];
   intakeAnswers?: LedIntakeInput | null;
   // Secondary options/services (Form 2) — raw FK scalars + housing/notes, used to pre-fill the editor.
@@ -1632,6 +1651,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   // screen has no computed figure yet, so the box starts empty and estimates on save.
   // COB panels are resin-sealed at manufacture, so a separate protective coating is redundant.
   const selectedIsCob = !!products.find((pr) => pr.id === productId)?.isCob;
+  // GOB already in the product's base price: protective coating is shown ticked + locked, never charged.
+  const selectedGobIncluded = !!products.find((pr) => pr.id === productId)?.gobIncluded;
   const [sharedController, setSharedController] = useState(!!editScreen?.sharedController);
   const computedHours = editScreen?.labourHours != null ? String(editScreen.labourHours) : '';
   const [hoursMode, setHoursMode] = useState<'auto' | 'manual'>(
@@ -1757,6 +1778,24 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
     ).then((entries) => setOptionRows(Object.fromEntries(entries) as unknown as Record<LedOptionKey, Opt[]>));
   }, []);
 
+  // Default the standard SeenCMP media player on a NEW screen, once the component catalogs load.
+  // Once (the ref), never when editing, never over a mediaplayer the user already added, and not when
+  // the client supplies their own player.
+  const ledMediaplayerRow = defaultLedMediaplayer(componentRows.mediaplayer);
+  const ledDefaultComponents = (): ComponentRow[] =>
+    ledMediaplayerRow && !clientSuppliesMediaplayer(quote)
+      ? [{ componentType: 'mediaplayer' as LedComponentType, itemId: String(ledMediaplayerRow.id), qty: 1 }]
+      : [];
+  const mediaplayerDefaulted = useRef(false);
+  useEffect(() => {
+    if (mediaplayerDefaulted.current || editScreen || !ledMediaplayerRow) return;
+    mediaplayerDefaulted.current = true;
+    const defaults = ledDefaultComponents();
+    if (defaults.length === 0) return;
+    setComponents((prev) => (prev.some((c) => c.componentType === 'mediaplayer') ? prev : [...prev, ...defaults]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ledMediaplayerRow, editScreen]);
+
   // Pre-select the 3-year warranty on a NEW screen, once the catalogs have loaded. Runs at most once
   // (the ref), never when re-editing an existing screen, and never over a choice the user already
   // made while the catalogs were still in flight.
@@ -1776,12 +1815,12 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   // choice already made — the user can untick it for a job that genuinely doesn't need it.
   const coatingDefaulted = useRef(false);
   useEffect(() => {
-    if (coatingDefaulted.current || editScreen || !clientWantsCoating || selectedIsCob) return;
+    if (coatingDefaulted.current || editScreen || !clientWantsCoating || selectedIsCob || selectedGobIncluded) return;
     const row = protectiveCoatingRow(optionRows.coatingId);
     if (!row) return;
     coatingDefaulted.current = true;
     setSelectedOpts((prev) => (prev.coatingId ? prev : { ...prev, coatingId: String(row.id) }));
-  }, [optionRows, editScreen, clientWantsCoating, selectedIsCob]);
+  }, [optionRows, editScreen, clientWantsCoating, selectedIsCob, selectedGobIncluded]);
 
   const freightDefaulted = useRef(false);
   useEffect(() => {
@@ -2006,6 +2045,8 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
       // A COB panel is sealed at manufacture: drop any coating carried over from a previously
       // selected non-COB product, so it can never be charged for one.
       if (selectedIsCob) delete optionFks.coatingId;
+      // GOB-included product: the coating is already in its price — never send a chargeable one.
+      if (selectedGobIncluded) delete optionFks.coatingId;
       const body = {
         screenName: name || undefined,
         ledProductId: Number(productId),
@@ -2056,7 +2097,7 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
       setOptions(null);
       setTiers(null);
       setSelectedBand(null);
-      setComponents([]);
+      setComponents(ledDefaultComponents()); // next screen starts with the default media player again
       setOrientation('');
       setAspectRatioId('');
       // Clearing the form for the NEXT screen re-applies the defaults (3-year warranty, the client's
@@ -3216,15 +3257,19 @@ function LedAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
                 </label>
                 <input
                   type="checkbox"
-                  checked={!selectedIsCob && !!selectedOpts.coatingId}
-                  disabled={selectedIsCob}
+                  checked={selectedGobIncluded || (!selectedIsCob && !!selectedOpts.coatingId)}
+                  disabled={selectedIsCob || selectedGobIncluded}
                   onChange={(e) => {
                     const row = protectiveCoatingRow(optionRows.coatingId);
                     setSelectedOpts((p) => ({ ...p, coatingId: e.target.checked && row ? String(row.id) : '' }));
                   }}
                   style={{ width: 'auto' }}
                 />
-                {selectedIsCob ? (
+                {selectedGobIncluded ? (
+                  <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                    Included — this product&apos;s price already includes GOB protective coating.
+                  </p>
+                ) : selectedIsCob ? (
                   <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
                     Not needed — this is a COB panel, already resin-sealed.
                   </p>
@@ -3503,8 +3548,26 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
   const [lcdCommercialHints, setLcdCommercialHints] = useState<CommercialHints | null>(null);
   const [targetSizeIn, setTargetSizeIn] = useState('');
 
+  // Default line for a NEW screen: the standard SeenCMP media player (see defaultLcdMediaplayer).
+  const lcdDefaultLines = (rows: readonly Opt[]): LcdLine[] => {
+    if (clientSuppliesMediaplayer(quote)) return [];
+    const mp = defaultLcdMediaplayer(rows);
+    const def = LCD_SECTIONS.find((d) => d.itemType === 'mediaplayer');
+    return mp && def
+      ? [{ sectionKey: def.key, itemType: 'mediaplayer', displayId: String(mp.id), description: mp.model ?? '', qty: 1, manual: false }]
+      : [];
+  };
+
   useEffect(() => {
-    api<{ rows: Opt[] }>('/admin/display-catalog?take=500&activeOnly=true').then((r) => setCatalog(r.rows));
+    api<{ rows: Opt[] }>('/admin/display-catalog?take=500&activeOnly=true').then((r) => {
+      setCatalog(r.rows);
+      // A NEW screen starts with the default media player (never over one the user already added).
+      if (editScreen) return;
+      const defaults = lcdDefaultLines(r.rows);
+      if (defaults.length > 0) {
+        setLines((ls) => (ls.some((l) => l.itemType === 'mediaplayer') ? ls : [...ls, ...defaults]));
+      }
+    });
     api<{ rows: Opt[] }>('/admin/service-hours?take=200&activeOnly=true').then((r) => setServiceHours(r.rows));
     api<{ rows: Opt[] }>('/admin/warranties?take=200&activeOnly=true').then((r) => {
       setWarranties(r.rows);
@@ -3680,7 +3743,7 @@ function LcdAddForm({ quote, onChange, editScreen, onCancelEdit, onDirtyChange }
         return;
       }
       await api(`/quotes/${quote.id}/lcd-screens`, { method: 'POST', body: JSON.stringify(body) });
-      setLines([]);
+      setLines(lcdDefaultLines(catalog)); // next screen starts with the default media player again
       setScreenName('');
       setRecessDepthMm('');
       setRequiresAndroid(false);
@@ -4050,6 +4113,7 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
   // saved: in 'auto' the figure is just being displayed and null is sent (so the screen keeps
   // re-estimating when the panel or frame changes); typing switches it to 'manual'.
   const screenIsCob = !!screen.ledProduct?.isCob;
+  const screenGobIncluded = !!screen.ledProduct?.gobIncluded;
   const [sharedController, setSharedController] = useState(!!screen.sharedController);
   const computedHours = screen.labourHours != null ? String(screen.labourHours) : '';
   const [hoursMode, setHoursMode] = useState<'auto' | 'manual'>(
@@ -4089,6 +4153,7 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
       };
       for (const t of LED_OPTION_TABLES) body[t.key] = selected[t.key] ? Number(selected[t.key]) : null;
       if (screenIsCob) body.coatingId = null; // sealed at manufacture — never charge a coating
+      if (screenGobIncluded) body.coatingId = null; // GOB already in the product price
       await api(`/quotes/${quote.id}/led-screens/${screen.id}`, { method: 'PATCH', body: JSON.stringify(body) });
       setSaved(true);
       await onChange();
@@ -4114,8 +4179,8 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
                 </label>
                 <input
                   type="checkbox"
-                  checked={!screenIsCob && !!selected.coatingId}
-                  disabled={!canWrite || screenIsCob}
+                  checked={screenGobIncluded || (!screenIsCob && !!selected.coatingId)}
+                  disabled={!canWrite || screenIsCob || screenGobIncluded}
                   onChange={(e) => {
                     const row = protectiveCoatingRow(optionRows.coatingId);
                     setSelected((p) => ({ ...p, coatingId: e.target.checked && row ? String(row.id) : '' }));
@@ -4123,7 +4188,11 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
                   }}
                   style={{ width: 'auto' }}
                 />
-                {screenIsCob && (
+                {screenGobIncluded ? (
+                  <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                    Included — this product&apos;s price already includes GOB protective coating.
+                  </p>
+                ) : screenIsCob && (
                   <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
                     Not needed — this is a COB panel, already resin-sealed.
                   </p>
@@ -4246,9 +4315,19 @@ function LedOptionsEditor({ quote, screen, onChange }: { quote: Quote; screen: L
 
 // The full PriceResult shape (mirrors service.ts priceQuote). Shared by the Review "Itemised price"
 // card and the inline per-screen cost breakdown in Select Screens.
+type BreakdownGroupKey = 'screen' | 'mediaplayer' | 'frame' | 'freight' | 'labour' | 'other';
+type BreakdownAmounts = Record<BreakdownGroupKey, { sell: number; cost: number | null }>;
+/** Cost breakdown by type, per screen and for the whole job (service.ts priceQuote → breakdown.ts). */
+interface QuoteBreakdown {
+  groups: Array<{ key: BreakdownGroupKey; label: string }>;
+  screens: Array<{ screenId: string; name: string; type: 'led' | 'lcd'; qty: number; groups: BreakdownAmounts; total: number }>;
+  job: { groups: BreakdownAmounts; total: number };
+}
+
 interface PriceResult {
   costVisible: boolean;
   sections: PriceSection[];
+  breakdown?: QuoteBreakdown;
   overrides?: OverrideSummary[];
   hasOverrides?: boolean;
   licences: Array<{ screenType: string; tier: string; qty: number; isInteractive: boolean; annual: string }>;
@@ -4258,7 +4337,109 @@ interface PriceResult {
   totals: {
     equipment: string; services: string; recurring: string; grandTotal: string;
     margin: string | null; marginFloor: number | null;
+    /** Admin-only: total cost + one-off sell before the quote discount (target margin → discount). */
+    marginBasis?: { cost: string; sellBeforeDiscount: string } | null;
   };
+}
+
+/**
+ * Review page — cost breakdown by type (screen / media player / frame / freight / labour), switchable
+ * between the whole job and per screen. Sell figures are each screen's price after line discounts
+ * (before the quote discount); cost + margin columns only when the role may see cost.
+ */
+function BreakdownByType({ breakdown, cur, costVisible }: { breakdown: QuoteBreakdown; cur: string; costVisible: boolean }) {
+  const [view, setView] = useState<'job' | 'screen'>('job');
+  const money = (n: number) => `${cur} ${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const marginPct = (sell: number, cost: number | null) =>
+    cost == null || sell <= 0 ? '—' : `${(((sell - cost) / sell) * 100).toFixed(1)}%`;
+  // Only show groups that carry something somewhere in the job (keeps the table short).
+  const groups = breakdown.groups.filter(
+    (g) => breakdown.job.groups[g.key].sell !== 0 || (breakdown.job.groups[g.key].cost ?? 0) !== 0,
+  );
+  if (breakdown.screens.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div className="topbar">
+        <b>Breakdown by type</b>
+        <div className="row-actions">
+          <button className={view === 'job' ? 'primary' : 'ghost'} onClick={() => setView('job')}>Whole job</button>
+          <button className={view === 'screen' ? 'primary' : 'ghost'} onClick={() => setView('screen')}>Per screen</button>
+        </div>
+      </div>
+      <p className="muted" style={{ margin: '4px 0 6px', fontSize: 12 }}>
+        Screen prices after line discounts, before the quote discount.
+      </p>
+      <div className="table-wrap">
+        {view === 'job' ? (
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                {costVisible && <th className="cell-num">Cost</th>}
+                <th className="cell-num">Sell</th>
+                {costVisible && <th className="cell-num">Margin</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((g) => {
+                const a = breakdown.job.groups[g.key];
+                return (
+                  <tr key={g.key}>
+                    <td>{g.label}</td>
+                    {costVisible && <td className="cell-num">{money(a.cost ?? 0)}</td>}
+                    <td className="cell-num">{money(a.sell)}</td>
+                    {costVisible && <td className="cell-num">{marginPct(a.sell, a.cost)}</td>}
+                  </tr>
+                );
+              })}
+              <tr>
+                <td><b>All screens</b></td>
+                {costVisible && (
+                  <td className="cell-num"><b>{money(groups.reduce((t, g) => t + (breakdown.job.groups[g.key].cost ?? 0), 0))}</b></td>
+                )}
+                <td className="cell-num"><b>{money(breakdown.job.total)}</b></td>
+                {costVisible && (
+                  <td className="cell-num">
+                    <b>{marginPct(breakdown.job.total, groups.reduce((t, g) => t + (breakdown.job.groups[g.key].cost ?? 0), 0))}</b>
+                  </td>
+                )}
+              </tr>
+            </tbody>
+          </table>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Screen</th>
+                {groups.map((g) => <th key={g.key} className="cell-num">{g.label}</th>)}
+                <th className="cell-num">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {breakdown.screens.map((sc) => (
+                <tr key={`${sc.type}:${sc.screenId}`}>
+                  <td>
+                    {sc.name} <span className="muted">· {sc.type.toUpperCase()}{sc.qty > 1 ? ` × ${sc.qty}` : ''}</span>
+                  </td>
+                  {groups.map((g) => (
+                    <td key={g.key} className="cell-num">{money(sc.groups[g.key].sell)}</td>
+                  ))}
+                  <td className="cell-num"><b>{money(sc.total)}</b></td>
+                </tr>
+              ))}
+              <tr>
+                <td><b>Whole job</b></td>
+                {groups.map((g) => (
+                  <td key={g.key} className="cell-num"><b>{money(breakdown.job.groups[g.key].sell)}</b></td>
+                ))}
+                <td className="cell-num"><b>{money(breakdown.job.total)}</b></td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // Inline per-screen cost-breakdown table (moved out of the old right-side drawer so the breakdown sits
@@ -4460,6 +4641,24 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
 
   const sectionFor = (type: 'led' | 'lcd', id: string): PriceSection | null =>
     price?.sections.find((s) => s.type === type && s.screenId === id) ?? null;
+  // A screen row's price as it rolls into the totals (per-line discounts / overrides applied), with the
+  // pre-discount figure shown struck through when they differ. LED section totals are per unit.
+  const screenPrice = (type: 'led' | 'lcd', id: string, priceTotal: string | null, qty: number) => {
+    const base = Number(priceTotal ?? 0) * qty;
+    const section = sectionFor(type, id);
+    const effective = section ? Number(section.total) * (type === 'led' ? qty : 1) : base;
+    const changed = Math.abs(effective - base) >= 0.005;
+    return (
+      <span>
+        {changed && (
+          <s className="muted" style={{ marginRight: 6 }} title="Before line discounts">
+            {cur} {base.toLocaleString()}
+          </s>
+        )}
+        {cur} {effective.toLocaleString()}
+      </span>
+    );
+  };
 
   // Persist a per-line discount; routes by section type (LED cost-breakdown line vs LCD item).
   const commitDiscount = async (type: 'led' | 'lcd' | 'licence', lineId: string, raw: string) => {
@@ -4639,7 +4838,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                   />
                 </label>
-                <span>{cur} {(Number(s.priceTotal ?? 0) * s.qty).toLocaleString()}</span>
+                {screenPrice('led', s.id, s.priceTotal, s.qty)}
                 <RowMenu
                   active={expanded === s.id || bkOpen.has(`led-${s.id}`) || (editing?.type === 'LED' && editing.id === s.id)}
                   items={[
@@ -4677,7 +4876,7 @@ function SelectScreensStep({ quote, onChange }: { quote: Quote; onChange: () => 
                 <b>{lcdScreenLabel(s)}</b>
               </div>
               <div className="row-actions" style={{ alignItems: 'center' }}>
-                <span>{cur} {Number(s.priceTotal ?? 0).toLocaleString()}</span>
+                {screenPrice('lcd', s.id, s.priceTotal, 1)}
                 <RowMenu
                   active={bkOpen.has(`lcd-${s.id}`) || (editing?.type === 'LCD' && editing.id === s.id)}
                   items={[
@@ -5272,7 +5471,44 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
   const onDiscChange = (raw: string) => {
     if (!isAdmin && raw.trim() !== '' && Number(raw) > discCapPct) { setDiscPctInput(String(discCapPct)); return; }
     setDiscPctInput(raw);
+    setMarginInput('');
+    setMarginMsg(null);
   };
+
+  // ── Target margin % ⇄ discount % (admin — margin derives from cost, BR-081) ──
+  // Enter the margin you want; the discount that delivers it is filled in (all the discount rules
+  // above still apply to it). margin = (sell × (1 − d) − cost) / (sell × (1 − d))
+  //   ⇒ d = 1 − cost / (sell × (1 − margin)).
+  // A discount only lowers the price, so a margin above the undiscounted one can't be reached here.
+  const marginBasis = price?.totals.marginBasis ?? null;
+  const basisCost = marginBasis ? Number(marginBasis.cost) : 0;
+  const basisSell = marginBasis ? Number(marginBasis.sellBeforeDiscount) : 0;
+  const marginAtDiscount = (discPct: number): number | null => {
+    const sell = basisSell * (1 - discPct / 100);
+    return marginBasis && sell > 0 ? ((sell - basisCost) / sell) * 100 : null;
+  };
+  const [marginInput, setMarginInput] = useState('');
+  const [marginMsg, setMarginMsg] = useState<string | null>(null);
+  const onMarginChange = (raw: string) => {
+    setMarginInput(raw);
+    setMarginMsg(null);
+    if (!marginBasis || raw.trim() === '' || basisSell <= 0) return;
+    const m = Number(raw) / 100;
+    if (!Number.isFinite(m) || m >= 1) { setMarginMsg('Margin must be below 100%.'); return; }
+    const d = 1 - basisCost / (basisSell * (1 - m));
+    const maxMargin = marginAtDiscount(0);
+    if (d < 0) {
+      setMarginMsg(
+        `That's above the margin with no discount (${maxMargin?.toFixed(1)}%). A discount can only lower the price — use Override price to raise it.`,
+      );
+      return;
+    }
+    const pct = String(Math.round(d * 10000) / 100);
+    if (!isAdmin && Number(pct) > discCapPct) setMarginMsg(`Needs a ${pct}% discount — above the ${discCapPct}% cap.`);
+    if (!isAdmin && Number(pct) > discCapPct) setDiscPctInput(String(discCapPct));
+    else setDiscPctInput(pct);
+  };
+  const resultingMargin = marginAtDiscount(discNum ?? 0);
 
   const saveDiscount = async () => {
     setDiscBusy(true);
@@ -5700,6 +5936,34 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
                     : `Cap ${discCapPct}%. Above ${discNoteThreshold}% requires a manager note.`}
                 </p>
               </div>
+              {isAdmin && (
+                <div>
+                  <label>Target margin (%)</label>
+                  {marginBasis ? (
+                    <>
+                      <input
+                        type="number"
+                        min={0}
+                        max={99}
+                        step="0.5"
+                        value={marginInput}
+                        onChange={(e) => onMarginChange(e.target.value)}
+                        placeholder={resultingMargin != null ? resultingMargin.toFixed(1) : ''}
+                      />
+                      <p className="muted" style={{ margin: '4px 0 0', fontSize: 12, color: marginMsg ? 'var(--danger, #dc2626)' : undefined }}>
+                        {marginMsg ??
+                          (resultingMargin != null
+                            ? `Margin at this discount: ${resultingMargin.toFixed(1)}% (no discount: ${marginAtDiscount(0)?.toFixed(1)}%). Type a margin to work out the discount.`
+                            : 'No priced screens yet.')}
+                      </p>
+                    </>
+                  ) : (
+                    <button className="ghost" onClick={loadPrice} disabled={pricing}>
+                      {pricing ? 'Loading…' : 'Show margin'}
+                    </button>
+                  )}
+                </div>
+              )}
               <div>
                 <label>Discount applies to</label>
                 {/* One-off is the only scope offered. The control stays so the quote still states
@@ -5792,6 +6056,7 @@ function ReviewStep({ quote, onChange }: { quote: Quote; onChange: () => Promise
             {!price.costVisible && (
               <p className="muted" style={{ marginTop: 0 }}>Cost hidden for your role.</p>
             )}
+            {price.breakdown && <BreakdownByType breakdown={price.breakdown} cur={cur} costVisible={price.costVisible} />}
             {overrideWarning && <div className="error" style={{ marginTop: 10 }}>⚠️ {overrideWarning}</div>}
             {price.sections.length === 0 && <p className="muted">No priced lines yet.</p>}
             {price.sections.map((sec, si) => {

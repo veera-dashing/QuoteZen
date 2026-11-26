@@ -10,6 +10,8 @@ export interface FieldDef {
   /** Numeric bounds from the admin registry (fraction fields such as margin/discount). */
   min?: number;
   lessThan?: number;
+  /** Stored as a fraction (0.3) but shown and entered as a percentage (30). */
+  percent?: boolean;
 }
 
 export interface TableDef {

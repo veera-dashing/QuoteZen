@@ -696,6 +696,9 @@ const computeLedScreenPricing = async (
   const product = input.ledProductId
     ? await prisma.ledProduct.findUnique({ where: { id: BigInt(input.ledProductId) } })
     : null;
+  // GOB already in the product's base price (catalogue flag `gob_included`): the screen IS GOB-protected,
+  // so it takes the GOB spares rate, and no separate GOB or protective-coating cost is ever added on top.
+  const gobIncluded = product?.gobIncluded === true;
 
   const lines: PricedLine[] = [];
   let spec: ReturnType<typeof ledSpec> | null = null;
@@ -741,7 +744,7 @@ const computeLedScreenPricing = async (
       // Workbook row 258: GOB rate × (1 + sparesPct) — equivalent to spares on supply+GOB.
       // GOB line (metalwork markup) is pushed after spares to keep the order: supply → spares → GOB.
       let gobCostAud = round(0);
-      if (input.gobId) {
+      if (input.gobId && !gobIncluded) {
         const gobRow = await prisma.gobOption.findUnique({ where: { id: BigInt(input.gobId) } });
         if (gobRow && Number(gobRow.price) > 0) {
           gobCostAud = round(Number(gobRow.price) * spec.areaSqm.toNumber());
@@ -750,7 +753,7 @@ const computeLedScreenPricing = async (
 
       // Fix A — spares rate: 15% when no GOB, 10% (config.addOns.sparesPct) when GOB present.
       // Base includes gobCostAud so the workbook's row-258 grossing is preserved without changing the GOB line.
-      const sparesRate = input.gobId ? config.addOns.sparesPct : noGobSparesPct;
+      const sparesRate = input.gobId || gobIncluded ? config.addOns.sparesPct : noGobSparesPct;
       const spares = sparesCost(supply.costAud.plus(gobCostAud), config, sparesRate);
       lines.push({
         label: 'Spares',
@@ -783,7 +786,10 @@ const computeLedScreenPricing = async (
     // AA4 — protective / gold coating: priced by screen area (cost/sqm × area), sold at the LED
     // markup. Uses the same area the supply calc uses (spec.areaSqm). None / 0-cost → a "(none)" $0 row.
     let coatingAdded = false;
-    if (input.coatingId) {
+    if (gobIncluded) {
+      lines.push(zeroLine('Coating — included (GOB in product price)', 'screen_mediaplayer'));
+      coatingAdded = true;
+    } else if (input.coatingId) {
       const coating = await prisma.coatingOption.findUnique({ where: { id: BigInt(input.coatingId) } });
       if (coating && Number(coating.costPerSqm) > 0) {
         const c = coatingCost(spec.areaSqm, Number(coating.costPerSqm), config);
@@ -901,7 +907,10 @@ const computeLedScreenPricing = async (
   // GOB line (metalwork markup): cost was computed above in the supply block (Fix A). Push it here so
   // the frame_trim bucket stays contiguous. No GOB → a "(none)" $0 row (the sheet's row 266).
   let gobAdded = false;
-  if (input.gobId && spec) {
+  if (gobIncluded) {
+    lines.push(zeroLine('GOB — included in product price', 'frame_trim'));
+    gobAdded = true;
+  } else if (input.gobId && spec) {
     const gob = await prisma.gobOption.findUnique({ where: { id: BigInt(input.gobId) } });
     if (gob) {
       const gobLineCost = Number(gob.price) * spec.areaSqm.toNumber();

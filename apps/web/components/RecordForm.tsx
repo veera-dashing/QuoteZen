@@ -16,8 +16,13 @@ interface Props {
   mode?: 'create' | 'edit';
 }
 
+/** Fraction ↔ percentage for `percent` fields, without float noise (0.07 × 100 → 7, not 7.000000000000001). */
+const fractionToPct = (v: number): number => Number((v * 100).toFixed(6));
+const pctToFraction = (v: number): number => Number((v / 100).toFixed(8));
+
 const toInput = (field: FieldDef, value: unknown): string => {
   if (value === null || value === undefined) return '';
+  if (field.percent && value !== '') return String(fractionToPct(Number(value)));
   return String(value);
 };
 
@@ -49,6 +54,8 @@ export default function RecordForm({ table, initial, onClose, onSave, mode }: Pr
           payload[f.name] = Boolean(v);
         } else if (v === '' || v === undefined) {
           if (!f.required) payload[f.name] = null;
+        } else if (f.percent) {
+          payload[f.name] = pctToFraction(Number(v)); // entered as %, stored as a fraction
         } else if (f.type === 'int' || f.type === 'decimal') {
           payload[f.name] = Number(v);
         } else {
@@ -102,8 +109,8 @@ export default function RecordForm({ table, initial, onClose, onSave, mode }: Pr
                 step={f.type === 'decimal' ? 'any' : undefined}
                 // Registry bounds (fraction fields such as margin/discount) — the server rejects
                 // out-of-range values regardless; these just surface it before submitting.
-                min={f.min}
-                max={f.lessThan !== undefined ? f.lessThan : undefined}
+                min={f.percent && f.min !== undefined ? f.min * 100 : f.min}
+                max={f.lessThan !== undefined ? (f.percent ? f.lessThan * 100 : f.lessThan) : undefined}
                 value={String(values[f.name] ?? '')}
                 onChange={(e) => set(f.name, e.target.value)}
               />

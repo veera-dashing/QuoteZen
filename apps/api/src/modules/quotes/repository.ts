@@ -32,7 +32,7 @@ export const quoteInclude = {
   },
   lcdScreens: {
     orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
-    include: { items: { include: { display: true } }, display: true, warranty: true },
+    include: { items: { include: { display: true } }, display: true, warranty: true, installMethod: true },
   },
   viewers: { include: { user: { select: { id: true, name: true, email: true } } } },
   mediaplayers: { include: { mediaplayer: true } },
